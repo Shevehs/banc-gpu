@@ -7,8 +7,8 @@ Sur une machine distante : tunnel SSH depuis ton poste, ex. ssh -L 8765:127.0.0.
 
 Le serveur n'écoute que sur 127.0.0.1 et exige un jeton aléatoire, affiché au démarrage dans l'adresse à
 ouvrir : une autre page web ou un autre utilisateur de la machine ne peut pas lancer d'essai sans lui.
-Il vérifie aussi l'en-tête Host et l'origine des requêtes. Il n'exécute que balayage.sh,
-agents_test/lanceur.py et les deux scripts de dépouillement, avec des paramètres vérifiés (options
+Il vérifie aussi l'en-tête Host et l'origine des requêtes. Il n'exécute que balayage.sh, agentx.sh,
+agents_test/lanceur.py, observation/observer.py et les scripts de dépouillement, avec des paramètres vérifiés (options
 AIPerf sur liste blanche) ; un essai lancé ici est identique au même essai lancé à la main (la commande
 exacte est écrite dans son journal, sans la clé d'API). Un seul essai à la fois.
 Dépendance : aiohttp (déjà installé avec AIPerf).
@@ -104,7 +104,7 @@ def cle(v):
     return v
 
 
-SECRETS = ("CLE_API", "BANC_CLE_API")
+SECRETS = ("CLE_API", "BANC_CLE_API", "BANC_CLES_AGENTS", "BANC_CLE_LITELLM")
 
 
 def dossier_resultats(v):
@@ -146,6 +146,70 @@ def commande_synthetique(p):
     return cmd, env, BANC
 
 
+def chemin_local(v, champ):
+    """Chemin d'un dossier existant sur la machine de l'interface (absolu, ~ ou relatif au dépôt)."""
+    v = str(v or "").strip()
+    if not re.match(r"^[A-Za-z0-9._/~-]{1,300}$", v) or v.startswith("-"):
+        raise Refus(f"{champ} : chemin de dossier attendu")
+    c = Path(os.path.expanduser(v))
+    c = c if c.is_absolute() else BANC / c
+    if not c.is_dir():
+        raise Refus(f"{champ} : dossier introuvable ({c})")
+    return str(c)
+
+
+def commande_agentx(p):
+    """Stress test AgentX (agentx.sh) ; toutes ses variables sont fixées ici."""
+    court = bool(p.get("essai_court"))
+    duree = nombre(p.get("duree", 1800), "durée par palier", 30 if court else 900, 7200, True)
+    env = {"URL": url_locale(p.get("url")), "MODELE": modele(p.get("modele")),
+           "METRIQUES": " ".join(urls_metriques(p.get("metriques"))), "CLE_API": cle(p.get("cle_api")) or "",
+           "DUREE": str(duree), "RACINE": dossier_resultats(p.get("racine") or "resultats-agentx"),
+           "AGENTX_DOSSIER": chemin_local(p.get("dossier_traces"), "dossier des traces") if p.get("dossier_traces") else "",
+           "ESSAI_COURT": "1" if court else "", "ECRASER": "", "SEED": "", "TOKENIZER": "",
+           "CONTEXTE_MAX": str(nombre(p.get("contexte_max"), "contexte max", 1024, 10_000_000, True)) if p.get("contexte_max") else "",
+           "AGENTX_VARIANTE": "256k" if p.get("variante") == "256k" else ""}
+    tok = str(p.get("tokenizer") or "").strip()
+    if tok:
+        if tok.startswith("-") or not re.match(r"^[A-Za-z0-9._/@:~-]{1,300}$", tok):
+            raise Refus("tokenizer : nom Hugging Face ou chemin local attendu")
+        env["TOKENIZER"] = os.path.expanduser(tok)
+    paliers = str(p.get("paliers") or "")
+    if not PALIERS_OK.match(paliers):
+        raise Refus("paliers : entiers séparés par des espaces")
+    cmd = ["bash", str(BANC / "agentx.sh"), nom(p.get("etiquette"), "étiquette"), " ".join(paliers.split())]
+    return cmd, env, BANC
+
+
+def commande_observation(p):
+    """Mode observation (observation/observer.py) : ne génère aucune charge."""
+    met = urls_metriques(p.get("metriques"))
+    if not met:
+        raise Refus("URL des métriques vLLM : obligatoire en observation (une par réplique)")
+    duree = nombre(p.get("duree", 900), "durée totale", 60, 7 * 86400, True)
+    cmd = [sys.executable, str(BANC / "observation" / "observer.py"), "--metriques", " ".join(met),
+           "--duree", str(duree), "--etiquette", nom(p.get("etiquette"), "étiquette"),
+           "--sortie", str(BANC / dossier_resultats(p.get("racine") or "resultats-observation"))]
+    if p.get("intervalle"):
+        cmd += ["--intervalle", str(nombre(p.get("intervalle"), "intervalle", 60, duree, True))]
+    if p.get("niveau") not in (None, ""):
+        cmd += ["--niveau", str(nombre(p.get("niveau"), "niveau", 0, 100_000, True))]
+    if p.get("litellm"):
+        u = str(p.get("litellm")).strip()
+        if not re.match(r"^https?://[A-Za-z0-9.\-]+(:\d{1,5})?(/[A-Za-z0-9._/-]*)?$", u):
+            raise Refus("URL des métriques LiteLLM : forme http://hôte:port/metrics attendue")
+        par = str(p.get("par") or "api_key_alias").strip()
+        if not re.match(r"^(api_key_alias|team_alias|user|end_user|metadata_[A-Za-z0-9_]{1,40})$", par):
+            raise Refus("agents distingués par : api_key_alias, team_alias, user, end_user ou metadata_<champ>")
+        cmd += ["--litellm", u, "--par", par]
+    if p.get("empreinte"):
+        cmd += ["--url", url_locale(p.get("url")), "--modele", modele(p.get("modele"))]
+    env = {"BANC_CLE_API": cle(p.get("cle_api"))} if cle(p.get("cle_api")) else {}
+    if cle(p.get("cle_litellm")):
+        env["BANC_CLE_LITELLM"] = cle(p.get("cle_litellm"))
+    return cmd, env, BANC
+
+
 def commande_agents(p):
     agents = [a for a in (p.get("agents") or []) if a in ("revue_code", "pentest", "rapport")]
     if not agents:
@@ -157,6 +221,15 @@ def commande_agents(p):
     if not mode:
         raise Refus("mode : scripte ou autonome")
     env = {"BANC_CLE_API": cle(p.get("cle_api"))} if cle(p.get("cle_api")) else {}
+    paires = []
+    for paire in str(p.get("cles_agents") or "").split(","):
+        if paire.strip():
+            k_, _, v_ = paire.partition("=")
+            if k_.strip() not in ("revue_code", "pentest", "rapport") or not cle(v_):
+                raise Refus("clés par agent : revue_code=<clé>,pentest=<clé>,rapport=<clé>")
+            paires.append(f"{k_.strip()}={cle(v_)}")
+    if paires:
+        env["BANC_CLES_AGENTS"] = ",".join(paires)
     met = urls_metriques(p.get("metriques"))
     cmd = [sys.executable, str(BANC / "agents_test" / "lanceur.py"),
            "--url", url_locale(p.get("url")), "--modele", modele(p.get("modele")),
@@ -167,6 +240,8 @@ def commande_agents(p):
            "--facteur-latence", str(nombre(p.get("facteur_latence", 1), "facteur de latence", 0, 10)),
            "--mode", mode, "--etiquette", nom(p.get("etiquette"), "étiquette"),
            "--sortie", str(BANC / dossier_resultats(p.get("racine") or "agents_test/resultats-agents"))]
+    if p.get("etiqueter_agents"):
+        cmd.append("--etiqueter-agents")
     if met:
         cmd += ["--metriques", " ".join(met)]
     return cmd, env, BANC / "agents_test"
@@ -175,7 +250,7 @@ def commande_agents(p):
 # Seules ces variables du terminal passent aux essais ; les réglages du banc viennent des champs de l'interface.
 ENV_HERITE = {"PATH", "HOME", "USER", "LOGNAME", "SHELL", "LANG", "TMPDIR", "TERM", "VIRTUAL_ENV", "HF_HOME",
               "HF_HUB_CACHE", "SSL_CERT_FILE", "REQUESTS_CA_BUNDLE", "HTTPS_PROXY", "HTTP_PROXY", "NO_PROXY",
-              "https_proxy", "http_proxy", "no_proxy", "DO_NOT_TRACK"}
+              "https_proxy", "http_proxy", "no_proxy", "DO_NOT_TRACK", "TZ"}
 
 
 def environnement_de_base():
@@ -206,7 +281,11 @@ async def lancer(req):
     except Refus as e:
         return web.json_response({"erreur": str(e)}, status=400)
     try:
-        cmd, env, cwd = (commande_synthetique if p.get("type") == "synthetique" else commande_agents)(p)
+        fab = {"synthetique": commande_synthetique, "agents": commande_agents, "agentx": commande_agentx,
+               "observation": commande_observation}.get(p.get("type"))
+        if not fab:
+            raise Refus("type d'essai inconnu")
+        cmd, env, cwd = fab(p)
     except Refus as e:
         return web.json_response({"erreur": str(e)}, status=400)
     JOURNAUX.mkdir(exist_ok=True)
@@ -259,16 +338,18 @@ async def arreter(req):
 
 
 async def racines(req):
-    """Dossiers de résultats présents : charge synthétique (contient */c*/) et agents (contient */n*/)."""
-    synth, agents = [], []
+    """Dossiers de résultats présents, par type (d'après leur contenu)."""
+    synth, agents, agentx, obs = [], [], [], []
     for d in sorted(BANC.glob("resultats*")) + sorted((BANC / "agents_test").glob("resultats*")):
         if d.is_dir():
             rel = str(d.relative_to(BANC))
             if any(d.glob("*/c*/profile_export_aiperf.json")):
-                synth.append(rel)
+                (agentx if any(d.glob("*/agentx.txt")) else synth).append(rel)
             if any(d.glob("*/n*/palier.json")):
                 agents.append(rel)
-    return web.json_response({"synthetique": synth, "agents": agents})
+            if any(d.glob("*/observation*.json")):
+                obs.append(rel)
+    return web.json_response({"synthetique": synth, "agents": agents, "agentx": agentx, "observation": obs})
 
 
 async def resultats(req):
@@ -279,19 +360,25 @@ async def resultats(req):
         gpu = nombre(q.get("gpu"), "GPU", 1, 64, True)
     except Refus as e:
         return web.json_response({"erreur": str(e)}, status=400)
-    agents = q.get("type") == "agents"
-    script = BANC / "agents_test" / "depouiller_agents.py" if agents else BANC / "depouiller.py"
-    cmd = [sys.executable, str(script), str(BANC / racine), "--cible", str(cible), "--gpu", str(gpu)]
-    if q.get("exiger") == "1":
+    typ = q.get("type")
+    script, tableau = {"agents": ("agents_test/depouiller_agents.py", "tableau_agents.csv"),
+                       "observation": ("observation/depouiller_observation.py", "tableau_observation.csv")
+                       }.get(typ, ("depouiller.py", "tableau.csv"))
+    cmd = [sys.executable, str(BANC / script), str(BANC / racine), "--cible", str(cible), "--gpu", str(gpu)]
+    if typ == "observation":
+        vue = q.get("vue") if q.get("vue") in ("fenetres", "periode", "agents") else "fenetres"
+        cmd += ["--vue", vue, "--periode", "heure" if q.get("periode") == "heure" else "plage"]
+    elif q.get("exiger") == "1":
         cmd.append("--exiger-metriques")
     proc = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
     sortie = (await proc.communicate())[0].decode("utf-8", "replace")
-    fichier = BANC / racine / ("tableau_agents.csv" if agents else "tableau.csv")
+    fichier = BANC / racine / tableau
     lignes = []
     if proc.returncode == 0 and fichier.exists():
         with open(fichier, newline="", encoding="utf-8") as fh:
             lignes = list(csv.DictReader(fh))
-    messages = [l for l in sortie.splitlines() if "retenu" in l or "ATTENTION" in l or "aucun" in l.lower()]
+    messages = [l for l in sortie.splitlines() if "retenu" in l or "ATTENTION" in l or "aucun" in l.lower()
+                or "qui tient" in l]
     return web.json_response({"lignes": lignes, "messages": messages, "sortie": sortie, "code": proc.returncode,
                               "commande": " ".join(cmd)})
 

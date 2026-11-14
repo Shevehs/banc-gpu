@@ -5,6 +5,8 @@ Usage : python depouiller.py resultats --cible 30 --gpu 1 [--exiger-metriques]
   --gpu   : nombre de GPU derrière la cible, toutes répliques comprises (débit par GPU = débit total / gpu)
   --exiger-metriques : refuse un palier dont les métriques du serveur (préemptions) n'ont pas été lues
   --ttft-max : refuse un palier dont le TTFT P95 dépasse cette valeur (ms) ; à fixer selon l'usage (HYPOTHÈSE)
+Colonne err : requêtes en erreur, plus les requêtes refusées pour contexte trop long (AIPerf les retire de
+ses métriques ; un palier qui en compte est refusé).
 Écrit <racine>/tableau.csv et affiche le point retenu par configuration (essais <conf>-r1, -r2…).
 Bibliothèque standard seulement."""
 import argparse, csv, json, pathlib, re, statistics
@@ -13,6 +15,12 @@ import argparse, csv, json, pathlib, re, statistics
 def stat(d, cle, champ):
     v = d.get(cle) or {}
     return v.get(champ) if isinstance(v, dict) else None
+
+
+def debord(d, cle="context_overflow_count"):
+    v = d.get(cle)
+    v = v.get("avg") if isinstance(v, dict) else v
+    return v or 0
 
 
 def serveur(dossier):
@@ -65,6 +73,12 @@ def main():
             "configuration": re.sub(r"-r\d+$", "", etiq), "essai": etiq, "concurrence": conc,
             "requetes": stat(d, "request_count", "avg"), "requetes_en_erreur": int(n_err),
             "sortie_moyenne_jetons": stat(d, "output_sequence_length", "avg"),
+            # Requêtes refusées pour contexte trop long : AIPerf les retire des métriques (scénario AgentX)
+            "debordements_contexte": int(debord(d)),
+            # Sorties plus courtes que demandé (vLLM réduit max_tokens à la place restante du contexte)
+            "sorties_raccourcies": int(debord(d, "osl_mismatch_count")),
+            "essai_valide_aiperf": (d.get("metadata") or {}).get("submission_valid"),
+            "raisons_invalide": ";".join((d.get("metadata") or {}).get("submission_invalid_reasons") or []),
             "debit_sortie_total": debit,
             "debit_sortie_par_gpu": debit / p.gpu if debit else None,
             "interactivite_p10": stat(d, "output_token_throughput_per_user", "p10"),
@@ -76,6 +90,23 @@ def main():
             "cache_prefixes": s.get("cache_prefixes"), "acceptation_mtp": s.get("acceptation_mtp"),
             "requetes_en_attente_max": s.get("attente_max")})
     lignes.sort(key=lambda l: (l["essai"], l["concurrence"]))
+    # Essais qu'AIPerf ne tient pas pour valides (scénario AgentX) et filtre de contexte noté par agentx.sh
+    for etiq in sorted({l["essai"] for l in lignes}):
+        ls = [l for l in lignes if l["essai"] == etiq]
+        if any(l["essai_valide_aiperf"] is False for l in ls):
+            raisons = sorted({r for l in ls for r in l["raisons_invalide"].split(";") if r})
+            print(f"ATTENTION : {etiq} : AIPerf marque l'essai submission_valid=false ({', '.join(raisons) or '?'}) : "
+                  "non comparable aux résultats AgentX publiés.")
+        racc = [str(l["concurrence"]) for l in ls if l["sorties_raccourcies"]]
+        if racc:
+            print(f"ATTENTION : {etiq} : sorties plus courtes que demandé aux concurrences {', '.join(racc)} "
+                  "(osl_mismatch_count d'AIPerf : contexte presque plein, vLLM réduit max_tokens) : débit et "
+                  "interactivité portent sur des sorties tronquées ; monte --max-model-len ou baisse CONTEXTE_MAX.")
+        meta = pathlib.Path(p.racine) / etiq / "agentx.txt"
+        if meta.exists():
+            info = dict(x.split("=", 1) for x in meta.read_text().splitlines() if "=" in x)
+            if info.get("contexte_max"):
+                print(f"ATTENTION : {etiq} : traces filtrées à {info['contexte_max']} jetons (CONTEXTE_MAX) : sous-ensemble.")
     if not lignes:
         raise SystemExit(f"Aucun profile_export_aiperf.json sous {p.racine}/<essai>/c<N>/")
     sortie = pathlib.Path(p.racine) / "tableau.csv"
@@ -87,7 +118,7 @@ def main():
     print(f"{'essai':<18}{'conc':>5}{'débit/GPU':>11}{'inter P10':>11}{'TTFT P95 ms':>13}{'préempt':>9}{'err':>5}{'cache':>7}{'MTP':>6}{'sortie moy':>12}")
     for l in lignes:
         print(f"{l['essai']:<18}{l['concurrence']:>5}{f2(l['debit_sortie_par_gpu']):>11}{f2(l['interactivite_p10']):>11}"
-              f"{f2(l['ttft_p95_ms'], 0):>13}{f2(l['preemptions'], 0):>9}{l['requetes_en_erreur']:>5}"
+              f"{f2(l['ttft_p95_ms'], 0):>13}{f2(l['preemptions'], 0):>9}{l['requetes_en_erreur'] + l['debordements_contexte']:>5}"
               f"{pc(l['cache_prefixes']):>7}{pc(l['acceptation_mtp']):>6}{f2(l['sortie_moyenne_jetons'], 0):>12}")
     # Point de fonctionnement : médiane des répétitions par (configuration, concurrence), puis le palier
     # au débit le plus élevé qui respecte la cible, sans requête en erreur ni préemption.
@@ -102,7 +133,7 @@ def main():
             ls = groupes[(conf, c)]
             p10 = statistics.median([l["interactivite_p10"] or 0 for l in ls])
             debs = [l["debit_sortie_par_gpu"] or 0 for l in ls]
-            err = sum(l["requetes_en_erreur"] for l in ls)
+            err = sum(l["requetes_en_erreur"] + l["debordements_contexte"] for l in ls)  # débordements = erreurs
             manque = any(l["preemptions"] is None for l in ls)
             sans_metriques |= manque
             pre = sum(l["preemptions"] or 0 for l in ls)

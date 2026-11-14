@@ -37,3 +37,5 @@ code { font-size: 12px; word-break: break-all; }
 .config-serveur table { font-size: 0.85rem; }
 .config-serveur h4 { margin: 0.25rem 0; }
 .resultat-test { display: flex; flex-direction: column; gap: 2px; font-size: 13px; }
+
+pre.sortie { white-space: pre; overflow-x: auto; font-size: 12px; background: var(--fond-doux, #f4f4f2); padding: 10px; }

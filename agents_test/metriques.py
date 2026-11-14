@@ -20,10 +20,13 @@ JAUGE_ATTENTE = "vllm:num_requests_waiting"
 _LIGNE = re.compile(r"^([A-Za-z_:][A-Za-z0-9_:]*)(\{[^}]*\})?\s+([-+0-9.eEinfa]+)")
 
 
+_OUVREUR = urllib.request.build_opener(urllib.request.ProxyHandler({}))  # réseau privé : pas de proxy
+
+
 def lire(url, delai_s=5, maxima=None):
     """Valeurs d'un /metrics, additionnées par nom (le suffixe _total des compteurs est retiré).
     Si `maxima` est un dict, il reçoit le maximum par série de chaque nom."""
-    with urllib.request.urlopen(urllib.request.Request(url), timeout=delai_s) as r:
+    with _OUVREUR.open(urllib.request.Request(url), timeout=delai_s) as r:
         if r.geturl() != url:
             raise ValueError("redirection refusée")
         texte = r.read().decode("utf-8", "replace")
