@@ -7,7 +7,7 @@ import argparse
 import asyncio, json, random
 from aiohttp import web
 VUS=[]  # requêtes déjà vues (texte), pour simuler le cache de préfixes
-SORTIE=0; ENTREE=0; REQUETES=0; HTTP={"2xx":0}  # comme prometheus_fastapi_instrumentator : une série n'apparaît qu'à sa première requête
+SORTIE=0; ENTREE=0; REQUETES=0; EN_COURS=[0]; HTTP={"2xx":0}  # comme prometheus_fastapi_instrumentator : une série n'apparaît qu'à sa première requête
 # Histogrammes imitant vLLM (bornes par défaut de vLLM ; --bornes-itl les remplace, comme --custom-histogram-buckets)
 B_TTFT=[0.001,0.005,0.01,0.02,0.04,0.06,0.08,0.1,0.25,0.5,0.75,1.0,2.5,5.0,7.5,10.0,20.0,40.0,80.0,160.0,640.0,2560.0]
 B_ITL=[0.01,0.025,0.05,0.075,0.1,0.15,0.2,0.3,0.4,0.5,0.75,1.0,2.5,5.0,7.5,10.0,20.0,40.0,80.0]
@@ -46,6 +46,10 @@ async def chat(r):
             "choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"length"}],
             "usage":{"prompt_tokens":n_in,"completion_tokens":1,"total_tokens":n_in+1}})
     resp=web.StreamResponse(headers={"Content-Type":"text/event-stream"}); await resp.prepare(r)
+    EN_COURS[0]+=1
+    try: return await flux(r,b,resp,n,n_in,c)
+    finally: EN_COURS[0]-=1
+async def flux(r,b,resp,n,n_in,c):
     t0=asyncio.get_running_loop().time()
     await asyncio.sleep(0.02+ (n_in-c)/2_000_000)
     t1=None
@@ -106,6 +110,7 @@ async def metrics(r):
        f"# TYPE vllm:request_success counter\nvllm:request_success_total{{engine=\"0\",finished_reason=\"length\",model_name=\"banc\"}} {REQUETES}\n"
        + "".join(f'http_requests_total{{handler="/v1/chat/completions",method="POST",status="{k}"}} {v}.0\n' for k,v in HTTP.items()) +
        "# TYPE vllm:num_requests_waiting gauge\nvllm:num_requests_waiting{engine=\"0\",model_name=\"banc\"} 0.0\n"
+       f"# TYPE vllm:num_requests_running gauge\nvllm:num_requests_running{{engine=\"0\",model_name=\"banc\"}} {EN_COURS[0]}.0\n"
        + histo("vllm:time_to_first_token_seconds", B_TTFT, H["ttft"])
        + histo("vllm:inter_token_latency_seconds", BORNES_ITL, H["tpot"])
        + histo("vllm:request_time_per_output_token_seconds", BORNES_ITL, H["tpot"]) +
@@ -115,6 +120,8 @@ async def metrics(r):
        "vllm:cache_config_info{block_size=\"16\",cache_dtype=\"auto\",enable_prefix_caching=\"True\",gpu_memory_utilization=\"0.9\",num_gpu_blocks=\"1000\"} 1.0\n")
     return web.Response(text=t, content_type="text/plain")
 EMPREINTE=lambda: "vllm-0.0.0-tp4-dp2-ep-0a1b2c3d" if ARGS.mode_dev else "vllm-0.0.0-tp8-ep-0a1b2c3d"
+async def admin(r):  # essais : change le taux d'erreurs simulées pendant que le serveur tourne
+    global TAUX_ERREUR; TAUX_ERREUR=float(r.query.get("taux",TAUX_ERREUR)); return web.json_response({"taux":TAUX_ERREUR})
 async def version(r): return web.json_response({"version":"0.0.0-factice"})
 async def server_info(r):
     if not ARGS.mode_dev: return web.Response(status=404)
@@ -126,6 +133,6 @@ a.add_argument("--delai-jeton",type=float,default=0.003,help="secondes entre deu
 a.add_argument("--bornes-itl",default="",help="bornes JSON de l'histogramme inter_token_latency, comme --custom-histogram-buckets de vLLM")
 a.add_argument("--mode-dev",action="store_true",help="imite VLLM_SERVER_DEV_MODE=1 (/server_info)"); a.add_argument("--port",type=int,default=8001); a.add_argument("--taux-erreur",type=float,default=0.0)
 ARGS=a.parse_args(); BORNES_ITL=json.loads(ARGS.bornes_itl) if ARGS.bornes_itl else B_ITL; PORT=ARGS.port; TAUX_ERREUR=ARGS.taux_erreur
-app=web.Application(client_max_size=200*1024*1024); app.add_routes([web.get("/v1/models",models),web.post("/v1/chat/completions",chat),web.get("/metrics",metrics),web.get("/version",version),web.get("/server_info",server_info),web.get("/litellm/metrics/",metrics_litellm),
+app=web.Application(client_max_size=200*1024*1024); app.add_routes([web.get("/v1/models",models),web.post("/v1/chat/completions",chat),web.get("/metrics",metrics),web.get("/version",version),web.get("/admin",admin),web.get("/server_info",server_info),web.get("/litellm/metrics/",metrics_litellm),
     web.get("/litellm/metrics",lambda r: web.HTTPTemporaryRedirect("/litellm/metrics/"))])
 web.run_app(app,host="127.0.0.1",port=PORT,print=None)

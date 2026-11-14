@@ -1,9 +1,10 @@
 # Interface du banc
 
-Petite application locale pour lancer les essais du banc, suivre leur journal et afficher les résultats.
-Elle appelle les mêmes scripts que la ligne de commande (`balayage.sh`, `agentx.sh`, `agents_test/lanceur.py`,
-`observation/observer.py` et les dépouilleurs) : un essai lancé ici est identique au même essai
-lancé à la main, et la commande exacte est écrite en tête de son journal.
+Petite application locale pour lancer les stress tests du banc, suivre leur journal, afficher les résultats et
+interroger Prometheus pour l'observation de l'usage réel. Elle appelle les mêmes scripts que la ligne de
+commande (`balayage.sh`, `agentx.sh`, `agents_test/lanceur.py`, `observation/interroger.py` et les dépouilleurs) :
+un essai lancé ici est identique au même essai lancé à la main, et la commande exacte est écrite en tête de
+son journal.
 
 ## Lancer
 
@@ -23,7 +24,7 @@ ssh -L 8765:127.0.0.1:8765 <nœud>
 
 puis ouvrir sur ton poste l'adresse affichée par le serveur (avec son jeton).
 
-Le serveur vLLM se démarre toujours à la main, avec les options du § 1.2 du README du dépôt.
+L'interface ne démarre jamais vLLM : elle mesure celui qui tourne. Options à vérifier selon le mode : § 1.2 du README du dépôt.
 
 ## Sécurité
 
@@ -36,21 +37,25 @@ Le serveur vLLM se démarre toujours à la main, avec les options du § 1.2 du R
   l'interface comptent ; du terminal, seuls passent `PATH`, `HOME`, `USER`, `LOGNAME`, `SHELL`, `TERM`, `TMPDIR`,
   la langue (`LANG`, `LC_*`), le fuseau horaire (`TZ`), `VIRTUAL_ENV`, `HF_HOME`, `HF_HUB_CACHE`, le proxy, les
   certificats et `DO_NOT_TRACK`.
-- La clé d'API va à la cible. En observation avec la vue par agent, le `/metrics/` de LiteLLM (protégé par
-  défaut) reçoit le champ « Clé LiteLLM » s'il est rempli, sinon la clé d'API. Aucune clé ne va au `/metrics` de vLLM.
+- La clé d'API va à la cible ; aucune clé ne va au `/metrics` de vLLM. En observation, seule la « Clé de
+  Prometheus » (si remplie) part, vers Prometheus ; la clé de LiteLLM est dans la configuration de Prometheus,
+  pas dans l'interface.
 
 ## Ce qu'elle fait
 
-- **Lancer** : champs de connexion (cible vLLM ou LiteLLM, modèle, métriques vLLM, clé d'API), bouton « Tester la connexion » (qui affiche aussi la configuration du serveur vLLM : version, cache de préfixes, nombre de jetons spéculatifs, parallélisme TP/PP/DP/EP lu dans l'empreinte des réponses et, seulement si vLLM est lancé avec `VLLM_SERVER_DEV_MODE=1`, méthode de décodage spéculatif et ordonnanceur), puis l'un des quatre modes : stress test synthétique
-  (AIPerf), stress test AgentX, stress test agents de test, ou observation de l'usage réel (README du dépôt, § 3 à 6).
+- **Lancer** : champs de connexion (cible vLLM ou LiteLLM, modèle, métriques vLLM, clé d'API), bouton « Tester la connexion » (qui affiche aussi la configuration du serveur vLLM : version, cache de préfixes, nombre de jetons spéculatifs, parallélisme TP/PP/DP/EP lu dans l'empreinte des réponses et, seulement si vLLM est lancé avec `VLLM_SERVER_DEV_MODE=1`, méthode de décodage spéculatif et ordonnanceur), puis l'un des trois stress tests : synthétique
+  (AIPerf), AgentX ou agents de test (README du dépôt, § 3 à 5).
   Pour les agents de test, « Étiqueter les agents » et « Clés par agent » donnent à chaque requête l'identité
-  de son profil, pour la vue par agent via LiteLLM (README du dépôt, § 6.4).
-- **Essais** : liste des essais lancés depuis l'ouverture de l'interface, journal en direct, arrêt (une
-  observation arrêtée enregistre sa fenêtre en cours, raccourcie).
+  de son profil, pour la vue par agent via LiteLLM (README du dépôt, § 6.5).
+- **Essais** : liste des essais lancés depuis le démarrage du serveur de l'interface, journal en direct, arrêt.
   Les journaux restent dans `interface/journaux/`.
 - **Résultats** : dépouillement d'un dossier de résultats (tableau, point retenu, avertissements, courbe
-  débit par GPU selon l'interactivité, avec la cible) ; pour l'observation, vues par fenêtre, par période
-  (plages de 6 h ou heures) et par agent (métriques de LiteLLM).
+  débit par GPU selon l'interactivité, avec la cible).
+- **Observation** : rien à lancer. URL de Prometheus, sélecteurs des cibles vLLM et LiteLLM, plage (« Depuis »,
+  ou début et fin), durée des fenêtres, puis « Afficher » : vues par fenêtre, par période (plages de 6 h ou
+  heures) et par agent (README du dépôt, § 6). Case « actualiser chaque minute » pour suivre l'usage en direct.
+  Les plages des essais lancés depuis l'interface (depuis le démarrage de son serveur) sont marquées « essai en cours » et
+  écartées des verdicts. Fonctionne pendant qu'un essai tourne.
 
 ## Modifier l'interface
 

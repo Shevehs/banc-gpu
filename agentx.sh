@@ -69,6 +69,12 @@ printf 'jeu=%s\ndossier=%s\nduree=%s\nessai_court=%s\ncontexte_max=%s\nsubmissio
 # (même contournement que balayage.sh). Les traces en ligne restent téléchargeables.
 SANS_HORS_LIGNE=()
 [ -n "$TOKENIZER" ] && [ -d "$TOKENIZER" ] && SANS_HORS_LIGNE=(env -u HF_HUB_OFFLINE -u TRANSFORMERS_OFFLINE)
+# Chargement des 393 traces (téléchargement compris au premier essai) : plusieurs minutes, plus que les 300 s
+# accordées par défaut par AIPerf (AIPERF_DATASET_CONFIGURATION_TIMEOUT ; le délai de configuration du profil,
+# AIPERF_SERVICE_PROFILE_CONFIGURE_TIMEOUT, doit être au moins égal). Valeurs du terminal respectées.
+export AIPERF_DATASET_CONFIGURATION_TIMEOUT="${AIPERF_DATASET_CONFIGURATION_TIMEOUT:-1800}"
+export AIPERF_SERVICE_PROFILE_CONFIGURE_TIMEOUT="$(awk -v a="${AIPERF_SERVICE_PROFILE_CONFIGURE_TIMEOUT:-0}" \
+  -v b="$AIPERF_DATASET_CONFIGURATION_TIMEOUT" 'BEGIN { print (a + 0 > b + 0) ? a : b }')"   # AIPerf exige ≥ le premier
 for C in $CONC; do
   DIR="$RACINE/$ETIQ/c$C"
   ARGS=(-m "$MODELE" --endpoint-type chat --streaming -u "$URL" --scenario inferencex-agentx-mvp
@@ -89,4 +95,4 @@ for C in $CONC; do
   SEL=$(grep -o -E "scanned [0-9,]+, rejected_by_maxctx [0-9,]+( \([^)]*\))?, eligible [0-9]+(,[0-9]{3})*" "$DIR.log" 2>/dev/null | head -1 || true)
   [ -n "$SEL" ] && echo "   traces : $SEL"
 done
-echo "Terminé. Résultats dans $RACINE/$ETIQ/ ; dépouillement : python depouiller.py $RACINE --cible 30 --gpu <GPU>"
+echo "Terminé. Résultats dans $RACINE/$ETIQ/ ; dépouillement : python depouiller.py $RACINE --cible 30 (GPU déduits de l'empreinte ; --gpu N pour forcer)"

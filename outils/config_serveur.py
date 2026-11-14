@@ -111,12 +111,16 @@ def releve(url, metriques=None, cle=None, modele=None, budget_s=45):
     for um in urls_m:
         base = um[: -len("/metrics")] if um.endswith("/metrics") else um
         srv = {"metriques": um, "version": None, "cache_config": None, "jetons_speculatifs_metriques": None,
-               "configuration": None}
+               "configuration": None, "lignes_vllm": None, "statut_metriques": None}
         if time.time() < fin:
             v = _json(base + "/version", delai_s=reste(5))
             srv["version"] = v.get("version") if v else None
         try:
+            if time.time() >= fin:
+                srv["statut_metriques"] = "budget"
             s, t = _requete(um, delai_s=reste(5)) if time.time() < fin else (0, "")
+            if s:
+                srv["statut_metriques"] = s
             positions, lignes_vllm = set(), 0
             for ligne in t.splitlines() if s == 200 else []:
                 lignes_vllm += ligne.startswith("vllm:")
@@ -128,8 +132,11 @@ def releve(url, metriques=None, cle=None, modele=None, budget_s=45):
                 p = _POSITION.match(ligne)
                 if p:
                     positions.add(p.group(1))
+            srv["lignes_vllm"] = lignes_vllm if s == 200 else None
             if s == 200 and lignes_vllm:
                 srv["jetons_speculatifs_metriques"] = len(positions)  # 0 = pas de décodage spéculatif (INFÉRÉ)
+        except urllib.error.HTTPError as e:
+            srv["statut_metriques"] = e.code  # 401/403 : adresse protégée par une clé (LiteLLM), pas celle de vLLM
         except Exception:  # noqa: BLE001
             pass
         # Premier appel parfois lent (vLLM collecte l'environnement système) : délai plus long.
@@ -149,6 +156,42 @@ def releve(url, metriques=None, cle=None, modele=None, budget_s=45):
     return res
 
 
+def gpu_deduits(r):
+    """Nombre de GPU derrière la cible, déduit du relevé : TP × PP × DP lus dans l'empreinte, multiplié par le
+    nombre de serveurs vLLM relevés (une URL de métriques par réplique ; toutes supposées identiques à celle qui
+    a répondu). Renvoie (nombre ou None, explication, masque_possible)."""
+    try:
+        dec = (r.get("empreinte") or {}).get("decodee")
+        if not dec:
+            return None, "empreinte absente (complétion d'un jeton non faite, ou --fingerprint-mode none ou custom)", False
+        # Serveur vLLM reconnu : des lignes vllm: dans /metrics (relevés plus anciens : version ou métriques lues)
+        serveurs = [s for s in (r.get("serveurs") or [])
+                    if ((s.get("lignes_vllm") or 0) > 0 if "lignes_vllm" in s
+                        else s.get("jetons_speculatifs_metriques") is not None or bool(s.get("cache_config")))]
+        if not serveurs:
+            return None, "aucune URL de métriques ne répond comme un serveur vLLM (METRIQUES vide ou fausse)", False
+        tp, pp, dp = (int(dec[k]) for k in ("tensor_parallel_size", "pipeline_parallel_size", "data_parallel_size"))
+        par = ((serveurs[0].get("configuration") or {}).get("parallelisme") or {})
+        pcp = int(par.get("prefill_context_parallel_size") or 1)  # absent de l'empreinte ; lu si /server_info existe
+    except (AttributeError, KeyError, TypeError, ValueError) as e:
+        return None, f"config_serveur.json de forme inattendue ({type(e).__name__})", False
+    n = tp * pp * dp * pcp * len(serveurs)
+    return n, (f"{n} (TP {tp} × PP {pp} × DP {dp}" + (f" × PCP {pcp}" if pcp > 1 else "")
+               + f" × {len(serveurs)} serveur(s) vLLM)"), bool(dec.get("masque_possible"))
+
+
+def gpu_essai(dossier):
+    """gpu_deduits() pour le config_serveur.json d'un dossier d'essai ; (None, raison, False) s'il manque."""
+    import pathlib
+    f = pathlib.Path(dossier) / "config_serveur.json"
+    if not f.exists():
+        return None, "config_serveur.json absent", False
+    try:
+        return gpu_deduits(json.loads(f.read_text(encoding="utf-8")))
+    except (ValueError, OSError) as e:
+        return None, f"config_serveur.json illisible ({e})", False
+
+
 def resume(r):
     """Une ligne par serveur, pour les journaux."""
     dec = (r.get("empreinte") or {}).get("decodee")
@@ -162,6 +205,10 @@ def resume(r):
                          + (" (ou masqué si --fingerprint-mode hash)" if dec["masque_possible"] else "")
                          if dec else "")
                       + ("" if r["empreinte"].get("reponse") else " (pas de réponse : modèle, clé ou cible à vérifier)"))
+    n, expl, masque = gpu_deduits(r)
+    if n:
+        lignes.append(f"[config] GPU déduits : {expl}" + (" ; 1 GPU par serveur sauf si --fingerprint-mode hash masque "
+                                                          "le parallélisme" if masque else ""))
     for s in r["serveurs"]:
         cc = s["cache_config"] or {}
         sp = (s["configuration"] or {}).get("decodage_speculatif")
@@ -171,6 +218,18 @@ def resume(r):
                       f"{js if js is not None else '?'} ; /server_info "
                       + (f"lu (décodage spéculatif : {sp or 'aucun'})" if s["configuration"] else
                          "absent ou non lu (VLLM_SERVER_DEV_MODE non activé ?)"))
+        st = s.get("statut_metriques")
+        if s.get("lignes_vllm") == 0 or st in (401, 403, 307, 308):
+            lignes.append(f"[config] ATTENTION : {s['metriques']} n'est pas le /metrics de vLLM ("
+                          + ("aucune métrique vllm:" if s.get("lignes_vllm") == 0 else f"HTTP {st} : clé demandée")
+                          + ", adresse de LiteLLM ?) : préemptions, cache et cache KV ne seront pas lus ; mets l'adresse "
+                          "/metrics de vLLM dans METRIQUES (ex. http://<hôte-vllm>:8000/metrics).")
+        elif st == "budget":
+            lignes.append(f"[config] ATTENTION : {s['metriques']} non lu (budget de temps épuisé, serveurs lents).")
+        elif s.get("lignes_vllm") is None:
+            lignes.append(f"[config] ATTENTION : {s['metriques']} injoignable"
+                          + (f" (HTTP {st})" if isinstance(st, int) else "")
+                          + " : préemptions, cache et cache KV ne seront pas lus.")
     return "\n".join(lignes)
 
 

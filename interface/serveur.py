@@ -8,9 +8,10 @@ Sur une machine distante : tunnel SSH depuis ton poste, ex. ssh -L 8765:127.0.0.
 Le serveur n'écoute que sur 127.0.0.1 et exige un jeton aléatoire, affiché au démarrage dans l'adresse à
 ouvrir : une autre page web ou un autre utilisateur de la machine ne peut pas lancer d'essai sans lui.
 Il vérifie aussi l'en-tête Host et l'origine des requêtes. Il n'exécute que balayage.sh, agentx.sh,
-agents_test/lanceur.py, observation/observer.py et les scripts de dépouillement, avec des paramètres vérifiés (options
-AIPerf sur liste blanche) ; un essai lancé ici est identique au même essai lancé à la main (la commande
-exacte est écrite dans son journal, sans la clé d'API). Un seul essai à la fois.
+agents_test/lanceur.py et les scripts de dépouillement (dont observation/interroger.py, qui interroge Prometheus),
+avec des paramètres vérifiés (options AIPerf sur liste blanche) ; un essai lancé ici est identique au même essai
+lancé à la main (la commande exacte est écrite dans son journal, sans la clé d'API). Un seul essai à la fois ;
+l'observation n'est pas un essai : elle lit Prometheus et peut s'afficher pendant qu'un essai tourne.
 Dépendance : aiohttp (déjà installé avec AIPerf).
 """
 import argparse, asyncio, csv, json, os, re, secrets, shlex, signal, sys, time
@@ -104,7 +105,7 @@ def cle(v):
     return v
 
 
-SECRETS = ("CLE_API", "BANC_CLE_API", "BANC_CLES_AGENTS", "BANC_CLE_LITELLM")
+SECRETS = ("CLE_API", "BANC_CLE_API", "BANC_CLES_AGENTS", "BANC_CLE_PROMETHEUS")
 
 
 def dossier_resultats(v):
@@ -181,35 +182,6 @@ def commande_agentx(p):
     return cmd, env, BANC
 
 
-def commande_observation(p):
-    """Mode observation (observation/observer.py) : ne génère aucune charge."""
-    met = urls_metriques(p.get("metriques"))
-    if not met:
-        raise Refus("URL des métriques vLLM : obligatoire en observation (une par réplique)")
-    duree = nombre(p.get("duree", 900), "durée totale", 60, 7 * 86400, True)
-    cmd = [sys.executable, str(BANC / "observation" / "observer.py"), "--metriques", " ".join(met),
-           "--duree", str(duree), "--etiquette", nom(p.get("etiquette"), "étiquette"),
-           "--sortie", str(BANC / dossier_resultats(p.get("racine") or "resultats-observation"))]
-    if p.get("intervalle"):
-        cmd += ["--intervalle", str(nombre(p.get("intervalle"), "intervalle", 60, duree, True))]
-    if p.get("niveau") not in (None, ""):
-        cmd += ["--niveau", str(nombre(p.get("niveau"), "niveau", 0, 100_000, True))]
-    if p.get("litellm"):
-        u = str(p.get("litellm")).strip()
-        if not re.match(r"^https?://[A-Za-z0-9.\-]+(:\d{1,5})?(/[A-Za-z0-9._/-]*)?$", u):
-            raise Refus("URL des métriques LiteLLM : forme http://hôte:port/metrics attendue")
-        par = str(p.get("par") or "api_key_alias").strip()
-        if not re.match(r"^(api_key_alias|team_alias|user|end_user|metadata_[A-Za-z0-9_]{1,40})$", par):
-            raise Refus("agents distingués par : api_key_alias, team_alias, user, end_user ou metadata_<champ>")
-        cmd += ["--litellm", u, "--par", par]
-    if p.get("empreinte"):
-        cmd += ["--url", url_locale(p.get("url")), "--modele", modele(p.get("modele"))]
-    env = {"BANC_CLE_API": cle(p.get("cle_api"))} if cle(p.get("cle_api")) else {}
-    if cle(p.get("cle_litellm")):
-        env["BANC_CLE_LITELLM"] = cle(p.get("cle_litellm"))
-    return cmd, env, BANC
-
-
 def commande_agents(p):
     agents = [a for a in (p.get("agents") or []) if a in ("revue_code", "pentest", "rapport")]
     if not agents:
@@ -281,8 +253,8 @@ async def lancer(req):
     except Refus as e:
         return web.json_response({"erreur": str(e)}, status=400)
     try:
-        fab = {"synthetique": commande_synthetique, "agents": commande_agents, "agentx": commande_agentx,
-               "observation": commande_observation}.get(p.get("type"))
+        fab = {"synthetique": commande_synthetique, "agents": commande_agents,
+               "agentx": commande_agentx}.get(p.get("type"))
         if not fab:
             raise Refus("type d'essai inconnu")
         cmd, env, cwd = fab(p)
@@ -339,7 +311,7 @@ async def arreter(req):
 
 async def racines(req):
     """Dossiers de résultats présents, par type (d'après leur contenu)."""
-    synth, agents, agentx, obs = [], [], [], []
+    synth, agents, agentx = [], [], []
     for d in sorted(BANC.glob("resultats*")) + sorted((BANC / "agents_test").glob("resultats*")):
         if d.is_dir():
             rel = str(d.relative_to(BANC))
@@ -347,9 +319,7 @@ async def racines(req):
                 (agentx if any(d.glob("*/agentx.txt")) else synth).append(rel)
             if any(d.glob("*/n*/palier.json")):
                 agents.append(rel)
-            if any(d.glob("*/observation*.json")):
-                obs.append(rel)
-    return web.json_response({"synthetique": synth, "agents": agents, "agentx": agentx, "observation": obs})
+    return web.json_response({"synthetique": synth, "agents": agents, "agentx": agentx})
 
 
 async def resultats(req):
@@ -357,18 +327,14 @@ async def resultats(req):
     try:
         racine = dossier_resultats(q.get("racine"))
         cible = nombre(q.get("cible"), "cible", 0.1, 10_000)
-        gpu = nombre(q.get("gpu"), "GPU", 1, 64, True)
+        gpu = nombre(q.get("gpu"), "GPU", 1, 4096, True) if q.get("gpu") not in (None, "") else None
     except Refus as e:
         return web.json_response({"erreur": str(e)}, status=400)
     typ = q.get("type")
-    script, tableau = {"agents": ("agents_test/depouiller_agents.py", "tableau_agents.csv"),
-                       "observation": ("observation/depouiller_observation.py", "tableau_observation.csv")
+    script, tableau = {"agents": ("agents_test/depouiller_agents.py", "tableau_agents.csv")
                        }.get(typ, ("depouiller.py", "tableau.csv"))
-    cmd = [sys.executable, str(BANC / script), str(BANC / racine), "--cible", str(cible), "--gpu", str(gpu)]
-    if typ == "observation":
-        vue = q.get("vue") if q.get("vue") in ("fenetres", "periode", "agents") else "fenetres"
-        cmd += ["--vue", vue, "--periode", "heure" if q.get("periode") == "heure" else "plage"]
-    elif q.get("exiger") == "1":
+    cmd = [sys.executable, str(BANC / script), str(BANC / racine), "--cible", str(cible)] + (["--gpu", str(gpu)] if gpu else [])
+    if q.get("exiger") == "1":
         cmd.append("--exiger-metriques")
     proc = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
     sortie = (await proc.communicate())[0].decode("utf-8", "replace")
@@ -378,7 +344,82 @@ async def resultats(req):
         with open(fichier, newline="", encoding="utf-8") as fh:
             lignes = list(csv.DictReader(fh))
     messages = [l for l in sortie.splitlines() if "retenu" in l or "ATTENTION" in l or "aucun" in l.lower()
+                or l.startswith("GPU :") or l.startswith("ERREUR")
                 or "qui tient" in l]
+    return web.json_response({"lignes": lignes, "messages": messages, "sortie": sortie, "code": proc.returncode,
+                              "commande": " ".join(cmd)})
+
+
+SEL_OK = re.compile(r'^\s*[A-Za-z_][A-Za-z0-9_]*\s*(=|!=|=~|!~)\s*"[^"\\]*"'
+                    r'(\s*,\s*[A-Za-z_][A-Za-z0-9_]*\s*(=|!=|=~|!~)\s*"[^"\\]*")*\s*$')
+DUREE_OK = re.compile(r"^\d{1,6}[smhd]?$")
+DATE_OK = re.compile(r"^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}(:\d{2})?$")
+
+
+async def observation(req):
+    """Observation : interroge Prometheus (observation/interroger.py) ; rien à lancer, aucune charge générée.
+    Les plages des essais lancés depuis cette interface sur la même période sont écartées (--exclure)."""
+    try:
+        p = await corps(req)
+        u = str(p.get("prometheus") or "").strip()
+        if not re.match(r"^https?://[A-Za-z0-9.\-]+(:\d{1,5})?(/[A-Za-z0-9._/-]*)?$", u):
+            raise Refus("URL de Prometheus : forme http://hôte:9090 attendue")
+        cmd = [sys.executable, str(BANC / "observation" / "interroger.py"), "--prometheus", u.rstrip("/"),
+               "--cible", str(nombre(p.get("cible"), "cible", 0.1, 10_000)),
+               "--gpu", str(nombre(p.get("gpu"), "GPU", 1, 4096, True))]
+        sel = str(p.get("vllm") or 'job="vllm"')
+        if not SEL_OK.match(sel):
+            raise Refus('sélecteur vLLM : ex. job="vllm"')
+        cmd += ["--vllm", sel]
+        vue = p.get("vue") if p.get("vue") in ("fenetres", "periode", "agents") else "fenetres"
+        if p.get("litellm"):
+            sl = str(p.get("litellm"))
+            par = str(p.get("par") or "metadata_agent").strip()
+            if not SEL_OK.match(sl):
+                raise Refus('sélecteur LiteLLM : ex. job="litellm"')
+            if not re.match(r"^(api_key_alias|team_alias|user|end_user|metadata_[A-Za-z0-9_]{1,40})$", par):
+                raise Refus("agents distingués par : api_key_alias, team_alias, user, end_user ou metadata_<champ>")
+            cmd += ["--litellm", sl, "--par", par]
+        elif vue == "agents":
+            raise Refus("vue par agent : donne le sélecteur LiteLLM")
+        for k in ("fenetre", "collecte", "depuis"):
+            v = str(p.get(k) or "").strip()
+            if v:
+                if not DUREE_OK.match(v) or (k == "depuis" and v.endswith("d") and int(v[:-1]) > 400):
+                    raise Refus(f"{k} : durée attendue, ex. 5m, 2h, 1d (400 jours au plus)")
+                cmd += [f"--{k}", v]
+        for k in ("debut", "fin"):
+            v = str(p.get(k) or "").strip()
+            if v:
+                if not DATE_OK.match(v):
+                    raise Refus(f"{k} : date attendue, forme AAAA-MM-JJ HH:MM")
+                cmd += [f"--{k}", v.replace("T", " ")]
+        if p.get("ttft_max") not in (None, ""):
+            cmd += ["--ttft-max", str(nombre(p.get("ttft_max"), "TTFT max", 1, 10_000_000))]
+        cmd += ["--vue", vue, "--periode", "heure" if p.get("periode") == "heure" else "plage"]
+        k = cle(p.get("cle_prometheus"))
+    except Refus as e:
+        return web.json_response({"erreur": str(e)}, status=400)
+    for e in ESSAIS.values():  # stress tests lancés d'ici : leur charge ne doit pas compter comme usage réel
+        fin = e["fin"] or time.time()
+        cmd += ["--exclure", f"{e['debut']:.0f}/{fin + 60:.0f}"]
+    JOURNAUX.mkdir(exist_ok=True)
+    csv_f = JOURNAUX / f"observation-{secrets.token_hex(4)}.csv"
+    proc = await asyncio.create_subprocess_exec(*cmd, "--sortie", str(csv_f), cwd=str(BANC),
+                                                env={**environnement_de_base(), **({"BANC_CLE_PROMETHEUS": k} if k else {})},
+                                                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
+    try:
+        sortie = (await asyncio.wait_for(proc.communicate(), timeout=120))[0].decode("utf-8", "replace")
+    except asyncio.TimeoutError:
+        proc.kill()
+        return web.json_response({"erreur": "Prometheus n'a pas répondu en 120 s : réduis la plage"}, status=504)
+    lignes = []
+    if csv_f.exists():
+        with open(csv_f, newline="", encoding="utf-8") as fh:
+            lignes = list(csv.DictReader(fh))
+        csv_f.unlink()
+    messages = [l for l in sortie.splitlines() if "ATTENTION" in l or "Plus haute" in l or l.startswith("Aucun")
+                or "injoignable" in l or "HTTP" in l]
     return web.json_response({"lignes": lignes, "messages": messages, "sortie": sortie, "code": proc.returncode,
                               "commande": " ".join(cmd)})
 
@@ -467,7 +508,7 @@ def main():
     app.add_routes([web.post("/api/essais", lancer), web.get("/api/essais", liste),
                     web.get("/api/essais/{eid}/journal", journal), web.post("/api/essais/{eid}/arreter", arreter),
                     web.get("/api/racines", racines), web.get("/api/resultats", resultats),
-                    web.post("/api/test-connexion", tester), web.get("/", accueil)])
+                    web.post("/api/test-connexion", tester), web.post("/api/observation", observation), web.get("/", accueil)])
     if (DIST / "assets").exists():
         app.router.add_static("/assets", DIST / "assets")
     print(f"Interface du banc : http://127.0.0.1:{p.port}/?jeton={JETON}\n(ouvre cette adresse exacte ; Ctrl-C pour arrêter l'interface et les essais en cours)")
