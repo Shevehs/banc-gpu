@@ -1,0 +1,24 @@
+# Configuration Prometheus pour le mode observation du banc (README, § 6).
+# Copie : cp outils/prometheus.yml.exemple prometheus.yml, puis remplace les adresses.
+# Lancement : prometheus --config.file=prometheus.yml --storage.tsdb.path=prometheus-data --storage.tsdb.retention.time=30d
+# (en Docker Compose : README, § 6.2, façon B ; adresses vues du conteneur, host.docker.internal pour l'hôte)
+global:
+  scrape_interval: 15s          # = --collecte de observation/interroger.py
+
+scrape_configs:
+  # Serveurs vLLM : une adresse hôte:port par réplique (chemin /metrics, sans clé : vLLM ne le protège pas).
+  # Un job = une configuration ; observation/interroger.py additionne toutes les répliques du job.
+  - job_name: vllm
+    static_configs:
+      - targets: ["127.0.0.1:8000"]
+
+  # LiteLLM (optionnel, vue par agent) : callback « prometheus » activé, métriques sur /metrics/ (barre finale).
+  # Clé dans un fichier à part, relatif au dossier de ce fichier : (umask 077; printf '%s' "<clé>" > litellm.cle)
+  # pour Prometheus lancé par toi ; chmod 644 s'il tourne en Docker (utilisateur nobody).
+  # Supprime ce bloc si tu n'utilises pas LiteLLM.
+  - job_name: litellm
+    metrics_path: /metrics/
+    authorization:
+      credentials_file: litellm.cle
+    static_configs:
+      - targets: ["127.0.0.1:4000"]
