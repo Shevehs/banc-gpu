@@ -1,0 +1,14 @@
+.venv*/
+__pycache__/
+node_modules/
+resultats*/
+agents_test/resultats*/
+interface/journaux/
+.DS_Store
+cible.env
+traces-agentx*/
+prometheus.yml
+litellm.cle
+prometheus-data/
+data/
+/*.csv

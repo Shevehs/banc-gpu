@@ -1,0 +1,9 @@
+# Prometheus pour vérifier l'observation avec le serveur factice (README, § 12). Clé « LiteLLM » quelconque.
+global: {scrape_interval: 5s}
+scrape_configs:
+  - job_name: vllm
+    static_configs: [{targets: ["127.0.0.1:8001"]}]
+  - job_name: litellm
+    metrics_path: /litellm/metrics/
+    authorization: {credentials_file: litellm.cle}     # relatif à ce fichier : outils/litellm.cle
+    static_configs: [{targets: ["127.0.0.1:8001"]}]
