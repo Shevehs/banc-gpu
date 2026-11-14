@@ -1,5 +1,6 @@
 """Dépouille les paliers du lanceur d'agents : une ligne par palier, plus le détail par agent.
-Usage : python depouiller_agents.py resultats-agents --cible 30 --gpu 1 [--exiger-metriques]
+Usage : python depouiller_agents.py resultats-agents --cible 30 [--gpu 8] [--exiger-metriques]
+  --gpu : facultatif ; sans lui, déduit de config_serveur.json de chaque essai (TP × PP × DP × répliques)
 Les métriques du serveur (préemptions, cache de préfixes côté serveur, acceptation MTP, cache KV maximal)
 viennent du relevé /metrics fait par le lanceur (palier.json) ; elles figurent sur la ligne « tous ».
 Fenêtre retenue : du début du palier + préchauffe jusqu'à la fin prévue du palier ; seuls les appels
@@ -18,6 +19,27 @@ def centile(xs, q):
 
 def lire(f):
     return [json.loads(l) for l in open(f, encoding="utf-8") if l.strip()] if f.exists() else []
+
+
+def nombre_gpu(dossier_essai, gpu_donne, notes):
+    """GPU derrière la cible pour un essai : --gpu s'il est donné, sinon déduit de son config_serveur.json
+    (TP × PP × DP de l'empreinte × répliques). Note l'origine dans `notes` ; None si rien ne permet de le savoir."""
+    import sys as _s
+    _s.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "outils"))
+    from config_serveur import gpu_essai
+    n, expl, masque = gpu_essai(dossier_essai)
+    nom = pathlib.Path(dossier_essai).name
+    if gpu_donne:
+        if n and n != gpu_donne and not masque:
+            notes[nom] = (f"ATTENTION : {nom} : --gpu {gpu_donne}, mais l'empreinte donne {expl} : vérifie la valeur.")
+        return gpu_donne
+    if n is None:
+        notes[nom] = expl
+        return None
+    notes[nom] = (f"GPU : {nom} : {expl}, déduits de l'empreinte"
+                  + (" ; ATTENTION : 1 GPU par serveur supposé, car l'empreinte n'a pas de degré de parallélisme "
+                     "(--fingerprint-mode hash le masquerait) : donne --gpu si le serveur en a plus." if masque else "."))
+    return n
 
 
 def bilan(appels, t0, t1, n_gpu):
@@ -39,16 +61,21 @@ def bilan(appels, t0, t1, n_gpu):
 
 def main():
     a = argparse.ArgumentParser()
-    a.add_argument("racine"); a.add_argument("--cible", type=float, required=True); a.add_argument("--gpu", type=int, required=True)
+    a.add_argument("racine"); a.add_argument("--cible", type=float, required=True); a.add_argument("--gpu", type=int, default=None)
     a.add_argument("--exiger-metriques", action="store_true", help="refuse un palier sans métriques du serveur")
     p = a.parse_args()
-    lignes = []
+    if p.gpu is not None and p.gpu < 1:
+        raise SystemExit("--gpu : entier ≥ 1")
+    lignes, notes_gpu, sans_gpu = [], {}, {}
     for fp in sorted(pathlib.Path(p.racine).glob("*/n*/palier.json"), key=lambda f: (f.parent.parent.name, int(f.parent.name[1:]))):
         d = fp.parent; meta = json.loads(fp.read_text())
+        n_gpu = nombre_gpu(d.parent, p.gpu, notes_gpu)
+        if n_gpu is None:
+            sans_gpu[d.parent.name] = notes_gpu.pop(d.parent.name, "?"); continue
         t0 = meta["t_debut"] + meta["prechauffe"]; t1 = meta["t_fin"]
         appels = lire(d / "appels.jsonl"); taches = lire(d / "taches.jsonl")
         tf = [t for t in taches if not t.get("erreur")]
-        b = bilan(appels, t0, t1, p.gpu)
+        b = bilan(appels, t0, t1, n_gpu); b["gpu"] = n_gpu
         ms = meta.get("metriques") or {}
         rapport = lambda a, b_: (a / b_) if a is not None and b_ else None
         serveur = {"preemptions": ms.get("preemptions"),
@@ -60,13 +87,28 @@ def main():
                        "taches_finies": len(tf), "taches_en_erreur": len(taches) - len(tf),
                        "duree_tache_p50_min": (centile([t["t_fin"] - t["t_debut"] for t in tf], .5) or 0) / 60, **b, **serveur})
         for ag in meta["agents"]:
-            ba = bilan([x for x in appels if x["agent"] == ag], t0, t1, p.gpu)
+            ba = bilan([x for x in appels if x["agent"] == ag], t0, t1, n_gpu)
             ta = [t for t in tf if t["agent"] == ag]
             lignes.append({"essai": d.parent.name, "taches_simultanees": meta["taches_simultanees"], "agent": ag,
                            "taches_finies": len(ta), "taches_en_erreur": sum(1 for t in taches if t["agent"] == ag and t.get("erreur")),
                            "duree_tache_p50_min": (centile([t["t_fin"] - t["t_debut"] for t in ta], .5) or 0) / 60, **ba,
                            "preemptions": None, "cache_prefixes_serveur": None, "acceptation_mtp": None, "cache_kv_max_fraction": None,
                            "requetes_en_attente_max": None})
+    if sans_gpu:
+        raise SystemExit("ERREUR : nombre de GPU inconnu pour "
+                         + " ; ".join(f"{e} ({r})" for e, r in sorted(sans_gpu.items()))
+                         + " : donne --gpu (champ « GPU » dans l'interface).")
+    for n in notes_gpu.values():
+        print(n)
+    par_conf = {}
+    for l in lignes:
+        if l.get("gpu") is not None:
+            par_conf.setdefault(re.sub(r"-r\d+$", "", l["essai"]), {})[l["essai"]] = l["gpu"]
+    for conf, ess in sorted(par_conf.items()):
+        if len(set(ess.values())) > 1:
+            print(f"ATTENTION : {conf} : nombre de GPU différent selon les répétitions ("
+                  + ", ".join(f"{e} = {g}" for e, g in sorted(ess.items()))
+                  + ") : la médiane mélange des configurations ; vérifie, ou donne --gpu.")
     if not lignes:
         raise SystemExit(f"Aucun palier sous {p.racine}/<essai>/n<N>/")
     with open(pathlib.Path(p.racine) / "tableau_agents.csv", "w", newline="") as fh:

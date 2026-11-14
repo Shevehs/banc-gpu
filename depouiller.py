@@ -1,8 +1,9 @@
 """Dépouille les essais AIPerf : un tableau par palier et le point de fonctionnement retenu.
-Usage : python depouiller.py resultats --cible 30 --gpu 1 [--exiger-metriques]
+Usage : python depouiller.py resultats --cible 30 [--gpu 8] [--exiger-metriques]
   --cible : interactivité visée par fil (jetons/s) ; le 10e centile doit l'atteindre
             (interactivité d'une requête = 1 / délai moyen entre jetons, hors premier jeton)
-  --gpu   : nombre de GPU derrière la cible, toutes répliques comprises (débit par GPU = débit total / gpu)
+  --gpu   : nombre de GPU derrière la cible, toutes répliques comprises (débit par GPU = débit total / gpu) ;
+            facultatif : sans lui, déduit de config_serveur.json de chaque essai (TP × PP × DP × répliques)
   --exiger-metriques : refuse un palier dont les métriques du serveur (préemptions) n'ont pas été lues
   --ttft-max : refuse un palier dont le TTFT P95 dépasse cette valeur (ms) ; à fixer selon l'usage (HYPOTHÈSE)
 Colonne err : requêtes en erreur, plus les requêtes refusées pour contexte trop long (AIPerf les retire de
@@ -21,6 +22,27 @@ def debord(d, cle="context_overflow_count"):
     v = d.get(cle)
     v = v.get("avg") if isinstance(v, dict) else v
     return v or 0
+
+
+def nombre_gpu(dossier_essai, gpu_donne, notes):
+    """GPU derrière la cible pour un essai : --gpu s'il est donné, sinon déduit de son config_serveur.json
+    (TP × PP × DP de l'empreinte × répliques). Note l'origine dans `notes` ; None si rien ne permet de le savoir."""
+    import sys as _s
+    _s.path.insert(0, str(pathlib.Path(__file__).resolve().parent / "outils"))
+    from config_serveur import gpu_essai
+    n, expl, masque = gpu_essai(dossier_essai)
+    nom = pathlib.Path(dossier_essai).name
+    if gpu_donne:
+        if n and n != gpu_donne and not masque:
+            notes[nom] = (f"ATTENTION : {nom} : --gpu {gpu_donne}, mais l'empreinte donne {expl} : vérifie la valeur.")
+        return gpu_donne
+    if n is None:
+        notes[nom] = expl
+        return None
+    notes[nom] = (f"GPU : {nom} : {expl}, déduits de l'empreinte"
+                  + (" ; ATTENTION : 1 GPU par serveur supposé, car l'empreinte n'a pas de degré de parallélisme "
+                     "(--fingerprint-mode hash le masquerait) : donne --gpu si le serveur en a plus." if masque else "."))
+    return n
 
 
 def serveur(dossier):
@@ -56,14 +78,19 @@ def serveur(dossier):
 def main():
     a = argparse.ArgumentParser()
     a.add_argument("racine"); a.add_argument("--cible", type=float, required=True)
-    a.add_argument("--gpu", type=int, required=True)
+    a.add_argument("--gpu", type=int, default=None, help="GPU derrière la cible ; défaut : déduit de l'empreinte")
     a.add_argument("--exiger-metriques", action="store_true")
     a.add_argument("--ttft-max", type=float, default=None, help="TTFT P95 maximal accepté (ms)")
     p = a.parse_args()
-    lignes = []
+    if p.gpu is not None and p.gpu < 1:
+        raise SystemExit("--gpu : entier ≥ 1")
+    lignes, notes_gpu, sans_gpu = [], {}, {}
     for f in sorted(pathlib.Path(p.racine).glob("*/c*/profile_export_aiperf.json")):
         d = json.loads(f.read_text()); dossier = f.parent
         etiq = dossier.parent.name; conc = int(dossier.name[1:])
+        n_gpu = nombre_gpu(dossier.parent, p.gpu, notes_gpu)
+        if n_gpu is None:
+            sans_gpu[etiq] = notes_gpu.pop(etiq, "?"); continue
         s = serveur(dossier)
         debit = stat(d, "output_token_throughput", "avg")
         n_err = stat(d, "error_request_count", "avg")
@@ -80,7 +107,7 @@ def main():
             "essai_valide_aiperf": (d.get("metadata") or {}).get("submission_valid"),
             "raisons_invalide": ";".join((d.get("metadata") or {}).get("submission_invalid_reasons") or []),
             "debit_sortie_total": debit,
-            "debit_sortie_par_gpu": debit / p.gpu if debit else None,
+            "gpu": n_gpu, "debit_sortie_par_gpu": debit / n_gpu if debit else None,
             "interactivite_p10": stat(d, "output_token_throughput_per_user", "p10"),
             "interactivite_p50": stat(d, "output_token_throughput_per_user", "p50"),
             "ttft_p50_ms": stat(d, "time_to_first_token", "p50"),
@@ -107,6 +134,20 @@ def main():
             info = dict(x.split("=", 1) for x in meta.read_text().splitlines() if "=" in x)
             if info.get("contexte_max"):
                 print(f"ATTENTION : {etiq} : traces filtrées à {info['contexte_max']} jetons (CONTEXTE_MAX) : sous-ensemble.")
+    if sans_gpu:
+        raise SystemExit("ERREUR : nombre de GPU inconnu pour "
+                         + " ; ".join(f"{e} ({r})" for e, r in sorted(sans_gpu.items()))
+                         + " : donne --gpu (champ « GPU » dans l'interface).")
+    for n in notes_gpu.values():
+        print(n)
+    par_conf = {}
+    for l in lignes:
+        par_conf.setdefault(re.sub(r"-r\d+$", "", l["essai"]), {})[l["essai"]] = l["gpu"]
+    for conf, ess in sorted(par_conf.items()):
+        if len(set(ess.values())) > 1:
+            print(f"ATTENTION : {conf} : nombre de GPU différent selon les répétitions ("
+                  + ", ".join(f"{e} = {g}" for e, g in sorted(ess.items()))
+                  + ") : la médiane mélange des configurations ; vérifie, ou donne --gpu.")
     if not lignes:
         raise SystemExit(f"Aucun profile_export_aiperf.json sous {p.racine}/<essai>/c<N>/")
     sortie = pathlib.Path(p.racine) / "tableau.csv"
