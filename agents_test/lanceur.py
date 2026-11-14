@@ -41,9 +41,18 @@ def main():
     a.add_argument("--sortie", default="resultats-agents")
     a.add_argument("--etiquette", required=True)
     a.add_argument("--ecraser", action="store_true", help="remplace des résultats existants de même étiquette")
+    a.add_argument("--etiqueter-agents", action="store_true",
+                   help="ajoute metadata.agent=<profil> à chaque requête (vue par agent via LiteLLM)")
     p = a.parse_args()
     module_agents.FACTEUR_LATENCE = p.facteur_latence
     cle = os.environ.get("BANC_CLE_API") or os.environ.get("CLE_API") or None
+    # Une clé par profil (clés virtuelles LiteLLM, vue par agent par api_key_alias) :
+    # BANC_CLES_AGENTS="revue_code=sk-…,pentest=sk-…,rapport=sk-…" ; un profil absent garde la clé commune.
+    cles_agents = {}
+    for paire in (os.environ.get("BANC_CLES_AGENTS") or "").split(","):
+        if "=" in paire:
+            k_, v_ = paire.split("=", 1)
+            cles_agents[k_.strip()] = v_.strip()
     if p.prechauffe >= p.duree:
         raise SystemExit(f"--prechauffe ({p.prechauffe:.0f} s) doit être inférieure à --duree ({p.duree:.0f} s) : "
                          "sinon la fenêtre de mesure est vide.")
@@ -82,7 +91,8 @@ def main():
         print(f"== {p.etiquette} : {n} tâche(s) simultanée(s), {p.duree:.0f} s ==", flush=True)
 
         def travailleur(w):
-            m = Modele(p.url, p.modele, journal, p.mode, cle_api=cle or "banc")
+            modeles = {ag: Modele(p.url, p.modele, journal, p.mode, cle_api=cles_agents.get(ag) or cle or "banc",
+                                  etiqueter=p.etiqueter_agents) for ag in agents}
             k = w  # décalage : les travailleurs ne commencent pas tous par le même agent
             # départs étalés, pour éviter des vagues synchronisées
             arret.wait(random.Random(f"{p.etiquette}-{n}-{w}").uniform(0, min(p.etalement, p.duree / 4)))
@@ -91,7 +101,7 @@ def main():
                 num = next(compteur); tache = f"{p.etiquette}-n{n}-{num}"
                 t0 = time.time(); err = None
                 try:
-                    AGENTS[agent](m, tache, graine=zlib.crc32(f"{p.etiquette}-n{n}-{num}".encode()), echelle=p.echelle, mode=p.mode)
+                    AGENTS[agent](modeles[agent], tache, graine=zlib.crc32(f"{p.etiquette}-n{n}-{num}".encode()), echelle=p.echelle, mode=p.mode)
                 except Exception as e:  # noqa: BLE001
                     err = f"{type(e).__name__}: {e}"[:300]
                     traceback.print_exc()

@@ -34,7 +34,8 @@ class _SansRedirection(urllib.request.HTTPRedirectHandler):
         return None
 
 
-_OUVREUR = urllib.request.build_opener(_SansRedirection)
+# Pas de proxy : la cible et les /metrics sont sur le réseau privé, et la clé ne doit pas passer par un proxy.
+_OUVREUR = urllib.request.build_opener(urllib.request.ProxyHandler({}), _SansRedirection)
 
 
 def _requete(url, cle=None, corps=None, delai_s=5):

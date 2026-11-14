@@ -4,8 +4,9 @@ Aucun outil n'agit sur un vrai système : toutes les « sorties d'outils » sont
 de façon déterministe à partir d'une graine. Rien ne sort de la machine, sauf les appels au
 serveur du modèle (URL donnée au lanceur).
 """
-import json, os, pathlib, random, threading, time
+import json, os, pathlib, random, ssl, threading, time
 
+import httpx
 from openai import OpenAI
 
 # ---------------------------------------------------------------- journal
@@ -107,10 +108,16 @@ def definitions_outils(noms, n_jetons_par_outil, graine):
 class Modele:
     """Client OpenAI vers le serveur testé ; chaque appel est chronométré et journalisé."""
 
-    def __init__(self, url, modele, journal, mode, delai_max_s=1800, cle_api="banc"):
+    def __init__(self, url, modele, journal, mode, delai_max_s=1800, cle_api="banc", etiqueter=False):
         # max_retries=0 : une erreur doit être journalisée, pas masquée par une nouvelle tentative du client.
-        self.client = OpenAI(base_url=url.rstrip("/") + "/v1", api_key=cle_api, timeout=delai_max_s, max_retries=0)
+        # trust_env=False : ignore HTTP(S)_PROXY ; la cible est sur le réseau privé et la clé ne doit pas passer
+        # par un proxy (AIPerf fait de même).
+        self.client = OpenAI(base_url=url.rstrip("/") + "/v1", api_key=cle_api, timeout=delai_max_s, max_retries=0,
+                             http_client=httpx.Client(trust_env=False, verify=ssl.create_default_context()))
         self.modele, self.journal, self.mode = modele, journal, mode
+        # etiqueter : ajoute "metadata": {"agent": <profil>} à chaque requête, pour que LiteLLM ventile ses
+        # métriques par agent (custom_prometheus_metadata_labels). vLLM appelé en direct ignore ce champ.
+        self.etiqueter = etiqueter
 
     def appeler(self, messages, n_sortie, ctx, outils=None):
         """Un appel en streaming. ctx = dict (agent, tache, fil, etape) recopié dans le journal.
@@ -122,6 +129,8 @@ class Modele:
             args["extra_body"] = {"min_tokens": n_sortie, "ignore_eos": True}
         elif outils:
             args["tools"] = outils; args["tool_choice"] = "auto"
+        if self.etiqueter and ctx.get("agent"):
+            args.setdefault("extra_body", {})["metadata"] = {"agent": ctx["agent"]}
         t0 = time.time(); t1 = None; texte_sortie = []; appels_outils = {}; usage = None; morceaux = 0
         erreur = None
         try:

@@ -26,7 +26,20 @@ const INITIAL = {
   synthetique: { tokenizer: "", isl: 2048, osl: 256, paliers: "1 2 4 8 16", duree: "", req_par_conc: 8,
     temperature: 0.7, racine: "resultats", extra: "", etiquette: "essai-r1" },
   agents: { agents: ["revue_code", "pentest", "rapport"], paliers: "1 2 4", duree: 300, prechauffe: 30, echelle: 0.2,
-    facteur_latence: 1, mode: "scripte", racine: "agents_test/resultats-agents", etiquette: "agents-r1" },
+    facteur_latence: 1, mode: "scripte", racine: "agents_test/resultats-agents", etiquette: "agents-r1",
+    etiqueter_agents: false, cles_agents: "" },
+  agentx: { paliers: "1 2 4 8", duree: 1800, tokenizer: "", dossier_traces: "", essai_court: false, contexte_max: "", variante: "",
+    racine: "resultats-agentx", etiquette: "agentx-r1" },
+  observation: { duree: 900, intervalle: "", niveau: "", litellm: "", par: "api_key_alias", empreinte: false, cle_litellm: "",
+    racine: "resultats-observation", etiquette: "obs-r1" },
+};
+const TYPES = [["synthetique", "Stress test : synthétique"], ["agentx", "Stress test : AgentX"],
+  ["agents", "Stress test : agents de test"], ["observation", "Observation (usage réel)"]];
+const NOTES = {
+  synthetique: "Charge générée par AIPerf, longueurs fixes. vLLM lancé avec --no-enable-prefix-caching.",
+  agentx: "Rejoue les sessions d'agents de code publiées par SemiAnalysis (scénario AIPerf inferencex-agentx-mvp) : au moins 900 s par palier, cache de préfixes activé. Sur un petit modèle (Mac), « Contexte max » ne garde que les sessions qui tiennent.",
+  agents: "Trois profils d'agents simulés, outils factices. vLLM avec le cache de préfixes activé.",
+  observation: "Ne génère aucune charge : relève /metrics de vLLM pendant que tes agents tournent. Pour une interactivité exacte, lance vLLM avec --custom-histogram-buckets (README).",
 };
 
 function Champ({ label, aide, children }) {
@@ -104,15 +117,13 @@ function ConfigServeur({ config }) {
 }
 
 // ------------------------------------------------------------------ onglet Lancer
-function Lancer({ surLance }) {
-  const [type, setType] = useState("synthetique");
-  const [c, setC] = useState(CONNEXION);
-  const [params, setParams] = useState(INITIAL);
+function Lancer({ surLance, c, setC, params, setParams, type, setType }) {
   const [msg, setMsg] = useState(null);
   const [test, setTest] = useState(null);
   const p = params[type];
   const majC = (k) => (e) => setC({ ...c, [k]: e.target.value });
   const maj = (k) => (e) => setParams({ ...params, [type]: { ...p, [k]: e.target.value } });
+  const coche = (k) => (e) => setParams({ ...params, [type]: { ...p, [k]: e.target.checked } });
   const basculeAgent = (a) => setParams({ ...params, agents: { ...p,
     agents: p.agents.includes(a) ? p.agents.filter((x) => x !== a) : [...p.agents, a] } });
 
@@ -173,18 +184,22 @@ function Lancer({ surLance }) {
       <h3>Essai</h3>
       <div className="ligne">
         <div className="segments">
-          <button className={type === "synthetique" ? "actif" : ""} onClick={() => { setType("synthetique"); setMsg(null); }}>Charge synthétique (AIPerf)</button>
-          <button className={type === "agents" ? "actif" : ""} onClick={() => { setType("agents"); setMsg(null); }}>Agents de test</button>
+          {TYPES.map(([k, l]) => (
+            <button key={k} className={type === k ? "actif" : ""} onClick={() => { setType(k); setMsg(null); }}>{l}</button>
+          ))}
         </div>
       </div>
+      <p className="note">{NOTES[type]}</p>
       <div className="grille">
-        <Champ label="Étiquette" aide="le suffixe -r1, -r2… marque une répétition">
+        <Champ label="Étiquette" aide={type === "observation" ? "ex. prod-n4-r1 : -n4 = niveau, -r1 = répétition" : "le suffixe -r1, -r2… marque une répétition"}>
           <input value={p.etiquette} onChange={maj("etiquette")} />
         </Champ>
-        <Champ label={type === "synthetique" ? "Concurrences" : "Tâches simultanées"} aide="entiers séparés par des espaces">
-          <input value={p.paliers} onChange={maj("paliers")} />
-        </Champ>
-        {type === "synthetique" ? (
+        {type !== "observation" && (
+          <Champ label={{ synthetique: "Concurrences", agentx: "Sessions simultanées", agents: "Tâches simultanées" }[type]} aide="entiers séparés par des espaces">
+            <input value={p.paliers} onChange={maj("paliers")} />
+          </Champ>
+        )}
+        {type === "synthetique" && (
           <>
             <Champ label="Tokenizer" aide="vide = outils/tokenizer du dépôt s'il existe, sinon le nom du modèle">
               <input value={p.tokenizer} placeholder="outils/tokenizer" onChange={maj("tokenizer")} />
@@ -198,7 +213,33 @@ function Lancer({ surLance }) {
             <Champ label="Dossier de résultats"><input value={p.racine} onChange={maj("racine")} /></Champ>
             <Champ label="Options AIPerf en plus" aide="ex. --use-server-token-count"><input value={p.extra} onChange={maj("extra")} /></Champ>
           </>
-        ) : (
+        )}
+        {type === "agentx" && (
+          <>
+            <Champ label="Durée par palier (s)" aide="au moins 900 (exigé par le scénario) ; 1800 par défaut">
+              <input type="number" value={p.duree} onChange={maj("duree")} />
+            </Champ>
+            <Champ label="Dossier local des traces" aide="vide = jeu épinglé téléchargé depuis Hugging Face ; sinon essai marqué non vérifié (submission_valid=false)">
+              <input value={p.dossier_traces} placeholder="traces-agentx" onChange={maj("dossier_traces")} />
+            </Champ>
+            <Champ label="Tokenizer" aide="vide = outils/tokenizer du dépôt s'il existe">
+              <input value={p.tokenizer} placeholder="outils/tokenizer" onChange={maj("tokenizer")} />
+            </Champ>
+            <Champ label="Jeu de traces" aide="256k : requêtes de plus de 256 000 jetons retirées (pour --max-model-len ≈ 256 000)">
+              <select value={p.variante} onChange={maj("variante")}>
+                <option value="">complet (062126)</option><option value="256k">256k (062126-256k)</option>
+              </select>
+            </Champ>
+            <Champ label="Contexte max (jetons)" aide="vide = toutes les traces ; ex. 32768 sur un petit modèle : seules les sessions qui tiennent sont rejouées (non comparable)">
+              <input type="number" value={p.contexte_max} onChange={maj("contexte_max")} />
+            </Champ>
+            <Champ label="Essai court (vérification)" aide="paliers de moins de 900 s ; résultats non comparables">
+              <input type="checkbox" checked={!!p.essai_court} onChange={coche("essai_court")} />
+            </Champ>
+            <Champ label="Dossier de résultats"><input value={p.racine} onChange={maj("racine")} /></Champ>
+          </>
+        )}
+        {type === "agents" && (
           <>
             <Champ label="Agents">
               <div className="cases">
@@ -216,6 +257,38 @@ function Lancer({ surLance }) {
             <Champ label="Préchauffe exclue (s)"><input type="number" value={p.prechauffe} onChange={maj("prechauffe")} /></Champ>
             <Champ label="Échelle des tailles" aide="1 = tailles réelles ; plus petit pour un petit modèle"><input type="number" step="0.05" value={p.echelle} onChange={maj("echelle")} /></Champ>
             <Champ label="Facteur de latence des outils" aide="1 pour mesurer"><input type="number" step="0.1" value={p.facteur_latence} onChange={maj("facteur_latence")} /></Champ>
+            <Champ label="Étiqueter les agents (LiteLLM)" aide="ajoute metadata.agent=<profil> à chaque requête : vue par agent avec metadata_agent">
+              <input type="checkbox" checked={!!p.etiqueter_agents} onChange={coche("etiqueter_agents")} />
+            </Champ>
+            <Champ label="Clés par agent (LiteLLM)" aide="optionnel : revue_code=<clé>,pentest=<clé>,rapport=<clé> ; vue par agent avec api_key_alias">
+              <input type="password" autoComplete="off" value={p.cles_agents} onChange={maj("cles_agents")} />
+            </Champ>
+            <Champ label="Dossier de résultats"><input value={p.racine} onChange={maj("racine")} /></Champ>
+          </>
+        )}
+        {type === "observation" && (
+          <>
+            <Champ label="Durée totale (s)" aide="ex. 900 ; 86400 pour une journée">
+              <input type="number" value={p.duree} onChange={maj("duree")} />
+            </Champ>
+            <Champ label="Fenêtres de (s)" aide="vide = une seule fenêtre ; ex. 900 pour la vue par période">
+              <input type="number" value={p.intervalle} onChange={maj("intervalle")} />
+            </Champ>
+            <Champ label="Niveau (agents actifs)" aide="optionnel : noté à la main, pour trouver le plus haut niveau qui tient">
+              <input type="number" value={p.niveau} onChange={maj("niveau")} />
+            </Champ>
+            <Champ label="URL des métriques LiteLLM" aide="optionnel, vue par agent : callback prometheus de LiteLLM">
+              <input value={p.litellm} placeholder="http://hôte-litellm:4000/metrics/" onChange={maj("litellm")} />
+            </Champ>
+            <Champ label="Clé LiteLLM (métriques)" aide="optionnel : clé du /metrics/ de LiteLLM si elle diffère de la clé d'API ci-dessus">
+              <input type="password" autoComplete="off" value={p.cle_litellm} onChange={maj("cle_litellm")} />
+            </Champ>
+            <Champ label="Agents distingués par" aide="api_key_alias = une clé virtuelle par agent ; ou metadata_<champ>">
+              <input value={p.par} onChange={maj("par")} />
+            </Champ>
+            <Champ label="Relever le parallélisme" aide="une complétion d'un jeton vers la cible, avant la première fenêtre">
+              <input type="checkbox" checked={!!p.empreinte} onChange={coche("empreinte")} />
+            </Champ>
             <Champ label="Dossier de résultats"><input value={p.racine} onChange={maj("racine")} /></Champ>
           </>
         )}
@@ -225,8 +298,8 @@ function Lancer({ surLance }) {
         {msg && <span className={msg.ok ? "ok" : "erreur"}>{msg.texte}</span>}
       </div>
       <p className="note">
-        Le serveur vLLM se démarre à la main, avec les options du § 1.2 du README. Pour la charge synthétique, le cache de préfixes
-        doit être désactivé ; pour les agents, activé.
+        Le serveur vLLM se démarre à la main, avec les options du § 1.2 du README.
+        {type === "observation" && " En observation, l'URL des métriques vLLM est obligatoire ; la cible ne sert qu'au relevé du parallélisme."}
       </p>
     </section>
   );
@@ -261,7 +334,8 @@ function Essais({ selection, setSelection }) {
 
   useEffect(() => { if (boite.current) boite.current.scrollTop = boite.current.scrollHeight; }, [texte]);
 
-  const arreter = (id) => api(`/api/essais/${encodeURIComponent(id)}/arreter`, { method: "POST" }).catch((e) => alert(e.message));
+  const arreter = (id) => api(`/api/essais/${encodeURIComponent(id)}/arreter`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }).catch((e) => alert(e.message));
   const etat = (e) => (e.code === null ? "en cours" : e.code === 0 ? "terminé" : `échec (${e.code})`);
 
   return (
@@ -271,7 +345,7 @@ function Essais({ selection, setSelection }) {
         <ul className="liste">
           {essais.map((e) => (
             <li key={e.id} className={selection === e.id ? "choisi" : ""} onClick={() => setSelection(e.id)}>
-              <div><b>{e.etiquette}</b> <span className="pastille">{e.type === "agents" ? "agents" : "synthétique"}</span></div>
+              <div><b>{e.etiquette}</b> <span className="pastille">{{ agents: "agents de test", agentx: "AgentX", observation: "observation" }[e.type] || "synthétique"}</span></div>
               <div className="petit">{new Date(e.debut * 1000).toLocaleTimeString()} · {etat(e)}
                 {e.code === null && <button className="lien" onClick={(ev) => { ev.stopPropagation(); arreter(e.id); }}>arrêter</button>}
               </div>
@@ -294,6 +368,8 @@ function Resultats() {
   const [exiger, setExiger] = useState(false);
   const [res, setRes] = useState(null);
   const [err, setErr] = useState(null);
+  const [vue, setVue] = useState("fenetres");
+  const [periode, setPeriode] = useState("plage");
 
   const chargerRacines = () => api("/api/racines").then((r) => {
     setRacines(r);
@@ -305,12 +381,13 @@ function Resultats() {
   const depouiller = async () => {
     setErr(null); setRes(null);
     try {
-      const q = new URLSearchParams({ type, racine, cible, gpu, exiger: exiger ? "1" : "0" });
+      const q = new URLSearchParams({ type, racine, cible, gpu, exiger: exiger ? "1" : "0", vue, periode });
       setRes(await api(`/api/resultats?${q}`));
     } catch (e) { setErr(e.message); }
   };
 
   const agents = type === "agents";
+  const obs = type === "observation";
   const lignes = (res?.lignes || []).filter((l) => !agents || l.agent === "tous");
   const essais = [...new Set(lignes.map((l) => l.essai))];
   const series = essais.map((e) => ({
@@ -325,7 +402,7 @@ function Resultats() {
       <div className="grille">
         <Champ label="Type">
           <select value={type} onChange={(e) => { setType(e.target.value); setRes(null); }}>
-            <option value="synthetique">Charge synthétique</option><option value="agents">Agents de test</option>
+            {TYPES.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
           </select>
         </Champ>
         <Champ label="Dossier de résultats" aide={<button className="lien" onClick={chargerRacines}>actualiser la liste</button>}>
@@ -335,9 +412,26 @@ function Resultats() {
         </Champ>
         <Champ label="Interactivité visée (jetons/s par fil)"><input type="number" value={cible} onChange={(e) => setCible(e.target.value)} /></Champ>
         <Champ label="GPU derrière la cible (toutes répliques)"><input type="number" value={gpu} onChange={(e) => setGpu(e.target.value)} /></Champ>
-        <Champ label="Exiger les métriques du serveur" aide="à cocher pour la mesure finale">
-          <input type="checkbox" checked={exiger} onChange={(e) => setExiger(e.target.checked)} />
-        </Champ>
+        {obs ? (
+          <>
+            <Champ label="Vue">
+              <select value={vue} onChange={(e) => { setVue(e.target.value); setRes(null); }}>
+                <option value="fenetres">par fenêtre</option><option value="periode">par période</option><option value="agents">par agent (LiteLLM)</option>
+              </select>
+            </Champ>
+            {vue === "periode" && (
+              <Champ label="Période">
+                <select value={periode} onChange={(e) => setPeriode(e.target.value)}>
+                  <option value="plage">plages de 6 h</option><option value="heure">heure de la journée</option>
+                </select>
+              </Champ>
+            )}
+          </>
+        ) : (
+          <Champ label="Exiger les métriques du serveur" aide="à cocher pour la mesure finale">
+            <input type="checkbox" checked={exiger} onChange={(e) => setExiger(e.target.checked)} />
+          </Champ>
+        )}
       </div>
       <div className="ligne"><button className="principal" onClick={depouiller} disabled={!racine}>Dépouiller</button>
         {err && <span className="erreur">{err}</span>}</div>
@@ -347,9 +441,35 @@ function Resultats() {
           <div className="messages">
             {res.messages.length ? res.messages.map((m, i) => (
               <div key={i} className={m.includes("ATTENTION") ? "attention" : m.toLowerCase().includes("aucun") ? "erreur" : "retenu"}>{m.trim()}</div>
-            )) : <pre>{res.sortie}</pre>}
+            )) : (obs && vue !== "fenetres" ? null : <pre>{res.sortie}</pre>)}
           </div>
 
+          {obs ? (
+            <>
+              {vue !== "fenetres" && <pre className="sortie">{res.sortie}</pre>}
+              {vue === "fenetres" && (
+                <div className="tableau">
+                  <table>
+                    <thead><tr><th>fenêtre</th><th>début</th><th>niveau</th><th>durée s</th><th>requêtes</th><th>err</th><th>débit/GPU</th><th>à la cible</th><th>inter P10 ≥</th><th>TTFT P95 ≤ ms</th><th>préempt</th><th>cache</th><th>MTP</th><th>KV max</th><th>verdict</th></tr></thead>
+                    <tbody>
+                      {(res.lignes || []).map((l, i) => (
+                        <tr key={i}>
+                          <td>{l.fenetre}</td><td>{l.debut}</td><td>{l.niveau}</td><td>{l.duree_s}</td><td>{f1(l.requetes_terminees, 0)}</td><td>{f1(l.requetes_en_erreur, 0)}</td>
+                          <td>{f1(l.debit_sortie_par_gpu)}</td><td>{pct(l.part_requetes_a_la_cible)}{l.part_exacte === "False" ? "*" : ""}</td>
+                          <td>{l.interactivite_borne === "True" ? "<" : ""}{f1(l.interactivite_p10_estimee)}</td>
+                          <td>{l.ttft_p95_au_dela === "True" ? ">" : ""}{f1(l.ttft_p95_ms_estime, 0)}</td><td>{f1(l.preemptions, 0)}</td>
+                          <td>{pct(l.cache_prefixes)}</td><td>{pct(l.acceptation_mtp)}</td><td>{pct(l.cache_kv_max_fraction)}</td>
+                          <td>{l.verdict}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  <p className="note">{(res.lignes || []).some((l) => l.part_exacte === "False") && "* part interpolée : aucune borne d'histogramme à la cible ; lance vLLM avec --custom-histogram-buckets (README, § 6.1) ; « indéterminé » : la cible tombe dans un seau qui encadre 90 %. "}≥ et ≤ : bornes lues dans les seaux des histogrammes de vLLM.</p>
+                </div>
+              )}
+              <p className="note">Commande exécutée : <code>{res.commande}</code></p>
+            </>
+          ) : (<>
           <h3>Débit par GPU selon l'interactivité (10e centile)</h3>
           <div className="graphe">
             <ResponsiveContainer width="100%" height={340}>
@@ -391,13 +511,14 @@ function Resultats() {
                   <tr key={i}>
                     <td>{l.essai}</td><td>{l.concurrence}</td><td>{f1(l.debit_sortie_par_gpu)}</td><td>{f1(l.interactivite_p10)}</td>
                     <td>{f1(l.interactivite_p50)}</td><td>{f1(l.ttft_p95_ms, 0)}</td><td>{f1(l.preemptions, 0)}</td>
-                    <td>{l.requetes_en_erreur}</td><td>{pct(l.cache_prefixes)}</td><td>{pct(l.acceptation_mtp)}</td><td>{pct(l.cache_kv_max_fraction)}</td><td>{f1(l.sortie_moyenne_jetons, 0)}</td>
+                    <td>{(+l.requetes_en_erreur || 0) + (+l.debordements_contexte || 0)}</td><td>{pct(l.cache_prefixes)}</td><td>{pct(l.acceptation_mtp)}</td><td>{pct(l.cache_kv_max_fraction)}</td><td>{f1(l.sortie_moyenne_jetons, 0)}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
           <p className="note">Commande exécutée : <code>{res.commande}</code></p>
+          </>)}
         </>
       )}
     </section>
@@ -407,6 +528,10 @@ function Resultats() {
 export default function App() {
   const [onglet, setOnglet] = useState("lancer");
   const [selection, setSelection] = useState(null);
+  // Champs de connexion et paramètres gardés tant que la page est ouverte (rien n'est enregistré).
+  const [connexion, setConnexion] = useState(CONNEXION);
+  const [params, setParams] = useState(INITIAL);
+  const [typeEssai, setTypeEssai] = useState("synthetique");
   return (
     <div className="page">
       {!JETON && <p className="erreur">Jeton absent : ouvre l'adresse complète affichée au démarrage de l'interface (…/?jeton=…).</p>}
@@ -418,7 +543,8 @@ export default function App() {
           ))}
         </nav>
       </header>
-      {onglet === "lancer" && <Lancer surLance={(id) => { setSelection(id); setOnglet("essais"); }} />}
+      {onglet === "lancer" && <Lancer surLance={(id) => { setSelection(id); setOnglet("essais"); }}
+        c={connexion} setC={setConnexion} params={params} setParams={setParams} type={typeEssai} setType={setTypeEssai} />}
       {onglet === "essais" && <Essais selection={selection} setSelection={setSelection} />}
       {onglet === "resultats" && <Resultats />}
     </div>

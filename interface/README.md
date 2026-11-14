@@ -1,8 +1,8 @@
 # Interface du banc
 
 Petite application locale pour lancer les essais du banc, suivre leur journal et afficher les résultats.
-Elle appelle les mêmes scripts que la ligne de commande (`balayage.sh`, `agents_test/lanceur.py`,
-`depouiller.py`, `agents_test/depouiller_agents.py`) : un essai lancé ici est identique au même essai
+Elle appelle les mêmes scripts que la ligne de commande (`balayage.sh`, `agentx.sh`, `agents_test/lanceur.py`,
+`observation/observer.py` et les dépouilleurs) : un essai lancé ici est identique au même essai
 lancé à la main, et la commande exacte est écrite en tête de son journal.
 
 ## Lancer
@@ -31,18 +31,26 @@ Le serveur vLLM se démarre toujours à la main, avec les options du § 1.2 du R
   la variable `BANC_JETON`) ; contrôle de l'en-tête Host et de l'origine des requêtes.
 - N'exécute que les scripts du banc, avec des paramètres vérifiés ; options AIPerf supplémentaires sur liste
   blanche. Un seul essai à la fois ; arrêter l'interface arrête l'essai en cours.
-- La clé d'API passe par variable d'environnement, n'est envoyée qu'à la cible et n'est écrite dans aucun journal.
+- La clé d'API et les clés par agent passent par variables d'environnement et ne sont écrites dans aucun journal.
 - Les essais n'héritent pas des réglages du terminal (`URL`, `CLE_API`, `EXTRA`…) : seuls les champs de
   l'interface comptent ; du terminal, seuls passent `PATH`, `HOME`, `USER`, `LOGNAME`, `SHELL`, `TERM`, `TMPDIR`,
-  la langue (`LANG`, `LC_*`), `VIRTUAL_ENV`, `HF_HOME`, `HF_HUB_CACHE`, le proxy, les certificats et `DO_NOT_TRACK`.
+  la langue (`LANG`, `LC_*`), le fuseau horaire (`TZ`), `VIRTUAL_ENV`, `HF_HOME`, `HF_HUB_CACHE`, le proxy, les
+  certificats et `DO_NOT_TRACK`.
+- La clé d'API va à la cible. En observation avec la vue par agent, le `/metrics/` de LiteLLM (protégé par
+  défaut) reçoit le champ « Clé LiteLLM » s'il est rempli, sinon la clé d'API. Aucune clé ne va au `/metrics` de vLLM.
 
 ## Ce qu'elle fait
 
-- **Lancer** : champs de connexion (cible vLLM ou LiteLLM, modèle, métriques vLLM, clé d'API), bouton « Tester la connexion » (qui affiche aussi la configuration du serveur vLLM : version, cache de préfixes, nombre de jetons spéculatifs, parallélisme TP/PP/DP/EP lu dans l'empreinte des réponses et, seulement si vLLM est lancé avec `VLLM_SERVER_DEV_MODE=1`, méthode de décodage spéculatif et ordonnanceur), puis charge synthétique (AIPerf) ou agents de test.
-- **Essais** : liste des essais lancés depuis l'ouverture de l'interface, journal en direct, arrêt.
+- **Lancer** : champs de connexion (cible vLLM ou LiteLLM, modèle, métriques vLLM, clé d'API), bouton « Tester la connexion » (qui affiche aussi la configuration du serveur vLLM : version, cache de préfixes, nombre de jetons spéculatifs, parallélisme TP/PP/DP/EP lu dans l'empreinte des réponses et, seulement si vLLM est lancé avec `VLLM_SERVER_DEV_MODE=1`, méthode de décodage spéculatif et ordonnanceur), puis l'un des quatre modes : stress test synthétique
+  (AIPerf), stress test AgentX, stress test agents de test, ou observation de l'usage réel (README du dépôt, § 3 à 6).
+  Pour les agents de test, « Étiqueter les agents » et « Clés par agent » donnent à chaque requête l'identité
+  de son profil, pour la vue par agent via LiteLLM (README du dépôt, § 6.4).
+- **Essais** : liste des essais lancés depuis l'ouverture de l'interface, journal en direct, arrêt (une
+  observation arrêtée enregistre sa fenêtre en cours, raccourcie).
   Les journaux restent dans `interface/journaux/`.
 - **Résultats** : dépouillement d'un dossier de résultats (tableau, point retenu, avertissements, courbe
-  débit par GPU selon l'interactivité, avec la cible).
+  débit par GPU selon l'interactivité, avec la cible) ; pour l'observation, vues par fenêtre, par période
+  (plages de 6 h ou heures) et par agent (métriques de LiteLLM).
 
 ## Modifier l'interface
 
