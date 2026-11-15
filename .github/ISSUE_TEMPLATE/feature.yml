@@ -1,0 +1,29 @@
+name: Feature
+description: Something new the bench should do
+labels: [feature]
+body:
+  - type: textarea
+    id: goal
+    attributes:
+      label: What you want to be able to do
+      description: Phrase it as an outcome, for example "Filter the results by date in the interface".
+    validations:
+      required: true
+  - type: textarea
+    id: why
+    attributes:
+      label: Why
+      description: The situation that needs it.
+    validations:
+      required: true
+  - type: textarea
+    id: done
+    attributes:
+      label: Done when
+      description: What you can check to say it works (a command, an output, a test).
+  - type: checkboxes
+    id: client
+    attributes:
+      label: Origin
+      options:
+        - label: This comes from a client request

@@ -1,0 +1,35 @@
+name: Bug
+description: Something does not work as documented
+labels: [bug]
+body:
+  - type: textarea
+    id: observed
+    attributes:
+      label: What happens
+      description: The observed behavior, with the command and the output or error message.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: How to reproduce
+      description: Steps, or the command line. Do not paste API keys.
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: Python version, AIPerf version, vLLM version, and whether you ran against a real server or tools/fake_server.py.
+  - type: checkboxes
+    id: client
+    attributes:
+      label: Origin
+      options:
+        - label: This comes from a client request
