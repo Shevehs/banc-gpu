@@ -16,27 +16,61 @@ Two families of measurements:
   installation **sustains the real load**, per window, per period and per agent, over any past range.
 
 > **Status.** Written from the code of **vLLM at commit [`7f855f6`](https://github.com/vllm-project/vllm/tree/7f855f605892656ebf7265642e5d22a34a6ae731)**
-> and tested with **AIPerf 0.12.0** against the fake server ([section 6](#6-smoke-test-without-a-gpu)),
-> before the rename of the code to English. After the rename, the launcher and the report kinds were
-> re-run against the fake server and the test suite passes; `sweep.sh` and `agentx.sh` (which need AIPerf) were
-> **not** re-run (command to run: the smoke test of [section 6](#6-smoke-test-without-a-gpu)).
-> **Against a real vLLM, only on a Mac** (vllm-metal, vLLM 0.33.0): connection through LiteLLM, fingerprint,
-> `/metrics` and loading of the AgentX traces; **not yet on a GPU server**. The observation (Prometheus 3.7.3) and the per-agent view
-> ([section 8.5](#85-per-agent-view-through-litellm), way 2) were checked, before the rename, with the fake server
-> and a real LiteLLM (1.109.1).
+> and tested with **AIPerf 0.12.0** against the fake server ([section 6](#6-smoke-test-without-a-gpu)).
+> Against a real vLLM it has only been tried on a Mac (vllm-metal, vLLM 0.33.0), **not yet on a GPU server**.
 > On your first real run, compare your outputs with the example in [section 5.4](#54-test-the-connection).
-> Unfamiliar terms: see [Appendix E](#appendix-e-glossary).
-> Statements that are documented, inferred or not verified are collected in the
-> [Validation status](#validation-status) box below.
+> Unfamiliar terms: see [Appendix E](#appendix-e-glossary). What is verified, documented or still unchecked is
+> listed in the [Validation status](#validation-status) below.
 
 ### Validation status
 
-| Status | What | Where |
-|---|---|---|
-| Verified | Pipeline against the fake server before the English rename; after it, only the launcher, the two report kinds and the test suite were re-run (`sweep.sh` and `agentx.sh` were not); observation against the fake server with Prometheus 3.7.3 (before the rename); per-agent view with a real LiteLLM 1.109.1 (metric names, types, labels, Prisma and `prometheus_client` requirements); connection, fingerprint, `/metrics` and AgentX trace loading against a real vLLM on a Mac (vLLM 0.33.0) | [section 6](#6-smoke-test-without-a-gpu), [section 8.3](#83-query-the-observation), [section 8.5](#85-per-agent-view-through-litellm), [Appendix B](#appendix-b-litellm-per-key-setup-and-install-details) |
-| Documented (code or help text) | AgentX scenario rules (AIPerf `inferencex_agentx_mvp.py`); `--max-context-length` (AIPerf help); `get_max_tokens` reduces `max_tokens` (vLLM code); histogram and client-abort behaviour (`stats.py`); `process_start_time_seconds` exposed on Linux only and not with several API processes (`cli/serve.py`, `prometheus.py`); unknown request fields ignored by vLLM (`protocol.py`) | [section 7.3](#73-agentx-stress-test), [section 7.5](#75-context-shorter-than-the-traces), [section 8.1](#81-tune-vllm-for-exact-interactivity), [section 8.5](#85-per-agent-view-through-litellm) |
-| Inferred, to check on first use | Chat template adds tokens beyond the trace lengths; `--max-num-seqs` for AgentX (sessions x parallel sub-agents); name and labels of the `http_requests_total` counter (the `err` column shows "—" otherwise); bias toward short sessions in a `BENCH_MAX_CONTEXT` replay; observation limits (window edges, undetected short restarts, series appearing mid-window); GPU count of a data-parallel deployment with one API server per rank (fingerprints carry the global DP: the deduced count would be too high); that a limited LiteLLM virtual key is enough for `/metrics/` | [section 4.2](#42-check-the-vllm-in-place), [section 7.5](#75-context-shorter-than-the-traces), [section 8.1](#81-tune-vllm-for-exact-interactivity) |
-| Not verified | That the AgentX Hugging Face repository stores one trace per JSON file in one folder (the download script counts the files); that LiteLLM forwards `min_tokens` / `ignore_eos`; Prometheus versions newer than 3.7.3 | [section 7.4](#74-agentx-without-internet-access), [section 7.7](#77-stress-test-through-litellm) |
+**Verified**
+
+- The test agents, the two kinds of report and the test suite, against the fake server. `sweep.sh` and `agentx.sh`
+  have not been run with AIPerf since the latest changes to the scripts; the smoke test of
+  [section 6](#6-smoke-test-without-a-gpu) does it.
+- The observation against the fake server, with Prometheus 3.7.3 ([section 8.3](#83-query-the-observation)).
+- The per-agent view with a real LiteLLM 1.109.1: metric names, types and labels, and the Prisma and
+  `prometheus_client` requirements ([section 8.5](#85-per-agent-view-through-litellm),
+  [Appendix B](#appendix-b-litellm-per-key-setup-and-install-details)).
+- On a Mac with a real vLLM 0.33.0: the connection, the fingerprint, `/metrics` and the loading of the AgentX traces.
+
+**Documented** (in the code or the help text of the tools)
+
+- The AgentX scenario rules (AIPerf `inferencex_agentx_mvp.py`).
+- The `--max-context-length` option (AIPerf help).
+- vLLM reduces `max_tokens` to the room left in the context (`get_max_tokens`).
+- How histograms and client aborts behave (`stats.py`).
+- `process_start_time_seconds` is only exposed on Linux, and not when several API processes run
+  (`cli/serve.py`, `prometheus.py`).
+- vLLM ignores request fields it does not know (`protocol.py`).
+
+See [section 7.3](#73-agentx-stress-test), [section 7.5](#75-context-shorter-than-the-traces),
+[section 8.1](#81-tune-vllm-for-exact-interactivity) and [section 8.5](#85-per-agent-view-through-litellm).
+
+**Inferred, to check on first use**
+
+- The chat template may add tokens beyond the lengths recorded in the traces.
+- `--max-num-seqs` for AgentX should cover the sessions times their parallel sub-agents.
+- The name and labels of the `http_requests_total` counter. If they differ, the `err` column shows "—".
+- A replay limited by `BENCH_MAX_CONTEXT` is probably biased toward short sessions.
+- The limits of the observation: window edges, short restarts that go undetected, and series that appear in the
+  middle of a window.
+- The GPU count of a data-parallel deployment with one API server per rank: the fingerprints carry the global
+  data-parallel size, so the deduced count would be too high.
+- A limited LiteLLM virtual key is enough to read `/metrics/`.
+
+See [section 4.2](#42-check-the-vllm-in-place), [section 7.5](#75-context-shorter-than-the-traces) and
+[section 8.1](#81-tune-vllm-for-exact-interactivity).
+
+**Not verified**
+
+- That the AgentX Hugging Face repository stores one trace per JSON file in a single folder (the download script
+  counts the files and tells you).
+- That LiteLLM forwards `min_tokens` and `ignore_eos`.
+- Prometheus versions newer than 3.7.3.
+
+See [section 7.4](#74-agentx-without-internet-access) and [section 7.7](#77-stress-test-through-litellm).
 
 ## Contents
 
