@@ -135,6 +135,35 @@ second one builds the report. The number of GPUs is deduced from the server's co
 python -m report aiperf results --target 30
 ```
 
+The report prints one line per level, then the selected point. This is a real output, from a small test on a Mac
+(your figures will differ):
+
+```
+run                conc   tput/GPU  inter P10  TTFT P95 ms  preempt  err  cache   MTP  output avg
+first-r1              1       23.8       39.7         4492        0    0      —     —         256
+first-r1              4       31.7       11.2        18569        0    0      —     —         256
+first-r1             16       37.2        2.6        49735        0    0      —     —         256
+
+first: selected point = concurrency 1, 23.8 tokens/s per GPU (median of 1 repetition(s), from 23.8 to 23.8).
+   Estimate at exactly 30.0 tokens/s (interpolation between concurrencies 1 and 4): 26.5 tokens/s per GPU. To be confirmed with an intermediate level.
+```
+
+How to read it:
+
+- **`conc`** is the level: the number of requests in flight at the same time.
+- **`tput/GPU`** is the total output speed (tokens/s) divided by the number of GPUs.
+- **`inter P10`** is the speed each request receives, in tokens/s: 90% of the requests get at least this much. It is
+  the figure compared with `--target`.
+- **`TTFT P95 ms`** is the wait before the first token: 95% of the requests wait less than this.
+- **`preempt`** and **`err`** (preempted and failed requests) must be 0 for a level to be accepted.
+- **`cache`** and **`MTP`** show "—" when the prefix cache is off and there is no speculative decoding, as here.
+- **Selected point**: the level with the highest throughput that still reaches the target without error or
+  preemption. Here the target is 30 tokens/s: level 1 gets 39.7, level 4 only 11.2, so level 1 is selected.
+- **Estimate**: the limit lies between level 1 and level 4, so the report estimates the throughput exactly at the
+  target. Confirm it by running the levels in between (for example `"2 3"`).
+
+Details: [section 7.2](#72-reading-the-stress-test-report).
+
 Unfamiliar terms: see [Appendix F](#appendix-f-glossary). No GPU at hand? Check the scripts first with the fake server ([section 6](#6-smoke-test-without-a-gpu)).
 
 Next steps: the other stress tests ([section 7](#7-stress-tests)), observation of your real agents
