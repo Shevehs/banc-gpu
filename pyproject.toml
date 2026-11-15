@@ -2,10 +2,15 @@
 name = "banc-gpu"
 version = "0.1.0"
 description = "Capacity benchmark for a model served by vLLM: stress tests and observation of real usage"
-requires-python = ">=3.9"
-# Runtime dependencies of the Python parts (AIPerf itself is installed separately, see the README).
-dependencies = ["openai>=1.40", "httpx", "aiohttp"]
-optional-dependencies = { dev = ["pytest", "ruff"], tokenizer = ["tokenizers"] }
+requires-python = ">=3.12"
+
+# Dependencies are dependency groups (PEP 735), not project dependencies: the repository is run from its root and
+# never installed, so there is no project to attach them to. Install with: pip install --group dev
+# (pip 25.1 or later). AIPerf itself is installed separately, see the README.
+[dependency-groups]
+runtime = ["openai>=1.40", "httpx", "aiohttp"]
+dev = [{ include-group = "runtime" }, "pytest", "ruff"]
+tokenizer = ["tokenizers"]
 
 # This repository is run from its root (python -m report ..., ./sweep.sh): it is not meant to be pip-installed,
 # so no build backend is declared. The generic top-level package names (tools, report, interface) are
@@ -17,7 +22,7 @@ pythonpath = ["."]   # the repository root is the package root: tools, observati
 
 [tool.ruff]
 line-length = 120
-target-version = "py39"
+target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "B", "A"]   # A: builtin shadowing
