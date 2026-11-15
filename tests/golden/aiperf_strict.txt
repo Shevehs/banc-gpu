@@ -1,0 +1,18 @@
+Table: <root>/table.csv
+
+run                conc   tput/GPU  inter P10  TTFT P95 ms  preempt  err  cache   MTP  output avg
+conf-a-r1             1       50.0       60.0          200        0    0    50%     —         512
+conf-a-r1             4      160.0       40.0          400        0    0    50%     —         512
+conf-a-r1             8      240.0       22.0          900        0    0    50%     —         512
+conf-a-r2             1       52.0       61.0          210        0    0    50%     —         512
+conf-a-r2             4      170.0       38.0          420        0    0    50%     —         512
+conf-a-r2             8      250.0       21.0          950        0    0    50%     —         512
+conf-b-r1             1       45.0       55.0          180        0    0    50%     —         512
+conf-b-r1             4      150.0       45.0          380        2    0    50%     —         512
+conf-c-r1             1       40.0       50.0          150        —    0      —     —         512
+
+conf-a: selected point = concurrency 4, 165.0 tokens/s per GPU (median of 2 repetition(s), from 160.0 to 170.0).
+   WARNING: requests waited in the server queue at this level: TTFT includes waiting time.
+   WARNING: KV cache is 95 % full or more at this level: memory is almost saturated.
+conf-b: selected point = concurrency 1, 45.0 tokens/s per GPU (median of 1 repetition(s), from 45.0 to 45.0).
+conf-c: no level meets the target of 30.0 tokens/s without errors or preemptions.

@@ -1,0 +1,6 @@
+configuration,window,start,level,duration_s,completed_requests,output_throughput_per_gpu,share_of_requests_at_target,share_exact,share_min,share_max,failed_requests,estimated_interactivity_p10,interactivity_bound,estimated_ttft_p50_ms,estimated_ttft_p95_ms,ttft_p95_beyond,preemptions,prefix_cache,mtp_acceptance,kv_cache_max_fraction,max_waiting_requests,holds,verdict,discarded
+prod,prod-n2-r1,2023-11-14 22:13,2,900,100.0,50.0,0.9722222222222223,False,0.95,1.0,0.0,50.0,False,500.0,1000.0,False,0.0,0.5,,0.5,0.0,True,holds,False
+prod,prod-n2-r2,2023-11-14 23:20,2,900,100.0,50.0,0.9722222222222223,False,0.95,1.0,0.0,50.0,False,500.0,1000.0,False,0.0,0.5,,0.5,0.0,True,holds,False
+prod,prod-n4-r1,2023-11-15 00:26,4,900,100.0,50.0,0.32222222222222213,False,0.1,0.6,0.0,20.0,True,500.0,1000.0,False,0.0,0.5,,0.5,0.0,False,does not hold,False
+prod,prod-n4-r2,2023-11-15 01:33,4,900,100.0,50.0,0.9722222222222223,False,0.95,1.0,0.0,50.0,False,500.0,1000.0,False,5.0,0.5,,0.5,0.0,False,does not hold,False
+prod,prod-n8-r1,2023-11-15 02:40,8,900,,,,False,,,,,False,,,False,,,,,,False,discarded,True
