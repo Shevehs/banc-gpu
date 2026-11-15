@@ -1,0 +1,14 @@
+Table: <root>/table_observation.csv
+
+window                          start  level   dur s requests  err   tput/GPU  at target inter P10≥ TTFT P95≤ ms preempt  cache   MTP  KV max  verdict
+prod-n2-r1           2023-11-14 22:13      2     900      100    0       50.0       97%*       50.0         1000       0    50%     —     50%  holds
+prod-n2-r2           2023-11-14 23:20      2     900      100    0       50.0       97%*       50.0         1000       0    50%     —     50%  holds
+prod-n4-r1           2023-11-15 00:26      4     900      100    0       50.0       32%*      <20.0         1000       0    50%     —     50%  does not hold
+prod-n4-r2           2023-11-15 01:33      4     900      100    0       50.0       97%*       50.0         1000       5    50%     —     50%  does not hold
+prod-n8-r1           2023-11-15 02:40      8     900        —    —          —          —          —            —       —      —     —       —  discarded
+
+* interpolated share: no histogram bound at 33.3 ms; start vLLM with --custom-histogram-buckets (README, section 8.1). "undetermined": the target falls in a bucket that straddles 90 %.
+≥ and ≤: bounds read from the histogram buckets (< or >: beyond the last bound). err: /v1 requests with 4xx or 5xx seen by vLLM ("—" if not exposed).
+
+prod: highest level that holds = 2 (50.0 tokens/s per GPU, 2 window(s)).
+   WARNING: prod-n8-r1 2023-11-15 02:40: server restarted during the window: window discarded.

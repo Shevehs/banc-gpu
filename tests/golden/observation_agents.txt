@@ -1,0 +1,6 @@
+prod (2 window(s), agents distinguished by metadata_agent)
+  agent                    requests output share  input/req output/req TTFT P50≤ s TTFT P95≤ s latency P95≤ s   avg speed
+  coder                          20         100%         50         10        0.50       >0.50          >1.00        14.3
+
+Per-agent view read from LiteLLM: TTFT only for streamed requests; average speed = output tokens / (latency - TTFT), a mean and not a percentile, proxy time included, empty if some of the requests are not streamed. Bounds <=: buckets of the LiteLLM histograms.
+   WARNING: prod-n8-r1 2023-11-15 02:40: server restarted during the window: window discarded.
