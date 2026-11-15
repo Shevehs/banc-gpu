@@ -26,6 +26,10 @@ Two families of measurements:
 
 - [1. Choose a mode](#1-choose-a-mode)
 - [2. Quick start](#2-quick-start)
+  - [2.1 Get the code and install the bench](#21-get-the-code-and-install-the-bench)
+  - [2.2 Point the bench at your vLLM](#22-point-the-bench-at-your-vllm)
+  - [2.3 Check that it can reach the server](#23-check-that-it-can-reach-the-server)
+  - [2.4 Run a first measurement and read it](#24-run-a-first-measurement-and-read-it)
 - [3. How the pieces connect](#3-how-the-pieces-connect)
 - [4. Requirements and installation](#4-requirements-and-installation)
   - [4.1 What must already be in place](#41-what-must-already-be-in-place)
@@ -86,23 +90,47 @@ requires restarting vLLM (see [section 4.2](#42-check-the-vllm-in-place)).
 
 ## 2. Quick start
 
-A first synthetic measurement (about 15 commands, using a vLLM that is already running).
+A first synthetic measurement, on a vLLM that is already running. You need Python 3.11 to 3.13 (an older Python: see
+[uv](#43-install-the-bench), section 4.3).
+
+### 2.1 Get the code and install the bench
 
 ```bash
 git clone https://github.com/Shevehs/banc-gpu.git ~/banc-gpu && cd ~/banc-gpu
 python3 -m venv .venv-aiperf && source .venv-aiperf/bin/activate
 pip install aiperf==0.12.0 "openai>=1.40" httpx
-cp tools/target.env.example target.env       # set BENCH_URL, BENCH_MODEL, BENCH_API_KEY (and BENCH_METRICS: required if BENCH_URL is LiteLLM)
-source target.env
-./tools/download_tokenizer.sh <Hugging Face repository of your model>
-python tools/server_config.py --url "$BENCH_URL" --model "$BENCH_MODEL" --metrics "$BENCH_METRICS" > /dev/null
-./sweep.sh first-r1 "1 4 16"
-python -m report aiperf results --target 30             # GPUs deduced from the fingerprint; add --gpu N to force
 ```
 
-For this run, vLLM must already serve the model with `--no-enable-prefix-caching`
-(see [section 4.2](#42-check-the-vllm-in-place)). The `server_config.py` line must print `[config]` lines
-([section 5.4](#54-test-the-connection)). Python 3.11 to 3.13 is required (an older Python: [uv](#43-install-the-bench), section 4.3).
+### 2.2 Point the bench at your vLLM
+
+Copy the example file, then edit `target.env`: set `BENCH_URL`, `BENCH_MODEL` and `BENCH_API_KEY`, and also
+`BENCH_METRICS` if `BENCH_URL` is a LiteLLM gateway (see [section 5.2](#52-set-the-connection)).
+
+```bash
+cp tools/target.env.example target.env
+source target.env
+```
+
+### 2.3 Check that it can reach the server
+
+Download the tokenizer of your model, then read the server's configuration. The second command must print `[config]`
+lines ([section 5.4](#54-test-the-connection)).
+
+```bash
+./tools/download_tokenizer.sh <Hugging Face repository of your model>
+python tools/server_config.py --url "$BENCH_URL" --model "$BENCH_MODEL" --metrics "$BENCH_METRICS" > /dev/null
+```
+
+### 2.4 Run a first measurement and read it
+
+vLLM must already serve the model with `--no-enable-prefix-caching` for this run
+(see [section 4.2](#42-check-the-vllm-in-place)). The first command sends load at 1, 4 and 16 simultaneous requests; the
+second one builds the report. The number of GPUs is deduced from the server's configuration; add `--gpu N` to force it.
+
+```bash
+./sweep.sh first-r1 "1 4 16"
+python -m report aiperf results --target 30
+```
 
 Unfamiliar terms: see [Appendix F](#appendix-f-glossary). No GPU at hand? Check the scripts first with the fake server ([section 6](#6-smoke-test-without-a-gpu)).
 
