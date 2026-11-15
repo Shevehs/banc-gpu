@@ -1,0 +1,24 @@
+# Prometheus configuration for the bench's observation mode (README, section 8.2).
+# Copy: cp tools/prometheus.yml.example prometheus.yml, then replace the addresses.
+# Start: prometheus --config.file=prometheus.yml --storage.tsdb.path=prometheus-data --storage.tsdb.retention.time=30d
+# (with Docker Compose: README, section 8.2, option B; addresses seen from the container, host.docker.internal for the host)
+global:
+  scrape_interval: 15s          # keep it equal to the scrape interval given to observation/query.py
+
+scrape_configs:
+  # vLLM servers: one host:port address per replica (path /metrics, no key: vLLM does not protect it).
+  # One job = one configuration; observation/query.py adds up all the replicas of the job.
+  - job_name: vllm
+    static_configs:
+      - targets: ["127.0.0.1:8000"]
+
+  # LiteLLM (optional, per-agent view): "prometheus" callback enabled, metrics on /metrics/ (final slash).
+  # Key in a separate file, relative to the folder of this file: (umask 077; printf '%s' "<key>" > litellm.key)
+  # for a Prometheus you start yourself; chmod 644 if it runs in Docker (user nobody).
+  # Remove this block if you do not use LiteLLM.
+  - job_name: litellm
+    metrics_path: /metrics/
+    authorization:
+      credentials_file: litellm.key
+    static_configs:
+      - targets: ["127.0.0.1:4000"]

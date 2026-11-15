@@ -1,14 +1,19 @@
 .venv*/
 __pycache__/
 node_modules/
-resultats*/
-agents_test/resultats*/
-interface/journaux/
+results*/
+agents_test/results*/
+interface/logs/
 .DS_Store
-cible.env
+*.env
+!*.env.example
 traces-agentx*/
 prometheus.yml
-litellm.cle
+litellm.key
 prometheus-data/
 data/
 /*.csv
+# folders produced by the pre-rename (French) version
+resultats*/
+agents_test/resultats*/
+interface/journaux/

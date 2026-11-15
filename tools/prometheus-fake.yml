@@ -1,0 +1,9 @@
+# Prometheus to check the observation against the fake server (README, section 6). Any "LiteLLM" key will do.
+global: {scrape_interval: 5s}
+scrape_configs:
+  - job_name: vllm
+    static_configs: [{targets: ["127.0.0.1:8001"]}]
+  - job_name: litellm
+    metrics_path: /litellm/metrics/
+    authorization: {credentials_file: litellm.key}     # relative to this file: tools/litellm.key
+    static_configs: [{targets: ["127.0.0.1:8001"]}]
