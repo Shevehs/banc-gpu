@@ -16,16 +16,15 @@ Two families of measurements:
   installation **sustains the real load**, per window, per period and per agent, over any past range.
 
 > **Status.** Written from the code of **vLLM at commit [`7f855f6`](https://github.com/vllm-project/vllm/tree/7f855f605892656ebf7265642e5d22a34a6ae731)**
-> and tested with **AIPerf 0.12.0** against the fake server ([section 6](#6-smoke-test-without-a-gpu)).
+> and tested with **AIPerf 0.12.0** against a fake server ([section 6](#6-smoke-test-without-a-gpu)).
 > Against a real vLLM it has only been tried on a Mac (vllm-metal, vLLM 0.33.0), **not yet on a GPU server**.
 > On your first real run, compare your outputs with the example in [section 5.4](#54-test-the-connection).
-> Unfamiliar terms: see [Appendix E](#appendix-e-glossary). What is verified, documented or still unchecked is
-> listed in the [Validation status](#validation-status), after the modes of [section 1](#1-choose-a-mode).
+> Unfamiliar terms: see [Appendix F](#appendix-f-glossary). What is verified, documented or still unchecked is
+> listed in [Appendix E](#appendix-e-validation-status).
 
 ## Contents
 
 - [1. Choose a mode](#1-choose-a-mode)
-- [Validation status](#validation-status)
 - [2. Quick start](#2-quick-start)
 - [3. How the pieces connect](#3-how-the-pieces-connect)
 - [4. Requirements and installation](#4-requirements-and-installation)
@@ -61,7 +60,8 @@ Two families of measurements:
 - [Appendix B. LiteLLM per-key setup and install details](#appendix-b-litellm-per-key-setup-and-install-details)
 - [Appendix C. Sources](#appendix-c-sources)
 - [Appendix D. Tests](#appendix-d-tests)
-- [Appendix E. Glossary](#appendix-e-glossary)
+- [Appendix E. Validation status](#appendix-e-validation-status)
+- [Appendix F. Glossary](#appendix-f-glossary)
 
 ---
 
@@ -79,60 +79,6 @@ The stress tests read vLLM's `/metrics` themselves while they run; only observat
 **Start with the synthetic stress test**: it needs no trace download and is the quickest way to validate your setup.
 Use observation instead if you already have agents running in production (it needs a Prometheus, [section 8.2](#82-install-and-start-prometheus-once)). Changing the prefix cache
 requires restarting vLLM (see [section 4.2](#42-check-the-vllm-in-place)).
-
-[↑ Back to top](#top)
-
----
-
-## Validation status
-
-**Verified**
-
-- The test agents, the two kinds of report and the test suite, against the fake server. `sweep.sh` and `agentx.sh`
-  have not been run with AIPerf since the latest changes to the scripts; the smoke test of
-  [section 6](#6-smoke-test-without-a-gpu) does it.
-- The observation against the fake server, with Prometheus 3.7.3 ([section 8.3](#83-query-the-observation)).
-- The per-agent view with a real LiteLLM 1.109.1: metric names, types and labels, and the Prisma and
-  `prometheus_client` requirements ([section 8.5](#85-per-agent-view-through-litellm),
-  [Appendix B](#appendix-b-litellm-per-key-setup-and-install-details)).
-- On a Mac with a real vLLM 0.33.0: the connection, the fingerprint, `/metrics` and the loading of the AgentX traces.
-
-**Documented** (in the code or the help text of the tools)
-
-- The AgentX scenario rules (AIPerf `inferencex_agentx_mvp.py`).
-- The `--max-context-length` option (AIPerf help).
-- vLLM reduces `max_tokens` to the room left in the context (`get_max_tokens`).
-- How histograms and client aborts behave (`stats.py`).
-- `process_start_time_seconds` is only exposed on Linux, and not when several API processes run
-  (`cli/serve.py`, `prometheus.py`).
-- vLLM ignores request fields it does not know (`protocol.py`).
-
-See [section 7.3](#73-agentx-stress-test), [section 7.5](#75-context-shorter-than-the-traces),
-[section 8.1](#81-tune-vllm-for-exact-interactivity) and [section 8.5](#85-per-agent-view-through-litellm).
-
-**Inferred, to check on first use**
-
-- The chat template may add tokens beyond the lengths recorded in the traces.
-- `--max-num-seqs` for AgentX should cover the sessions times their parallel sub-agents.
-- The name and labels of the `http_requests_total` counter. If they differ, the `err` column shows "—".
-- A replay limited by `BENCH_MAX_CONTEXT` is probably biased toward short sessions.
-- The limits of the observation: window edges, short restarts that go undetected, and series that appear in the
-  middle of a window.
-- The GPU count of a data-parallel deployment with one API server per rank: the fingerprints carry the global
-  data-parallel size, so the deduced count would be too high.
-- A limited LiteLLM virtual key is enough to read `/metrics/`.
-
-See [section 4.2](#42-check-the-vllm-in-place), [section 7.5](#75-context-shorter-than-the-traces) and
-[section 8.1](#81-tune-vllm-for-exact-interactivity).
-
-**Not verified**
-
-- That the AgentX Hugging Face repository stores one trace per JSON file in a single folder (the download script
-  counts the files and tells you).
-- That LiteLLM forwards `min_tokens` and `ignore_eos`.
-- Prometheus versions newer than 3.7.3.
-
-See [section 7.4](#74-agentx-without-internet-access) and [section 7.7](#77-stress-test-through-litellm).
 
 [↑ Back to top](#top)
 
@@ -158,7 +104,7 @@ For this run, vLLM must already serve the model with `--no-enable-prefix-caching
 (see [section 4.2](#42-check-the-vllm-in-place)). The `server_config.py` line must print `[config]` lines
 ([section 5.4](#54-test-the-connection)). Python 3.11 to 3.13 is required (an older Python: [uv](#43-install-the-bench), section 4.3).
 
-Unfamiliar terms: see [Appendix E](#appendix-e-glossary). No GPU at hand? Check the scripts first with the fake server ([section 6](#6-smoke-test-without-a-gpu)).
+Unfamiliar terms: see [Appendix F](#appendix-f-glossary). No GPU at hand? Check the scripts first with the fake server ([section 6](#6-smoke-test-without-a-gpu)).
 
 Next steps: the other stress tests ([section 7](#7-stress-tests)), observation of your real agents
 ([section 8](#8-observation-real-use)), or the local interface ([section 10](#10-interface)).
@@ -1192,7 +1138,61 @@ in `tests/golden/`), the settings reading and the module structure, and checks t
 
 ---
 
-## Appendix E. Glossary
+## Appendix E. Validation status
+
+**Verified**
+
+- The test agents, the two kinds of report and the test suite, against the fake server. `sweep.sh` and `agentx.sh`
+  have not been run with AIPerf since the latest changes to the scripts; the smoke test of
+  [section 6](#6-smoke-test-without-a-gpu) does it.
+- The observation against the fake server, with Prometheus 3.7.3 ([section 8.3](#83-query-the-observation)).
+- The per-agent view with a real LiteLLM 1.109.1: metric names, types and labels, and the Prisma and
+  `prometheus_client` requirements ([section 8.5](#85-per-agent-view-through-litellm),
+  [Appendix B](#appendix-b-litellm-per-key-setup-and-install-details)).
+- On a Mac with a real vLLM 0.33.0: the connection, the fingerprint, `/metrics` and the loading of the AgentX traces.
+
+**Documented** (in the code or the help text of the tools)
+
+- The AgentX scenario rules (AIPerf `inferencex_agentx_mvp.py`).
+- The `--max-context-length` option (AIPerf help).
+- vLLM reduces `max_tokens` to the room left in the context (`get_max_tokens`).
+- How histograms and client aborts behave (`stats.py`).
+- `process_start_time_seconds` is only exposed on Linux, and not when several API processes run
+  (`cli/serve.py`, `prometheus.py`).
+- vLLM ignores request fields it does not know (`protocol.py`).
+
+See [section 7.3](#73-agentx-stress-test), [section 7.5](#75-context-shorter-than-the-traces),
+[section 8.1](#81-tune-vllm-for-exact-interactivity) and [section 8.5](#85-per-agent-view-through-litellm).
+
+**Inferred, to check on first use**
+
+- The chat template may add tokens beyond the lengths recorded in the traces.
+- `--max-num-seqs` for AgentX should cover the sessions times their parallel sub-agents.
+- The name and labels of the `http_requests_total` counter. If they differ, the `err` column shows "—".
+- A replay limited by `BENCH_MAX_CONTEXT` is probably biased toward short sessions.
+- The limits of the observation: window edges, short restarts that go undetected, and series that appear in the
+  middle of a window.
+- The GPU count of a data-parallel deployment with one API server per rank: the fingerprints carry the global
+  data-parallel size, so the deduced count would be too high.
+- A limited LiteLLM virtual key is enough to read `/metrics/`.
+
+See [section 4.2](#42-check-the-vllm-in-place), [section 7.5](#75-context-shorter-than-the-traces) and
+[section 8.1](#81-tune-vllm-for-exact-interactivity).
+
+**Not verified**
+
+- That the AgentX Hugging Face repository stores one trace per JSON file in a single folder (the download script
+  counts the files and tells you).
+- That LiteLLM forwards `min_tokens` and `ignore_eos`.
+- Prometheus versions newer than 3.7.3.
+
+See [section 7.4](#74-agentx-without-internet-access) and [section 7.7](#77-stress-test-through-litellm).
+
+[↑ Back to top](#top)
+
+---
+
+## Appendix F. Glossary
 
 - **TTFT** (time to first token): the wait between sending a request and receiving its first token.
 - **ITL** (inter-token latency) and **interactivity**: the average time between two tokens of a request;
