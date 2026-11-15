@@ -1,25 +1,18 @@
-"""Reading /metrics (Prometheus format) and indicators for an observation window.
-Standard library only. Used by observer.py and report/observation.py."""
+"""Indicators for an observation window (counters and histograms already reduced to the window).
+Standard library only. Used by observation/query.py."""
 import math
-import re
-import urllib.error
-import urllib.parse
-import urllib.request
 
-_LINE = re.compile(r"^([A-Za-z_:][A-Za-z0-9_:]*)(?:\{([^}]*)\})?\s+(\S+)")
-_LABEL = re.compile(r'(\w+)="((?:[^"\\]|\\.)*)"')
-
-# Names as of vLLM commit 7f855f6 (vllm/v1/metrics/loggers.py); the _total suffix of counters is stripped.
+# Names as of vLLM commit 7f855f6 (vllm/v1/metrics/loggers.py), as Prometheus stores them (_total on counters).
 COUNTERS = {
-    "output_tokens": "vllm:generation_tokens",
-    "input_tokens": "vllm:prompt_tokens",
-    "completed_requests": "vllm:request_success",
-    "preemptions": "vllm:num_preemptions",
-    "prefix_cache_hits": "vllm:prefix_cache_hits",
-    "prefix_cache_queries": "vllm:prefix_cache_queries",
-    "mtp_accepted": "vllm:spec_decode_num_accepted_tokens",
-    "mtp_proposed": "vllm:spec_decode_num_draft_tokens",
-    "failed_requests": "http_requests",
+    "output_tokens": "vllm:generation_tokens_total",
+    "input_tokens": "vllm:prompt_tokens_total",
+    "completed_requests": "vllm:request_success_total",
+    "preemptions": "vllm:num_preemptions_total",
+    "prefix_cache_hits": "vllm:prefix_cache_hits_total",
+    "prefix_cache_queries": "vllm:prefix_cache_queries_total",
+    "mtp_accepted": "vllm:spec_decode_num_accepted_tokens_total",
+    "mtp_proposed": "vllm:spec_decode_num_draft_tokens_total",
+    "failed_requests": "http_requests_total",  # prometheus_fastapi_instrumentator
 }
 HISTOGRAMS = {
     "ttft": "vllm:time_to_first_token_seconds",
@@ -28,72 +21,6 @@ HISTOGRAMS = {
 }
 GAUGES = {"kv": "vllm:kv_cache_usage_perc", "waiting": "vllm:num_requests_waiting",
           "running": "vllm:num_requests_running"}
-
-
-class _BlockRedirects(urllib.request.HTTPRedirectHandler):
-    """Follows only one kind of redirect: same host, same path plus a trailing "/" (LiteLLM serves /metrics/
-    and redirects /metrics to /metrics/). Any other redirect is refused, so the key is never sent elsewhere."""
-    def redirect_request(self, req, fp, code, msg, headers, newurl):
-        """Follow only the same-host redirect that adds a trailing "/".
-
-        Raises:
-            urllib.error.HTTPError: for any other redirect."""
-        a, b = urllib.parse.urlsplit(req.full_url), urllib.parse.urlsplit(urllib.parse.urljoin(req.full_url, newurl))
-        if (a.scheme, a.netloc) == (b.scheme, b.netloc) and b.path == a.path.rstrip("/") + "/":
-            return super().redirect_request(req, fp, code, msg, headers, newurl)
-        raise urllib.error.HTTPError(req.full_url, code, f"redirect to {newurl} refused", headers, fp)
-
-
-# No proxy: /metrics are on the private network, and the LiteLLM key must not go through a proxy.
-_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}), _BlockRedirects)
-HTTP_ERRORS = "http_requests"   # counter from prometheus_fastapi_instrumentator, exposed by vLLM
-
-
-def fetch_series(url, timeout_s=5, prefix=("vllm:", HTTP_ERRORS), key=None):
-    """List of (name, labels, value) from a /metrics endpoint, for names that start with `prefix`.
-    `key` is only given for LiteLLM's /metrics (protected by default)."""
-    req = urllib.request.Request(url)
-    if key:
-        req.add_header("Authorization", f"Bearer {key}")
-    with _OPENER.open(req, timeout=timeout_s) as r:
-        text = r.read().decode("utf-8", "replace")
-    res = []
-    for row in text.splitlines():
-        m = _LINE.match(row)
-        if not m or not m.group(1).startswith(prefix):
-            continue
-        try:
-            v = float(m.group(3))
-        except ValueError:
-            continue
-        name = m.group(1)
-        if name.endswith("_total"):
-            name = name[:-6]
-        res.append((name, dict(_LABEL.findall(m.group(2) or "")), v))
-    return res
-
-
-def summarize(series):
-    """Counters summed by name, histograms summed by bound, gauges kept per series."""
-    counters, histograms, gauges = {}, {k: {} for k in HISTOGRAMS}, {k: [] for k in GAUGES}
-    names_c = set(COUNTERS.values()) - {HTTP_ERRORS}
-    for name, lab, v in series:
-        if name in names_c:
-            counters[name] = counters.get(name, 0.0) + v
-        # Failed inference requests (4xx, 5xx): http_requests_total{handler="/v1/…", status="4xx"|"5xx"}
-        # (prometheus_fastapi_instrumentator, status codes grouped by default; INFERRED, check on the installed version).
-        # An error series only appears at the first error: as soon as a /v1 series exists, the count starts at 0.
-        if name == HTTP_ERRORS and lab.get("handler", "").startswith("/v1/"):
-            counters.setdefault(HTTP_ERRORS, 0.0)
-            if lab.get("status", "")[:1] in ("4", "5"):
-                counters[HTTP_ERRORS] += v
-        for k, h in HISTOGRAMS.items():
-            if name == h + "_bucket" and "le" in lab:
-                histograms[k][lab["le"]] = histograms[k].get(lab["le"], 0.0) + v
-        for k, j in GAUGES.items():
-            if name == j:
-                gauges[k].append(v)
-    return counters, histograms, gauges
 
 
 def _bound(le):
@@ -141,7 +68,7 @@ def share_below(h, x):
 
 
 def indicators(obs, target, gpu, ttft_max_ms=None):
-    """Indicators for a window (dict read from observation.json)."""
+    """Indicators for a window: obs = {start, end, counters, histograms, gauges} (see observation/query.py)."""
     d = obs["end"] - obs["start"]; c = obs["counters"]; h = obs["histograms"]
     ratio = lambda a, b: a / b if a is not None and b else None
     output = c.get("output_tokens")
@@ -187,49 +114,11 @@ def verdict(t):
 # (api_key_alias = one virtual key per agent, or metadata_<field_name> = custom_prometheus_metadata_labels).
 # Names from https://docs.litellm.ai/docs/proxy/prometheus; checked against LiteLLM 1.109.1 during validation.
 LITELLM = {
-    "output_tokens": "litellm_output_tokens_metric",
-    "input_tokens": "litellm_input_tokens_metric",
+    "output_tokens": "litellm_output_tokens_metric_total",
+    "input_tokens": "litellm_input_tokens_metric_total",
     "ttft": "litellm_llm_api_time_to_first_token_metric",     # histogram (s), streaming requests only
     "latency": "litellm_request_total_latency_metric",        # histogram (s), end to end
 }
-
-
-def summarize_litellm(series, label):
-    """{agent: {output_tokens, input_tokens, ttft{le}, ttft_sum, ttft_count, latency{le}, latency_sum, latency_count}}"""
-    res = {}
-    for name, lab, v in series:
-        ag = lab.get(label)
-        if ag is None:
-            continue
-        a = res.setdefault(ag, {"output_tokens": 0.0, "input_tokens": 0.0, "ttft": {}, "ttft_sum": 0.0,
-                                "ttft_count": 0.0, "latency": {}, "latency_sum": 0.0, "latency_count": 0.0})
-        for k in ("output_tokens", "input_tokens"):
-            if name == LITELLM[k]:
-                a[k] += v
-        for k in ("ttft", "latency"):
-            if name == LITELLM[k] + "_bucket" and "le" in lab:
-                a[k][lab["le"]] = a[k].get(lab["le"], 0.0) + v
-            elif name == LITELLM[k] + "_sum":
-                a[k + "_sum"] += v
-            elif name == LITELLM[k] + "_count":
-                a[k + "_count"] += v
-    return res
-
-
-def delta_litellm(start, end):
-    """Per-agent change between two summaries; an agent absent at the start counts from zero."""
-    res = {}
-    for ag, b in end.items():
-        a = start.get(ag) or {}
-        d = {}
-        for k, v in b.items():
-            if isinstance(v, dict):
-                d[k] = {le: n - (a.get(k) or {}).get(le, 0.0) for le, n in v.items()}
-            else:
-                d[k] = v - (a.get(k) or 0.0)
-        if d["latency_count"] > 0 or d["output_tokens"] > 0:
-            res[ag] = d
-    return res
 
 
 def agent_indicators(agents):

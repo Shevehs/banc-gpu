@@ -70,6 +70,12 @@ printf 'dataset=%s\ndirectory=%s\nduration=%s\nshort_run=%s\nmax_context=%s\nsub
 # (same workaround as sweep.sh). The online traces can still be downloaded.
 OFFLINE_UNSET=()
 [ -n "$TOKENIZER" ] && [ -d "$TOKENIZER" ] && OFFLINE_UNSET=(env -u HF_HUB_OFFLINE -u TRANSFORMERS_OFFLINE)
+# Loading the 393 traces (download included on the first run) takes several minutes, more than the 300 s
+# AIPerf allows by default (AIPERF_DATASET_CONFIGURATION_TIMEOUT; the profile configuration timeout,
+# AIPERF_SERVICE_PROFILE_CONFIGURE_TIMEOUT, must be at least equal). Values set in the terminal are respected.
+export AIPERF_DATASET_CONFIGURATION_TIMEOUT="${AIPERF_DATASET_CONFIGURATION_TIMEOUT:-1800}"
+export AIPERF_SERVICE_PROFILE_CONFIGURE_TIMEOUT="$(awk -v a="${AIPERF_SERVICE_PROFILE_CONFIGURE_TIMEOUT:-0}" \
+  -v b="$AIPERF_DATASET_CONFIGURATION_TIMEOUT" 'BEGIN { print (a + 0 > b + 0) ? a : b }')"   # AIPerf requires >= the first one
 for C in $CONCURRENCIES; do
   DIR="$ROOT_DIR/$LABEL/c$C"
   ARGS=(-m "$MODEL" --endpoint-type chat --streaming -u "$URL" --scenario inferencex-agentx-mvp
@@ -90,4 +96,4 @@ for C in $CONCURRENCIES; do
   SEL=$(grep -o -E "scanned [0-9,]+, rejected_by_maxctx [0-9,]+( \([^)]*\))?, eligible [0-9]+(,[0-9]{3})*" "$DIR.log" 2>/dev/null | head -1 || true)
   [ -n "$SEL" ] && echo "   traces: $SEL"
 done
-echo "Done. Results in $ROOT_DIR/$LABEL/; analysis: python -m report aiperf $ROOT_DIR --target 30 --gpu <GPU>"
+echo "Done. Results in $ROOT_DIR/$LABEL/; analysis: python -m report aiperf $ROOT_DIR --target 30 (GPUs deduced from the fingerprint; --gpu N to force)"

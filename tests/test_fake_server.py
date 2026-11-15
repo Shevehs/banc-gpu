@@ -1,12 +1,16 @@
 """tools/fake_server.py endpoints, through a subprocess (the module starts a server when imported)."""
 import json
+import re
+import threading
+import time
 import urllib.error
 import urllib.request
 import uuid
 
 import pytest
 
-from observation.analysis import COUNTERS, HISTOGRAMS, fetch_series, summarize
+from observation.analysis import COUNTERS, GAUGES, HISTOGRAMS, LITELLM
+from observation.query import LITELLM_WITNESSES, VLLM_WITNESSES
 from tests import helpers
 
 pytest.importorskip("aiohttp")
@@ -33,6 +37,20 @@ def chat(url, content="hello", **body):
     lines = [x[6:] for x in text.splitlines() if x.startswith("data: ")]
     assert lines[-1] == "[DONE]"
     return [json.loads(x) for x in lines[:-1]]
+
+
+def sample(text, name, **labels):
+    """Sum of the values of the series `name` (with the given labels) in a Prometheus text; None if there is none."""
+    found = []
+    for m in re.finditer(rf"^{re.escape(name)}(?:\{{([^}}]*)\}})? (\S+)$", text, re.M):
+        have = dict(re.findall(r'(\w+)="([^"]*)"', m.group(1) or ""))
+        if all(have.get(k) == v for k, v in labels.items()):
+            found.append(float(m.group(2)))
+    return sum(found) if found else None
+
+
+def metrics(url):
+    return get(url + "/metrics")[1]
 
 
 def usage_of(events):
@@ -73,24 +91,51 @@ def test_prefix_cache_reports_cached_tokens_on_a_repeated_prompt(fake_url):
     assert first == 0 and second > 0 and second % 16 == 0
 
 
-def test_metrics_contain_what_the_observer_reads(fake_url):
+def test_metrics_contain_every_series_observation_query_reads(fake_url):
     chat(fake_url, max_tokens=5, min_tokens=5, ignore_eos=True)
-    counters, histograms, gauges = summarize(fetch_series(fake_url + "/metrics"))
+    text = metrics(fake_url)
     for key, name in COUNTERS.items():
-        assert name in counters, f"{key}: {name} missing from the fake server's /metrics"
-    assert counters["vllm:generation_tokens"] >= 5 and counters["vllm:request_success"] >= 1
-    assert counters["http_requests"] == 0.0
-    for k in HISTOGRAMS:
-        assert histograms[k]["+Inf"] >= 1
-    assert gauges["kv"] == [0.5] and gauges["waiting"] == [0.0]
+        assert sample(text, name) is not None, f"{key}: {name} missing from the fake server's /metrics"
+    for name in GAUGES.values():
+        assert sample(text, name) is not None, f"{name} missing"
+    assert set(HISTOGRAMS.values()) == {"vllm:time_to_first_token_seconds", "vllm:request_time_per_output_token_seconds"}
+    for name in HISTOGRAMS.values():
+        assert sample(text, name + "_bucket", le="+Inf") >= 1 and sample(text, name + "_count") >= 1
+        assert sample(text, name + "_sum") is not None
+    for name in VLLM_WITNESSES:
+        assert re.search(rf"^{re.escape(name)}[{{ ]", text, re.M), f"restart witness {name} missing"
+    assert sample(text, COUNTERS["output_tokens"]) >= 5 and sample(text, COUNTERS["completed_requests"]) >= 1
+    assert sample(text, "http_requests_total", handler="/v1/chat/completions", status="2xx") >= 1
+    assert sample(text, GAUGES["kv"]) == 0.5 and sample(text, GAUGES["waiting"]) == 0.0
+
+
+def test_metrics_counters_are_named_with_total_like_prometheus_stores_them(fake_url):
+    text = metrics(fake_url)
+    assert "vllm:generation_tokens_total{" in text and "vllm:request_success_total{" in text
+    assert re.search(r"^vllm:generation_tokens\{", text, re.M) is None
 
 
 def test_metrics_counters_grow_with_the_requests(fake_url):
-    before = summarize(fetch_series(fake_url + "/metrics"))[0]
+    before = metrics(fake_url)
     chat(fake_url, max_tokens=9, min_tokens=9, ignore_eos=True)
-    after = summarize(fetch_series(fake_url + "/metrics"))[0]
-    assert after["vllm:generation_tokens"] - before["vllm:generation_tokens"] == 9
-    assert after["vllm:request_success"] - before["vllm:request_success"] == 1
+    after = metrics(fake_url)
+    assert sample(after, COUNTERS["output_tokens"]) - sample(before, COUNTERS["output_tokens"]) == 9
+    assert sample(after, COUNTERS["completed_requests"]) - sample(before, COUNTERS["completed_requests"]) == 1
+
+
+def test_running_requests_gauge_is_zero_when_idle_and_counts_streams_in_flight():
+    with helpers.fake_server("--token-delay", "0.05") as url:
+        assert sample(metrics(url), GAUGES["running"]) == 0.0
+        done = threading.Thread(target=lambda: chat(url, max_tokens=40, min_tokens=40, ignore_eos=True), daemon=True)
+        done.start()
+        deadline = time.time() + 10
+        seen = 0.0
+        while time.time() < deadline and not seen:
+            seen = sample(metrics(url), GAUGES["running"]) or 0.0
+            time.sleep(0.05)
+        done.join(timeout=20)
+        assert seen >= 1.0
+        assert sample(metrics(url), GAUGES["running"]) == 0.0
 
 
 def test_metrics_have_the_cache_config_and_spec_positions(fake_url):
@@ -103,6 +148,21 @@ def test_server_info_is_absent_without_dev_mode(fake_url):
     with pytest.raises(urllib.error.HTTPError) as e:
         get(fake_url + "/server_info")
     assert e.value.code == 404
+
+
+def test_litellm_metrics_have_the_names_the_agents_view_queries(fake_url):
+    key = "alias-" + uuid.uuid4().hex[:8]
+    post(fake_url + "/v1/chat/completions", {"model": "bench", "stream": True, "max_tokens": 4, "ignore_eos": True, "metadata": {"agent": "coder"},
+                                           "messages": [{"role": "user", "content": "x"}]}, {"Authorization": f"Bearer {key}"})
+    text = get(fake_url + "/litellm/metrics/")[1]
+    assert sample(text, LITELLM["output_tokens"], api_key_alias=key, metadata_agent="coder") == 4.0
+    assert sample(text, LITELLM["input_tokens"], api_key_alias=key) > 0
+    for k in ("ttft", "latency"):
+        assert sample(text, LITELLM[k] + "_bucket", api_key_alias=key, le="+Inf") == 1.0
+        assert sample(text, LITELLM[k] + "_count", api_key_alias=key) == 1.0
+        assert sample(text, LITELLM[k] + "_sum", api_key_alias=key) > 0
+    for name in LITELLM_WITNESSES:
+        assert re.search(rf"^{re.escape(name)}\{{", text, re.M), f"restart witness {name} missing"
 
 
 def test_litellm_metrics_by_key_alias(fake_url):
@@ -128,8 +188,26 @@ def test_error_rate_makes_requests_fail_and_counts_them():
         with pytest.raises(urllib.error.HTTPError) as e:
             post(url + "/v1/chat/completions", {"model": "bench", "messages": []})
         assert e.value.code == 500
-        counters = summarize(fetch_series(url + "/metrics"))[0]
-        assert counters["http_requests"] == 1.0
+        assert sample(metrics(url), "http_requests_total", status="5xx") == 1.0
+
+
+def test_admin_changes_the_error_rate_while_the_server_runs():
+    with helpers.fake_server() as url:
+        assert json.loads(get(url + "/admin?rate=1")[1]) == {"rate": 1.0}
+        with pytest.raises(urllib.error.HTTPError) as e:
+            chat(url)
+        assert e.value.code == 500
+        assert json.loads(get(url + "/admin")[1]) == {"rate": 1.0}               # no parameter: unchanged
+        assert json.loads(get(url + "/admin?rate=0")[1]) == {"rate": 0.0}
+        assert usage_of(chat(url))["completion_tokens"] > 0
+        text = metrics(url)
+        assert sample(text, "http_requests_total", status="5xx") == 1.0 and sample(text, "http_requests_total", status="2xx") == 1.0
+
+
+def test_http_series_appear_only_with_the_first_request():
+    with helpers.fake_server() as url:
+        assert sample(metrics(url), "http_requests_total", status="2xx") == 0.0
+        assert sample(metrics(url), "http_requests_total", status="5xx") is None
 
 
 def test_dev_mode_exposes_server_info_and_a_parallel_fingerprint():
@@ -146,5 +224,6 @@ def test_dev_mode_exposes_server_info_and_a_parallel_fingerprint():
 def test_custom_itl_bounds():
     with helpers.fake_server("--itl-bounds", "[0.0333, 0.1]") as url:
         chat(url, max_tokens=4, min_tokens=4, ignore_eos=True)
-        histograms = summarize(fetch_series(url + "/metrics"))[1]
-        assert sorted(histograms["tpot"], key=lambda x: float(x.replace("+Inf", "1e9"))) == ["0.0333", "0.1", "+Inf"]
+        text = metrics(url)
+        bounds = re.findall(r'vllm:request_time_per_output_token_seconds_bucket\{[^}]*le="([^"]+)"', text)
+        assert sorted(bounds, key=lambda x: float(x.replace("+Inf", "1e9"))) == ["0.0333", "0.1", "+Inf"]

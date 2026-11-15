@@ -70,6 +70,7 @@ def test_collect_full(stub):
     assert r["target_models"] == [{"id": "bench", "max_model_len": 32768}]
     (srv,) = r["servers"]
     assert srv["version"] == "0.11.0" and srv["speculative_tokens_metrics"] == 3
+    assert srv["vllm_lines"] == 4 and srv["metrics_status"] == 200      # vllm: lines read in /metrics
     assert srv["cache_config"] == {"block_size": "16", "cache_dtype": "auto", "enable_prefix_caching": "True",
                                    "gpu_memory_utilization": "0.9", "num_gpu_blocks": "1000"}
     assert srv["configuration"]["parallelism"]["tensor_parallel_size"] == 4
@@ -106,6 +107,7 @@ def test_collect_does_not_raise_on_an_unusable_server(stub):
     r = collect(s.url, [s.url + "/metrics"], model="bench")
     assert r["target_models"] is None and r["servers"][0]["version"] is None
     assert r["servers"][0]["speculative_tokens_metrics"] is None and r["servers"][0]["configuration"] is None
+    assert r["servers"][0]["vllm_lines"] == 0 and r["servers"][0]["metrics_status"] == 200
     assert r["fingerprint"] == {"raw": None, "decoded": None, "response": False}
 
 
@@ -129,7 +131,43 @@ def test_collect_budget_exhausted(stub):
 
 def test_collect_metrics_without_vllm_lines_gives_unknown_spec_tokens(stub):
     s = stub(routes(**{"/metrics": (200, "other_metric 1\n", {})}))
-    assert collect(s.url)["servers"][0]["speculative_tokens_metrics"] is None
+    srv = collect(s.url)["servers"][0]
+    assert srv["speculative_tokens_metrics"] is None and srv["vllm_lines"] == 0 and srv["metrics_status"] == 200
+
+
+def test_collect_counts_only_vllm_prefixed_lines(stub):
+    text = "# vllm:comment\nvllm:a 1\n  vllm:b 2\nvllm:c{x=\"1\"} 3\nmy_vllm:d 4\n"
+    assert collect(stub(routes(**{"/metrics": (200, text, {})})).url)["servers"][0]["vllm_lines"] == 2
+
+
+@pytest.mark.parametrize("status", [401, 403, 404, 500])
+def test_collect_metrics_http_error_is_recorded_not_raised(stub, status):
+    srv = collect(stub(routes(**{"/metrics": (status, "no", {})})).url)["servers"][0]
+    assert srv["metrics_status"] == status and srv["vllm_lines"] is None and srv["speculative_tokens_metrics"] is None
+
+
+def test_collect_metrics_redirect_is_recorded_as_its_status(stub):
+    s = stub(routes(**{"/metrics": (307, "", {"Location": "/metrics/"}), "/metrics/": (200, METRICS, {})}))
+    srv = collect(s.url)["servers"][0]
+    assert srv["metrics_status"] == 307 and srv["vllm_lines"] is None
+    assert all(r["path"] != "/metrics/" for r in s.seen)
+
+
+def test_collect_unreachable_metrics_has_no_status(stub):
+    srv = collect(stub(routes()).url, [f"http://127.0.0.1:{helpers.free_port()}/metrics"])["servers"][0]
+    assert srv["metrics_status"] is None and srv["vllm_lines"] is None
+
+
+def test_collect_budget_exhausted_marks_the_metrics_not_read(stub):
+    srv = collect(stub(routes()).url, [], budget_s=0)["servers"][0]
+    assert srv["metrics_status"] == "budget" and srv["vllm_lines"] is None
+
+
+def test_collect_one_entry_per_metrics_url(stub):
+    a, b = stub(routes()), stub(routes(**{"/metrics": (200, "x 1\n", {})}))
+    r = collect(a.url, [a.url + "/metrics", b.url + "/metrics"])
+    assert [x["metrics"] for x in r["servers"]] == [a.url + "/metrics", b.url + "/metrics"]
+    assert [x["vllm_lines"] for x in r["servers"]] == [4, 0]
 
 
 def test_summary(stub):
@@ -137,12 +175,13 @@ def test_summary(stub):
     text = summary(collect(s.url, [s.url + "/metrics"], model="bench"))
     assert "target fingerprint: vllm-0.11.0-tp4-dp2-ep-0a1b2c3d -> TP 4, PP 1, DP 2, EP yes" in text
     assert "vLLM 0.11.0; prefix cache True; speculative tokens (metrics) 3; /server_info read (speculative decoding:" in text
-    assert text.count("\n") == 1
+    assert "[config] GPUs deduced: 8 (TP 4 × PP 1 × DP 2 × 1 vLLM server(s))" in text
+    assert text.count("\n") == 2 and "WARNING" not in text
 
 
 def test_summary_variants():
     base = {"servers": [{"metrics": "m", "version": None, "cache_config": None, "configuration": None,
-                         "speculative_tokens_metrics": None}], "fingerprint": None}
+                         "speculative_tokens_metrics": None, "vllm_lines": 5, "metrics_status": 200}], "fingerprint": None}
     assert summary(base) == "[config] m: vLLM ?; prefix cache ?; speculative tokens (metrics) ?; /server_info " \
         "absent or not read (VLLM_SERVER_DEV_MODE not enabled?)"
     assert "time budget exhausted" in summary({**base, "fingerprint": {"budget_exhausted": True}})
@@ -150,6 +189,64 @@ def test_summary_variants():
     assert "absent" in no_answer and "(no response: check the model, key or target)" in no_answer
     masked = {"raw": "vllm-1-0a1b2c3d", "response": True, "decoded": read_fingerprint("vllm-1-0a1b2c3d")}
     assert "(or masked if --fingerprint-mode hash)" in summary({**base, "fingerprint": masked})
+
+
+def server(**kw):
+    return {"metrics": "http://h:8000/metrics", "version": "0.11.0", "cache_config": None, "configuration": None,
+            "speculative_tokens_metrics": None, "vllm_lines": 10, "metrics_status": 200, **kw}
+
+
+def test_summary_gpus_deduced_line_names_the_origin_and_the_server_count():
+    fp = {"raw": "vllm-1-tp2-pp2-0a1b2c3d", "response": True, "decoded": read_fingerprint("vllm-1-tp2-pp2-0a1b2c3d")}
+    text = summary({"servers": [server(), server(metrics="http://h2:8000/metrics")], "fingerprint": fp})
+    assert "[config] GPUs deduced: 8 (TP 2 × PP 2 × DP 1 × 2 vLLM server(s))" in text
+
+
+def test_summary_gpus_line_warns_that_a_masked_fingerprint_assumes_one_gpu_per_server():
+    fp = {"raw": "vllm-1-0a1b2c3d", "response": True, "decoded": read_fingerprint("vllm-1-0a1b2c3d")}
+    text = summary({"servers": [server()], "fingerprint": fp})
+    assert "[config] GPUs deduced: 1 (TP 1 × PP 1 × DP 1 × 1 vLLM server(s)); 1 GPU per server unless" in text
+
+
+def test_summary_has_no_gpus_line_when_nothing_can_be_deduced():
+    fp = {"raw": None, "response": False, "decoded": None}
+    assert "GPUs deduced" not in summary({"servers": [server()], "fingerprint": fp})
+    assert "GPUs deduced" not in summary({"servers": [server()], "fingerprint": None})
+    fp = {"raw": "vllm-1-tp2-0a1b2c3d", "response": True, "decoded": read_fingerprint("vllm-1-tp2-0a1b2c3d")}
+    assert "GPUs deduced" not in summary({"servers": [server(vllm_lines=0)], "fingerprint": fp})
+
+
+@pytest.mark.parametrize("changes,fragment", [
+    ({"vllm_lines": 0}, "no vllm: metric, LiteLLM address?"),
+    ({"vllm_lines": None, "metrics_status": 401}, "HTTP 401: key required"),
+    ({"vllm_lines": None, "metrics_status": 403}, "HTTP 403: key required"),
+    ({"vllm_lines": None, "metrics_status": 307}, "HTTP 307: key required"),
+    ({"vllm_lines": None, "metrics_status": 308}, "HTTP 308: key required"),
+])
+def test_summary_warns_when_metrics_are_not_vllms(changes, fragment):
+    text = summary({"servers": [server(**changes)], "fingerprint": None})
+    assert "[config] WARNING: http://h:8000/metrics is not vLLM's /metrics (" + fragment in text
+    assert "put vLLM's /metrics address in BENCH_METRICS" in text
+
+
+def test_summary_warns_when_the_time_budget_ran_out_or_the_server_is_unreachable():
+    text = summary({"servers": [server(vllm_lines=None, metrics_status="budget")], "fingerprint": None})
+    assert "WARNING: http://h:8000/metrics not read (time budget exhausted, slow servers)." in text
+    text = summary({"servers": [server(vllm_lines=None, metrics_status=500)], "fingerprint": None})
+    assert "WARNING: http://h:8000/metrics unreachable (HTTP 500): preemptions, cache and KV cache will not be read." in text
+    text = summary({"servers": [server(vllm_lines=None, metrics_status=None)], "fingerprint": None})
+    assert "WARNING: http://h:8000/metrics unreachable: preemptions" in text
+
+
+def test_summary_no_warning_for_a_healthy_server_and_for_files_without_the_new_keys():
+    assert "WARNING" not in summary({"servers": [server()], "fingerprint": None})
+    old = {"metrics": "m", "version": "1", "cache_config": None, "configuration": None, "speculative_tokens_metrics": None}
+    assert "WARNING: m unreachable" in summary({"servers": [old], "fingerprint": None})     # no vllm_lines key: unknown
+
+
+def test_summary_warning_per_server():
+    text = summary({"servers": [server(), server(metrics="http://lite:4000/metrics", vllm_lines=0)], "fingerprint": None})
+    assert text.count("WARNING") == 1 and "http://lite:4000/metrics is not vLLM's" in text
 
 
 def test_main_writes_the_snapshot_and_sends_the_bench_key(stub, tmp_path):

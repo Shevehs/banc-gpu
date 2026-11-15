@@ -1,0 +1,12 @@
+Prometheus <prometheus>, vLLM {job="vllm"}, LiteLLM {job="litellm"} by metadata_agent; 2024-05-14 00:00 → 2024-05-15 00:00, windows of 10800 s
+
+  agent                    requests output share  input/req output/req TTFT P50≤ s TTFT P95≤ s latency P95≤ s   avg speed
+  (no identity)                 100           1%       1500        400        0.10        0.50           5.00        83.3
+  coder                       14800          89%       1500        400        0.10        0.50           5.00        83.3
+  reviewer                     3300          10%       6000        200        0.10        0.50           5.00           —
+   (no identity): requests without a value for the label metadata_agent.
+
+Per-agent view read from LiteLLM: TTFT only for streamed requests; average speed = output tokens / (latency - TTFT), a mean and not a percentile, proxy time included, empty if some of the requests are not streamed. Bounds <=: buckets of the LiteLLM histograms.
+   WARNING: 2024-05-14 03:00: fewer than 50 completed requests: percentiles unreliable.
+   WARNING: 2024-05-14 15:00: vLLM restarted during the window (counters reset to zero): window discarded.
+   WARNING: 2024-05-14 18:00: LiteLLM restarted during the window: discarded from the per-agent view.

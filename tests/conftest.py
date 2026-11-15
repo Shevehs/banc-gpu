@@ -1,5 +1,6 @@
 """Shared fixtures: a hermetic environment, a stub HTTP server and the fake server."""
 import os
+import time
 
 import pytest
 
@@ -35,3 +36,27 @@ def fake_url():
     pytest.importorskip("aiohttp")
     with helpers.fake_server() as url:
         yield url
+
+
+@pytest.fixture
+def prom():
+    """Factory of Prometheus stubs: prom(responder) -> PromStub (closed at teardown)."""
+    made = []
+
+    def factory(responder):
+        s = helpers.PromStub(responder)
+        made.append(s)
+        return s
+    yield factory
+    for s in made:
+        s.close()
+
+
+@pytest.fixture
+def utc_timezone(monkeypatch):
+    """Local time is UTC during the test (period labels and window dates are in local time)."""
+    monkeypatch.setenv("TZ", "UTC")
+    time.tzset()
+    yield
+    monkeypatch.undo()
+    time.tzset()

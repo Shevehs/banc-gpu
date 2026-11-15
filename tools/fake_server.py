@@ -16,6 +16,7 @@ SEEN_PROMPTS = []  # requests already seen (text), to simulate the prefix cache
 OUTPUT_TOKENS = 0
 INPUT_TOKENS = 0
 REQUESTS = 0
+RUNNING = [0]  # requests being streamed (vllm:num_requests_running)
 HTTP = {"2xx": 0}  # like prometheus_fastapi_instrumentator: a series only appears at its first request
 
 # Histograms mimicking vLLM (vLLM's default bounds; --itl-bounds replaces them, like --custom-histogram-buckets)
@@ -68,7 +69,6 @@ async def models(r):
 
 async def chat(r):
     """POST /v1/chat/completions: simulated completion (SSE stream or one JSON body), or a 500 at --error-rate."""
-    global OUTPUT_TOKENS, INPUT_TOKENS, REQUESTS
     if random.random() < ERROR_RATE:
         HTTP["5xx"] = HTTP.get("5xx", 0) + 1
         return web.json_response({"error": "simulated error"}, status=500)
@@ -87,6 +87,16 @@ async def chat(r):
             "usage": {"prompt_tokens": n_in, "completion_tokens": 1, "total_tokens": n_in + 1}})
     resp = web.StreamResponse(headers={"Content-Type": "text/event-stream"})
     await resp.prepare(r)
+    RUNNING[0] += 1
+    try:
+        return await stream(r, b, resp, n, n_in, c)
+    finally:
+        RUNNING[0] -= 1
+
+
+async def stream(r, b, resp, n, n_in, c):
+    """Stream the simulated answer `n` tokens long on `resp`, then record the request in the counters."""
+    global OUTPUT_TOKENS, INPUT_TOKENS, REQUESTS
     t0 = asyncio.get_running_loop().time()
     await asyncio.sleep(0.02 + (n_in - c) / 2_000_000)
     t1 = None
@@ -181,6 +191,8 @@ async def metrics(r):
                   for k, v in HTTP.items())
         + "# TYPE vllm:num_requests_waiting gauge\n"
         "vllm:num_requests_waiting{engine=\"0\",model_name=\"bench\"} 0.0\n"
+        "# TYPE vllm:num_requests_running gauge\n"
+        f"vllm:num_requests_running{{engine=\"0\",model_name=\"bench\"}} {RUNNING[0]}.0\n"
         + histogram("vllm:time_to_first_token_seconds", B_TTFT, H["ttft"])
         + histogram("vllm:inter_token_latency_seconds", ITL_BOUNDS, H["tpot"])
         + histogram("vllm:request_time_per_output_token_seconds", ITL_BOUNDS, H["tpot"])
@@ -196,6 +208,13 @@ async def metrics(r):
 def FINGERPRINT():
     """system_fingerprint of the fake engine (parallelism depends on --dev-mode, like /server_info)."""
     return "vllm-0.0.0-tp4-dp2-ep-0a1b2c3d" if ARGS.dev_mode else "vllm-0.0.0-tp8-ep-0a1b2c3d"
+
+
+async def admin(r):
+    """GET /admin?rate=<x>: tests only, change the simulated error rate while the server runs."""
+    global ERROR_RATE
+    ERROR_RATE = float(r.query.get("rate", ERROR_RATE))
+    return web.json_response({"rate": ERROR_RATE})
 
 
 async def version(r):
@@ -231,7 +250,7 @@ PORT = ARGS.port
 ERROR_RATE = ARGS.error_rate
 app = web.Application(client_max_size=200 * 1024 * 1024)
 app.add_routes([web.get("/v1/models", models), web.post("/v1/chat/completions", chat),
-                web.get("/metrics", metrics), web.get("/version", version), web.get("/server_info", server_info),
+                web.get("/metrics", metrics), web.get("/version", version), web.get("/admin", admin), web.get("/server_info", server_info),
                 web.get("/litellm/metrics/", metrics_litellm),
                 web.get("/litellm/metrics", lambda r: web.HTTPTemporaryRedirect("/litellm/metrics/"))])
 web.run_app(app, host="127.0.0.1", port=PORT, print=None)

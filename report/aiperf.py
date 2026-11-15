@@ -4,14 +4,15 @@ err column: failed requests, plus requests rejected for too-long context (AIPerf
 metrics; a level that has any is rejected).
   --target : target interactivity per thread (tokens/s); the 10th percentile must reach it
             (interactivity of a request = 1 / mean inter-token delay, first token excluded)
-  --gpu   : number of GPUs behind the target, all replicas included (throughput per GPU = total throughput / gpu)
+  --gpu   : number of GPUs behind the target, all replicas included (throughput per GPU = total throughput / gpu);
+            optional: without it, deduced from the server_config.json of each run (TP x PP x DP x vLLM servers)
   --require-metrics : reject a level whose server metrics (preemptions) were not read
   --ttft-max : reject a level whose P95 TTFT exceeds this value (ms); set according to your use (ASSUMPTION)
 Writes <root>/table.csv and prints the selected point per configuration (runs <conf>-r1, -r2...)."""
 import json
 import pathlib
 
-from report.common import (warn_missing_metrics, warn_rejected_lower_levels, warn_saturation,
+from report.common import (GpuResolver, warn_missing_metrics, warn_rejected_lower_levels, warn_saturation,
                                   choose, configurations, write_csv, format_number, format_pct, group_rows,
                                   median_of, strip_repetition)
 
@@ -96,7 +97,7 @@ def read_run(profile_file, gpus):
         "aiperf_run_valid": (data.get("metadata") or {}).get("submission_valid"),
         "invalid_reasons": ";".join((data.get("metadata") or {}).get("submission_invalid_reasons") or []),
         "total_output_throughput": throughput,
-        "output_throughput_per_gpu": throughput / gpus if throughput else None,
+        "gpu": gpus, "output_throughput_per_gpu": throughput / gpus if throughput else None,
         "interactivity_p10": read_stat(data, "output_token_throughput_per_user", "p10"),
         "interactivity_p50": read_stat(data, "output_token_throughput_per_user", "p50"),
         "ttft_p50_ms": read_stat(data, "time_to_first_token", "p50"),
@@ -196,9 +197,16 @@ def execute(args):
     the selected points.
 
     Raises:
-        SystemExit: if no profile_export_aiperf.json is found."""
+        SystemExit: if no profile_export_aiperf.json is found, or if the GPU count of a run is unknown
+        (no --gpu and nothing to deduce it from)."""
     root = pathlib.Path(args.root)
-    rows = [read_run(f, args.gpu) for f in sorted(root.glob("*/c*/profile_export_aiperf.json"))]
+    resolver = GpuResolver(args.gpu)
+    rows = []
+    for f in sorted(root.glob("*/c*/profile_export_aiperf.json")):
+        gpus = resolver.for_run(f.parent.parent)
+        if gpus is not None:
+            rows.append(read_run(f, gpus))
+    resolver.finish(rows)
     rows.sort(key=lambda l: (l["run"], l["concurrency"]))
     warn_runs(rows, args.root)
     if not rows:

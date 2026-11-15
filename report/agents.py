@@ -6,11 +6,13 @@ Window used: from the level start + warmup to the planned end of the level; only
 window count (the tail, where concurrency drops, is excluded).
 Selected level: the largest number of simultaneous tasks whose P10 interactivity (all agents) reaches
 the target, with no error or preemption -- median of the repetitions (runs <conf>-rN).
+--gpu is optional: without it, the GPU count is deduced from the server_config.json of each run
+(TP x PP x DP of the fingerprint x number of vLLM servers).
 Writes <root>/table_agents.csv."""
 import json
 import pathlib
 
-from report.common import (warn_missing_metrics, warn_rejected_lower_levels, warn_saturation,
+from report.common import (GpuResolver, warn_missing_metrics, warn_rejected_lower_levels, warn_saturation,
                                   choose, configurations, write_csv, format_number, format_pct, group_rows,
                                   median_of, strip_repetition)
 
@@ -95,7 +97,7 @@ def read_level(level_file, gpus):
                "kv_cache_max_fraction": m.get("kv_cache_max_fraction"),
                "max_waiting_requests": m.get("max_waiting_requests")}
     run, level = run_dir.parent.name, meta["concurrent_tasks"]
-    rows = [level_row(run, level, "all", tasks, summary(calls, t0, t1, gpus), server)]
+    rows = [level_row(run, level, "all", tasks, {**summary(calls, t0, t1, gpus), "gpu": gpus}, server)]
     for agent in meta["agents"]:
         rows.append(level_row(run, level, agent, [t for t in tasks if t["agent"] == agent],
                                    summary([x for x in calls if x["agent"] == agent], t0, t1, gpus), NO_SERVER))
@@ -155,10 +157,17 @@ def execute(args):
     and the selected levels.
 
     Raises:
-        SystemExit: if no level.json is found."""
+        SystemExit: if no level.json is found, or if the GPU count of a run is unknown (no --gpu and nothing
+        to deduce it from)."""
     root = pathlib.Path(args.root)
     files = sorted(root.glob("*/n*/level.json"), key=lambda f: (f.parent.parent.name, int(f.parent.name[1:])))
-    rows = [row for f in files for row in read_level(f, args.gpu)]
+    resolver = GpuResolver(args.gpu)
+    rows = []
+    for f in files:
+        gpus = resolver.for_run(f.parent.parent)
+        if gpus is not None:
+            rows.extend(read_level(f, gpus))
+    resolver.finish(rows)
     if not rows:
         raise SystemExit(f"No level under {args.root}/<run>/n<N>/")
     write_csv(root / "table_agents.csv", rows)
