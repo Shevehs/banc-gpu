@@ -728,6 +728,13 @@ In every case:
   installations to compare mean two jobs (`job_name: vllm-tep8`, `job_name: vllm-tp4`).
 - **Scrape every 15 s** (`scrape_interval`): windows must last at least 4 scrapes (1 min); if you change this
   setting, give the same value to `--scrape`.
+- **Peaks are coarser than in the stress tests**: AIPerf reads vLLM's `/metrics` about every 0.33 s and the test
+  agents every 2 s, whereas Prometheus reads it every 15 s. A short spike of KV cache usage or of waiting requests can
+  fall between two scrapes and go unseen, so the maxima of the observation are lower bounds. The counters (requests,
+  preemptions, cache hits) are not affected, since the bench subtracts the start of a window from its end. For finer
+  peaks, lower `scrape_interval` (5 s is a reasonable value) and give the same value to `--scrape`; the cost is more
+  storage in Prometheus and more load on vLLM and LiteLLM, because every scrape renders the whole `/metrics` page.
+  Use whole seconds: `--scrape` does not support less than 1 s.
 - **Check**: page `http://<host>:9090/targets`, every target must be "UP" (otherwise the error is shown next to it).
   Then `curl -s 'http://<host>:9090/api/v1/query?query=up'`.
 - **History**: it starts when Prometheus starts. Leave it running as a service; the default retention is 15 days,
