@@ -1,7 +1,13 @@
 .venv*/
 __pycache__/
 node_modules/
+results*/
+agents_test/results*/
+interface/logs/
+.DS_Store
+*.env
+!*.env.example
+# folders produced by the pre-rename (French) version
 resultats*/
 agents_test/resultats*/
 interface/journaux/
-.DS_Store

@@ -1,0 +1,205 @@
+"""Snapshot of the vLLM server configuration, to be saved with each trial.
+
+Reads, without modifying anything:
+  - on the target: /v1/models (model, maximum context length if the target is vLLM) and, if the model
+    is given, a one-token completion to read system_fingerprint. In vLLM's default mode
+    (--fingerprint-mode full), this fingerprint is vllm-<version>[-tpN][-ppN][-dpN][-ep]-<hash8>:
+    it gives the parallelism without dev mode; the hash changes with the configuration.
+    In --fingerprint-mode hash, the degrees are masked: the fingerprint then looks like that of a
+    server without parallelism ("1 or masked").
+  - on each vLLM server (metrics URL without /metrics): /version; in /metrics, vllm:cache_config_info
+    (prefix cache, cache type and size) and the number of positions of
+    vllm:spec_decode_num_accepted_tokens_per_pos (= speculative tokens per step); /server_info, which exists
+    only if vLLM was started with VLLM_SERVER_DEV_MODE=1 (speculative decoding method, scheduler, etc.).
+A time budget (45 s by default) caps the timeout of each request and stops the following ones once
+exhausted; a server that answers drip by drip can still exceed it. The one-token completion comes
+last, so that a slow target does not prevent the rest of the snapshot.
+The API key is sent only to the target: /metrics, /version and /server_info do not require it
+(vLLM only protects /v1, /v2, /inference and /cohere). Redirects are not followed.
+
+Usage: python tools/server_config.py --url http://host:8000 [--model bench]
+       [--metrics "http://h1:8000/metrics …"] [--output server_config.json]
+API key: environment variable BENCH_API_KEY. Standard library only.
+"""
+import argparse
+import json
+import os
+import re
+import sys
+import time
+import urllib.error
+import urllib.request
+
+_INFO = re.compile(r'^vllm:cache_config_info\{([^}]*)\}')
+_LABEL = re.compile(r'(\w+)="((?:[^"\\]|\\.)*)"')
+_POSITION = re.compile(r'^vllm:spec_decode_num_accepted_tokens_per_pos(?:_total)?\{[^}]*position="(\d+)"')
+_FINGERPRINT = re.compile(r'^vllm-(?P<version>.+?)(?P<per>(?:-(?:tp|pp|dp)\d+|-ep)*)-(?P<hash>[0-9a-zA-Z]{8}|nohash)$')
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *a, **k):  # a redirect is treated as an error
+        """Refuse every redirect (returning None makes urllib raise an HTTPError)."""
+        return None
+
+
+# No proxy: the target and the /metrics endpoints are on the private network, and the key must not go through a proxy.
+_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirect)
+
+
+def _request(url, key=None, body=None, timeout_s=5):
+    req = urllib.request.Request(url, data=json.dumps(body).encode() if body is not None else None)
+    if body is not None:
+        req.add_header("Content-Type", "application/json")
+    if key:
+        req.add_header("Authorization", f"Bearer {key}")
+    with _OPENER.open(req, timeout=timeout_s) as r:
+        return r.status, r.read(2_000_000).decode("utf-8", "replace")
+
+
+def _get_json(url, key=None, body=None, timeout_s=5):
+    try:
+        s, t = _request(url, key, body, timeout_s)
+        j = json.loads(t) if s == 200 else None
+        return j if isinstance(j, dict) else None
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _as_dict(x):
+    return x if isinstance(x, dict) else {}
+
+
+def read_fingerprint(e):
+    """Decode system_fingerprint (vLLM full mode). Missing degree = 1 (or masked in hash mode)."""
+    if not isinstance(e, str) or len(e) > 300:
+        return None
+    m = _FINGERPRINT.match(e)
+    if not m:
+        return None
+    per = m.group("per")
+    deg = lambda k: int(re.search(rf"-{k}(\d+)", per).group(1)) if re.search(rf"-{k}(\d+)", per) else 1
+    return {"version": m.group("version"), "tensor_parallel_size": deg("tp"), "pipeline_parallel_size": deg("pp"),
+            "data_parallel_size": deg("dp"), "enable_expert_parallel": "-ep" in per, "hash_config": m.group("hash"),
+            "masking_possible": not per}  # no segment: TP=PP=DP=1 without EP, or hash mode which masks everything
+
+
+def _configuration(cfg):
+    """Extract the useful fields from vllm_config (JSON format of /server_info)."""
+    if not isinstance(cfg, dict):
+        return None
+    per, mod, cache, sched = (_as_dict(cfg.get(k)) for k in ("parallel_config", "model_config", "cache_config",
+                                                         "scheduler_config"))
+    spec = _as_dict(cfg.get("speculative_config"))
+    guard = lambda d, ks: {k: d.get(k) for k in ks if k in d}
+    return {
+        "parallelism": guard(per, ["tensor_parallel_size", "pipeline_parallel_size", "data_parallel_size",
+                                    "enable_expert_parallel", "decode_context_parallel_size",
+                                    "prefill_context_parallel_size"]),
+        "model": guard(mod, ["model", "served_model_name", "dtype", "quantization", "max_model_len"]),
+        "cache": guard(cache, ["cache_dtype", "enable_prefix_caching", "gpu_memory_utilization", "block_size",
+                               "num_gpu_blocks"]),
+        "scheduler": guard(sched, ["max_num_seqs", "max_num_batched_tokens", "enable_chunked_prefill",
+                                      "async_scheduling"]),
+        "speculative_decoding": guard(spec, ["method", "num_speculative_tokens"]) if spec else None,
+    }
+
+
+def collect(url, metrics=None, key=None, model=None, budget_s=45):
+    """Dictionary describing the target and each vLLM server. Does not raise on an unexpected response."""
+    end = time.time() + budget_s
+    remaining = lambda d: max(1.0, min(d, end - time.time()))
+    url = url.rstrip("/")
+    urls_m = list(metrics or []) or [url + "/metrics"]
+    res = {"date": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "target": url, "given_metrics": bool(metrics),
+           "servers": [], "fingerprint": None}
+    models = _get_json(url + "/v1/models", key, timeout_s=remaining(5))
+    data = models.get("data") if models else None
+    res["target_models"] = [{"id": m.get("id"), "max_model_len": m.get("max_model_len")}
+                            for m in data if isinstance(m, dict)] if isinstance(data, list) else None
+    for um in urls_m:
+        base = um[: -len("/metrics")] if um.endswith("/metrics") else um
+        srv = {"metrics": um, "version": None, "cache_config": None, "speculative_tokens_metrics": None,
+               "configuration": None}
+        if time.time() < end:
+            v = _get_json(base + "/version", timeout_s=remaining(5))
+            srv["version"] = v.get("version") if v else None
+        try:
+            s, t = _request(um, timeout_s=remaining(5)) if time.time() < end else (0, "")
+            positions, vllm_lines = set(), 0
+            for row in t.splitlines() if s == 200 else []:
+                vllm_lines += row.startswith("vllm:")
+                m = _INFO.match(row)
+                if m and srv["cache_config"] is None:
+                    srv["cache_config"] = {k: v for k, v in _LABEL.findall(m.group(1))
+                                           if k in ("cache_dtype", "enable_prefix_caching", "gpu_memory_utilization",
+                                                    "block_size", "num_gpu_blocks", "engine")}
+                p = _POSITION.match(row)
+                if p:
+                    positions.add(p.group(1))
+            if s == 200 and vllm_lines:
+                srv["speculative_tokens_metrics"] = len(positions)  # 0 = no speculative decoding (INFERRED)
+        except Exception:  # noqa: BLE001
+            pass
+        # First call sometimes slow (vLLM collects the system environment): longer timeout.
+        info = _get_json(base + "/server_info?config_format=json", timeout_s=remaining(20)) if time.time() < end else None
+        srv["configuration"] = _configuration(info.get("vllm_config")) if info else None
+        res["servers"].append(srv)
+    if model and time.time() >= end:
+        res["fingerprint"] = {"raw": None, "decoded": None, "response": None, "budget_exhausted": True}
+    elif model:  # a one-token completion, last and before any measurement
+        r = _get_json(url + "/v1/chat/completions", key, {"model": model, "max_tokens": 1, "temperature": 0,
+                                                      "messages": [{"role": "user", "content": "ok"}]},
+                  timeout_s=remaining(15))
+        e = r.get("system_fingerprint") if r else None
+        res["fingerprint"] = {"raw": e if isinstance(e, str) else None,
+                            "decoded": read_fingerprint(e),
+                            "response": r is not None}
+    return res
+
+
+def summary(r):
+    """One line per server, for the logs."""
+    dec = (r.get("fingerprint") or {}).get("decoded")
+    rows = []
+    if (r.get("fingerprint") or {}).get("budget_exhausted"):
+        rows.append("[config] fingerprint not collected: time budget exhausted (slow servers)")
+    elif r.get("fingerprint"):
+        rows.append(f"[config] target fingerprint: {r['fingerprint'].get('raw') or 'absent'}"
+                      + (f" -> TP {dec['tensor_parallel_size']}, PP {dec['pipeline_parallel_size']}, "
+                         f"DP {dec['data_parallel_size']}, EP {'yes' if dec['enable_expert_parallel'] else 'no'}"
+                         + (" (or masked if --fingerprint-mode hash)" if dec["masking_possible"] else "")
+                         if dec else "")
+                      + ("" if r["fingerprint"].get("response") else " (no response: check the model, key or target)"))
+    for s in r["servers"]:
+        cc = s["cache_config"] or {}
+        sp = (s["configuration"] or {}).get("speculative_decoding")
+        js = s.get("speculative_tokens_metrics")
+        rows.append(f"[config] {s['metrics']}: vLLM {s['version'] or '?'}; prefix cache "
+                      f"{cc.get('enable_prefix_caching', '?')}; speculative tokens (metrics) "
+                      f"{js if js is not None else '?'}; /server_info "
+                      + (f"read (speculative decoding: {sp or 'none'})" if s["configuration"] else
+                         "absent or not read (VLLM_SERVER_DEV_MODE not enabled?)"))
+    return "\n".join(rows)
+
+
+def main():
+    """Command-line entry point: collect the server configuration, print it as JSON (or write it to --output)
+    and print the summary on stderr."""
+    a = argparse.ArgumentParser()
+    a.add_argument("--url", required=True); a.add_argument("--metrics", default="")
+    a.add_argument("--model", default=None, help="if given, a one-token completion to read the fingerprint")
+    a.add_argument("--output", default=None)
+    p = a.parse_args()
+    key = os.environ.get("BENCH_API_KEY") or None  # standalone: run as a file by the .sh scripts
+    r = collect(p.url, p.metrics.split(), key, p.model)
+    text = json.dumps(r, indent=1, ensure_ascii=False)
+    if p.output:
+        with open(p.output, "w", encoding="utf-8") as f:
+            f.write(text)
+    else:
+        print(text)
+    print(summary(r), file=sys.stderr)
+
+
+if __name__ == "__main__":
+    main()
