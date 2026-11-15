@@ -41,6 +41,9 @@ Two families of measurements:
   - [5.3 Copy the tokenizer](#53-copy-the-tokenizer)
   - [5.4 Test the connection](#54-test-the-connection)
 - [6. Smoke test without a GPU](#6-smoke-test-without-a-gpu)
+  - [6.1 Start the fake server](#61-start-the-fake-server)
+  - [6.2 Run the test agents and read the report](#62-run-the-test-agents-and-read-the-report)
+  - [6.3 Try the observation](#63-try-the-observation)
 - [7. Stress tests](#7-stress-tests)
   - [7.1 Synthetic stress test](#71-synthetic-stress-test)
   - [7.2 Reading the stress-test report](#72-reading-the-stress-test-report)
@@ -270,6 +273,11 @@ On the client machine (the commands of the [quick start](#2-quick-start)):
 git clone https://github.com/Shevehs/banc-gpu.git ~/banc-gpu && cd ~/banc-gpu
 python3 -m venv .venv-aiperf && source .venv-aiperf/bin/activate
 pip install aiperf==0.12.0 "openai>=1.40" httpx
+```
+
+Check the installation:
+
+```bash
 aiperf --version && python -c "import openai, aiohttp; print('ok')"
 ```
 
@@ -282,8 +290,18 @@ above (if `.venv-aiperf` already exists, delete it first): without touching the 
 
 ```bash
 python3 -m pip install --user uv            # or the installer from https://docs.astral.sh/uv/getting-started/installation/
-uv venv --seed --python 3.12 .venv-aiperf   # --seed: puts pip in the environment
+```
+
+Create the environment (`--seed` puts pip in it) and check its Python version:
+
+```bash
+uv venv --seed --python 3.12 .venv-aiperf
 source .venv-aiperf/bin/activate && python --version
+```
+
+Then install the bench as above:
+
+```bash
 pip install aiperf==0.12.0 "openai>=1.40" httpx
 ```
 
@@ -399,22 +417,61 @@ rate while it runs. The observation is checked with a Prometheus that scrapes th
 (`tools/prometheus-fake.yml`: scrape every 5 s, jobs `vllm` and `litellm` on port 8001; the fake server does not
 expose `process_start_time_seconds`):
 
+### 6.1 Start the fake server
+
+Run it in the background, in a terminal you keep open:
+
 ```bash
 python tools/fake_server.py --port 8001 --token-delay 0.02 \
-  --itl-bounds '[0.01, 0.0133, 0.02, 0.0333, 0.05, 0.1]' &      # stop it afterwards: kill %1
+  --itl-bounds '[0.01, 0.0133, 0.02, 0.0333, 0.05, 0.1]' &
+```
+
+### 6.2 Run the test agents and read the report
+
+A short load against the fake server, then the report. The number of GPUs is deduced from the fake server's
+fingerprint (8).
+
+```bash
 python -m agents_test.launcher --url http://127.0.0.1:8001 --levels "1 2" --duration 20 \
   --warmup 2 --scale 0.05 --latency-factor 0.02 --label trial --output /tmp/trial
-python -m report agents /tmp/trial --target 30          # GPUs deduced from the fake server's fingerprint: 8
-# observation: Prometheus scrapes the fake server, a load runs for 5 min, then the query
-printf key > tools/litellm.key                           # ignored by git; any key will do
-prometheus --config.file=tools/prometheus-fake.yml --storage.tsdb.path=/tmp/prom-data &   # stop it afterwards
+```
+
+```bash
+python -m report agents /tmp/trial --target 30
+```
+
+### 6.3 Try the observation
+
+The observation needs Prometheus to scrape the fake server while a load runs. First start Prometheus, in the
+background. The key file is ignored by git and any key will do:
+
+```bash
+printf key > tools/litellm.key
+prometheus --config.file=tools/prometheus-fake.yml --storage.tsdb.path=/tmp/prom-data &
+```
+
+Then run a load of 5 minutes, with the agents labelled so that the per-agent view has something to show:
+
+```bash
 python -m agents_test.launcher --url http://127.0.0.1:8001 --levels "2" --duration 300 --warmup 2 \
   --scale 0.05 --latency-factor 0.05 --label load --output /tmp/load --label-agents
+```
+
+Query the last 5 minutes, per window (8 GPUs, as in the fake server's fingerprint):
+
+```bash
 python -m observation.query --prometheus http://127.0.0.1:9090 --since 5m --window 1m --scrape 5s \
-  --target 30 --gpu 8            # 8: as in the fake server's fingerprint
+  --target 30 --gpu 8
+```
+
+And per agent, through the fake LiteLLM metrics:
+
+```bash
 python -m observation.query --prometheus http://127.0.0.1:9090 --litellm 'job="litellm"' \
   --since 5m --window 1m --scrape 5s --target 30 --gpu 8 --view agents
 ```
+
+When you are done, stop the two background processes (`jobs` lists them, then `kill %1 %2`).
 
 [↑ Back to top](#top)
 
@@ -684,10 +741,27 @@ On the client machine or on a VM of the same private network (not on the servers
 **A. Binary** (Linux VM; without Internet access, copy the archive from the
 [download page](https://prometheus.io/download/): a single binary):
 
+Install the binary:
+
 ```bash
 (cd /tmp && tar xzf <path>/prometheus-*.linux-amd64.tar.gz && sudo cp prometheus-*.linux-amd64/prometheus /usr/local/bin/)
-cp tools/prometheus.yml.example prometheus.yml        # then replace the addresses (one line per vLLM replica)
-(umask 077; printf '%s' "<LiteLLM key>" > litellm.key)  # only if you keep the litellm block
+```
+
+Copy the example configuration, then edit `prometheus.yml` and replace the addresses (one line per vLLM replica):
+
+```bash
+cp tools/prometheus.yml.example prometheus.yml
+```
+
+If you keep the `litellm` block, store the LiteLLM key in a file only you can read:
+
+```bash
+(umask 077; printf '%s' "<LiteLLM key>" > litellm.key)
+```
+
+Start Prometheus, with a retention of 30 days:
+
+```bash
 prometheus --config.file=prometheus.yml --storage.tsdb.path=prometheus-data --storage.tsdb.retention.time=30d
 ```
 
@@ -1095,7 +1169,11 @@ database, `/key/generate` fails. With pip:
 
 ```bash
 pip install "litellm[proxy,extra_proxy]"
-# then, in the same environment:
+```
+
+Then, in the same environment:
+
+```bash
 prisma generate --schema "$(python -c 'import litellm_proxy_extras,os;print(os.path.join(os.path.dirname(litellm_proxy_extras.__file__),"schema.prisma"))')"
 ```
 
@@ -1157,10 +1235,22 @@ Each agent then uses its own key as the API key, and the metrics carry `api_key_
 
 ## Appendix D. Tests
 
+Install the test tools, the `dev` dependency group of `pyproject.toml` (pip 25.1 or later; the repository itself is not installed):
+
 ```bash
-pip install --group dev       # the "dev" dependency group of pyproject.toml (pip 25.1+); the repository itself is not installed
-python -m pytest              # from the root
-ruff check .                  # lint; configured in pyproject.toml
+pip install --group dev
+```
+
+Run the tests from the root of the repository:
+
+```bash
+python -m pytest
+```
+
+Run the lint, which is configured in `pyproject.toml`:
+
+```bash
+ruff check .
 ```
 
 `pyproject.toml` holds the dependency groups (`runtime`: `openai`, `httpx`, `aiohttp`; `dev`: the same plus `pytest` and
