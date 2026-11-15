@@ -99,7 +99,7 @@ def test_report_agents_deduces_the_gpus_from_the_launcher_fingerprint(agents_run
     assert deduced_report.stdout.startswith("GPUs: rt-r1: 8 (TP 8 × PP 1 × DP 1 × 1 vLLM server(s)), deduced from the fingerprint.\n")
     rows = read_csv(out / "table_agents.csv")                       # written by the run without --gpu
     assert [r["gpu"] for r in rows if r["agent"] == "all"] == ["8", "8"] and [r["gpu"] for r in rows if r["agent"] != "all"] == [""] * 4
-    for deduced, one in zip(rows, given):
+    for deduced, one in zip(rows, given, strict=True):
         assert deduced["calls"] == one["calls"]
         if deduced["agent"] == "all":
             assert num(deduced["output_throughput_per_gpu"]) == pytest.approx(num(one["output_throughput_per_gpu"]) / 8, rel=1e-6)

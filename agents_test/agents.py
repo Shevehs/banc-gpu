@@ -80,8 +80,8 @@ def _agent_loop(m, messages, tools, n_steps, n_output, n_result, name_tool, ctx,
             ids = [f"call_{e}_{k}" for k in range(len(calls))]
             messages.append({"role": "assistant", "content": last or None, "tool_calls": [
                 {"id": i, "type": "function", "function": {"name": a["name"] or "note", "arguments": a["args"] or "{}"}}
-                for i, a in zip(ids, calls)]})
-            for i, a in zip(ids, calls):
+                for i, a in zip(ids, calls, strict=True)]})
+            for i, a in zip(ids, calls, strict=True):
                 messages.append({"role": "tool", "tool_call_id": i,
                                  "content": _run_tool(a["name"], n_result, seed + 100 * e + len(i), latency_s)})
     return last

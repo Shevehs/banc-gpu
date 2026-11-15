@@ -970,7 +970,7 @@ vLLM is launched with `VLLM_SERVER_DEV_MODE=1`, the speculative decoding method 
 | `tools/fake_server.py` | fake server to check the pipeline (vLLM and LiteLLM metrics, `/admin?rate=…`) |
 | `report/` | reporting: `python -m report aiperf\|agents <root> --target N [--gpu N]` |
 | `interface/` | local interface (compiled React + Python server) |
-| `pyproject.toml` | project table (dependencies, `dev` extra with `pytest` and `ruff`), pytest and ruff configuration; the repository is run from its root, not pip-installed |
+| `pyproject.toml` | dependency groups (`runtime`, `dev` with `pytest` and `ruff`, `tokenizer`), pytest and ruff configuration; the repository is run from its root, not pip-installed |
 | `tests/` | tests (`python -m pytest`): golden reference outputs of the two report kinds and of the observation views (`tests/golden/`), validators, round-trip tests; lint with `ruff check .` |
 
 `.gitignore` also keeps out of the repository `target.env`, the AgentX traces folders (`traces-agentx*/`), `prometheus.yml`,
@@ -1136,12 +1136,12 @@ Each agent then uses its own key as the API key, and the metrics carry `api_key_
 ## Appendix D. Tests
 
 ```bash
-pip install pytest ruff       # the "dev" extra of pyproject.toml; no install of the repository itself is needed
+pip install --group dev       # the "dev" dependency group of pyproject.toml (pip 25.1+); the repository itself is not installed
 python -m pytest              # from the root
 ruff check .                  # lint; configured in pyproject.toml
 ```
 
-`pyproject.toml` holds the project table (dependencies `openai`, `httpx`, `aiohttp`; the `dev` extra adds `pytest` and
+`pyproject.toml` holds the dependency groups (`runtime`: `openai`, `httpx`, `aiohttp`; `dev`: the same plus `pytest` and
 `ruff`), the pytest configuration and the ruff configuration. The repository is run from its root and is not meant to be
 pip-installed. `tests/` covers the analysis functions, the two report kinds (`aiperf`, `agents`) and the observation views (windows, period, agents) against reference outputs (golden tests
 in `tests/golden/`), the settings reading and the module structure, and checks the validators and the file formats

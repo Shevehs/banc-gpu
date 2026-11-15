@@ -307,7 +307,7 @@ def format_row(r):
 def is_increasing(h):
     """True if the cumulative counts of a histogram grow with the bound (otherwise: inconsistent data)."""
     c = cumulative(h)
-    return all(b[1] >= a[1] - 1e-9 for a, b in zip(c, c[1:]))
+    return all(b[1] >= a[1] - 1e-9 for a, b in zip(c, c[1:], strict=False))
 
 
 def evaluate(o, args):
