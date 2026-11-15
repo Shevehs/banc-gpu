@@ -9,6 +9,7 @@ import subprocess
 import sys
 import threading
 import time
+import urllib.parse
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -72,6 +73,46 @@ class Stub:
 
             def do_POST(self):
                 self._answer("POST")
+
+            def log_message(self, *a):
+                pass
+
+        self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.url = f"http://127.0.0.1:{self.server.server_address[1]}"
+        threading.Thread(target=lambda: self.server.serve_forever(poll_interval=0.01), daemon=True).start()
+
+    def close(self):
+        self.server.shutdown()
+        self.server.server_close()
+
+
+class PromStub:
+    """A local Prometheus HTTP API: GET /api/v1/query_range is answered by `responder(query, start, end, step)`,
+    which returns the Prometheus "result" list ([{"metric": {...}, "values": [[t, "v"], ...]}]). Calls go to `seen`."""
+
+    def __init__(self, responder):
+        self.responder, self.seen = responder, []
+        stub = self
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                url = urllib.parse.urlparse(self.path)
+                qs = {k: v[0] for k, v in urllib.parse.parse_qs(url.query).items()}
+                if url.path != "/api/v1/query_range":
+                    self.send_response(404)
+                    self.send_header("Content-Length", "0")
+                    self.end_headers()
+                    return
+                call = {"query": qs["query"], "start": float(qs["start"]), "end": float(qs["end"]),
+                        "step": float(qs["step"]), "headers": dict(self.headers)}
+                stub.seen.append(call)
+                body = json.dumps({"status": "success", "data": {"resultType": "matrix", "result": stub.responder(
+                    call["query"], call["start"], call["end"], call["step"])}}).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
 
             def log_message(self, *a):
                 pass

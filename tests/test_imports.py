@@ -8,10 +8,33 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 
 
 @pytest.mark.parametrize("module", ["tools.settings", "tools.server_config", "observation.analysis",
-                                    "observation.observer", "agents_test.metrics", "report.cli", "report.agents",
-                                    "report.aiperf", "report.observation", "report.common"])
+                                    "observation.query", "agents_test.metrics", "report.cli", "report.agents",
+                                    "report.aiperf", "report.common"])
 def test_import(module):
     importlib.import_module(module)
+
+
+@pytest.mark.parametrize("module", ["observation.observer", "report.observation"])
+def test_removed_modules_are_gone(module):
+    """Observation now goes through Prometheus (observation.query); the old scraper and its report are removed."""
+    with pytest.raises(ImportError):
+        importlib.import_module(module)
+    assert not (ROOT / (module.replace(".", "/") + ".py")).exists()
+
+
+def test_report_has_only_the_aiperf_and_agents_kinds(capsys):
+    from report import cli
+    assert sorted(cli.KINDS) == ["agents", "aiperf"]
+    with pytest.raises(SystemExit) as e:
+        cli.main(["observation", "dir", "--target", "30"])
+    assert e.value.code == 2 and "invalid choice" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("kind", ["aiperf", "agents"])
+def test_gpu_is_optional_for_the_reports(kind):
+    from report import cli
+    args = cli.build_parser().parse_args([kind, "dir", "--target", "30"])
+    assert args.gpu is None and cli.build_parser().parse_args([kind, "dir", "--target", "30", "--gpu", "8"]).gpu == 8
 
 
 # Modules that need third-party packages: (module, packages to find first).

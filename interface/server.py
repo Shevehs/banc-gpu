@@ -8,9 +8,10 @@ On a remote machine: SSH tunnel from your workstation, e.g. ssh -L 8765:127.0.0.
 The server only listens on 127.0.0.1 and requires a random token, shown at startup in the address to
 open: another web page or another user of the machine cannot start a run without it.
 It also checks the Host header and the origin of requests. It only runs sweep.sh, agentx.sh,
-agents_test/launcher.py, observation/observer.py and the report scripts, with validated parameters (AIPerf
-options on an allowlist); a run started here is identical to the same run started by hand (the exact command
-is written in its log, without the API key). One run at a time.
+agents_test/launcher.py and the report scripts (including observation/query.py, which queries Prometheus), with
+validated parameters (AIPerf options on an allowlist); a run started here is identical to the same run started by
+hand (the exact command is written in its log, without the API key). One run at a time; the observation is not a
+run: it reads Prometheus and can be displayed while a run is in progress.
 Dependency: aiohttp (already installed with AIPerf).
 """
 import argparse
@@ -171,7 +172,7 @@ def valid_key(v):
     return v
 
 
-SECRETS = ("BENCH_API_KEY", "BENCH_AGENT_KEYS", "BENCH_LITELLM_KEY")
+SECRETS = ("BENCH_API_KEY", "BENCH_AGENT_KEYS", "BENCH_PROMETHEUS_KEY")
 
 
 def results_dir(v):
@@ -268,35 +269,6 @@ def agentx_command(p):
     return cmd, env, ROOT
 
 
-def observation_command(p):
-    """Observation mode (observation/observer.py): generates no load."""
-    met = valid_metrics_urls(p.get("metrics"))
-    if not met:
-        raise Refusal("vLLM metrics URL: required in observation mode (one per replica)")
-    duration = valid_number(p.get("duration", 900), "total duration", 60, 7 * 86400, True)
-    cmd = [sys.executable, "-m", "observation.observer", "--metrics", " ".join(met),
-           "--duration", str(duration), "--label", valid_name(p.get("label"), "label"),
-           "--output", str(ROOT / results_dir(p.get("root") or "results-observation"))]
-    if p.get("interval"):
-        cmd += ["--interval", str(valid_number(p.get("interval"), "interval", 60, duration, True))]
-    if p.get("level") not in (None, ""):
-        cmd += ["--level", str(valid_number(p.get("level"), "level", 0, 100_000, True))]
-    if p.get("litellm"):
-        u = str(p.get("litellm")).strip()
-        if not re.match(r"^https?://[A-Za-z0-9.\-]+(:\d{1,5})?(/[A-Za-z0-9._/-]*)?$", u):
-            raise Refusal("LiteLLM metrics URL: expected form http://host:port/metrics")
-        per = str(p.get("per") or "api_key_alias").strip()
-        if not re.match(r"^(api_key_alias|team_alias|user|end_user|metadata_[A-Za-z0-9_]{1,40})$", per):
-            raise Refusal("agents distinguished by: api_key_alias, team_alias, user, end_user or metadata_<field_name>")
-        cmd += ["--litellm", u, "--by", per]
-    if p.get("fingerprint"):
-        cmd += ["--url", valid_local_url(p.get("url")), "--model", valid_model(p.get("model"))]
-    env = {"BENCH_API_KEY": valid_key(p.get("api_key"))} if valid_key(p.get("api_key")) else {}
-    if valid_key(p.get("litellm_key")):
-        env["BENCH_LITELLM_KEY"] = valid_key(p.get("litellm_key"))
-    return cmd, env, ROOT
-
-
 def agents_command(p):
     """Command of an agent-launcher run (agents_test.launcher) from the form fields `p`.
 
@@ -384,8 +356,8 @@ async def launch(req):
     except Refusal as e:
         return web.json_response({"error": str(e)}, status=400)
     try:
-        factory = {"synthetic": synthetic_command, "agents": agents_command, "agentx": agentx_command,
-               "observation": observation_command}.get(p.get("type"))
+        factory = {"synthetic": synthetic_command, "agents": agents_command,
+                   "agentx": agentx_command}.get(p.get("type"))
         if not factory:
             raise Refusal("unknown run type")
         cmd, env, cwd = factory(p)
@@ -447,7 +419,7 @@ async def stop_run(req):
 
 async def list_roots(req):
     """Results directories present, by type (judged by their content)."""
-    synthetic, agents, agentx, obs = [], [], [], []
+    synthetic, agents, agentx = [], [], []
     for d in sorted(ROOT.glob("results*")) + sorted((ROOT / "agents_test").glob("results*")):
         if d.is_dir():
             rel = str(d.relative_to(ROOT))
@@ -455,31 +427,27 @@ async def list_roots(req):
                 (agentx if any(d.glob("*/agentx.txt")) else synthetic).append(rel)
             if any(d.glob("*/n*/level.json")):
                 agents.append(rel)
-            if any(d.glob("*/observation*.json")):
-                obs.append(rel)
-    return web.json_response({"synthetic": synthetic, "agents": agents, "agentx": agentx, "observation": obs})
+    return web.json_response({"synthetic": synthetic, "agents": agents, "agentx": agentx})
 
 
 async def read_results(req):
     """GET /api/results: run `python -m report` on a results directory.
 
+    `gpu` is optional: without it, `python -m report` deduces the GPU count of each run from its fingerprint.
     Returns the table rows (CSV), the key messages, the full output, the exit code and the command."""
     q = req.query
     try:
         root = results_dir(q.get("root"))
         target = valid_number(q.get("target"), "target", 0.1, 10_000)
-        gpu = valid_number(q.get("gpu"), "GPU", 1, 64, True)
+        gpu = valid_number(q.get("gpu"), "GPU", 1, 4096, True) if q.get("gpu") not in (None, "") else None
     except Refusal as e:
         return web.json_response({"error": str(e)}, status=400)
     kind_name = q.get("type")
-    type_, table = {"agents": ("agents", "table_agents.csv"),
-                     "observation": ("observation", "table_observation.csv")
-                     }.get(kind_name, ("aiperf", "table.csv"))
-    cmd = [sys.executable, "-m", "report", type_, str(ROOT / root), "--target", str(target), "--gpu", str(gpu)]
-    if kind_name == "observation":
-        view = q.get("view") if q.get("view") in ("windows", "period", "agents") else "windows"
-        cmd += ["--view", view, "--period", "hour" if q.get("period") == "hour" else "range"]
-    elif q.get("require") == "1":
+    type_, table = {"agents": ("agents", "table_agents.csv")}.get(kind_name, ("aiperf", "table.csv"))
+    cmd = [sys.executable, "-m", "report", type_, str(ROOT / root), "--target", str(target)]
+    if gpu:
+        cmd += ["--gpu", str(gpu)]
+    if q.get("require") == "1":
         cmd.append("--require-metrics")
     proc = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
     output = (await proc.communicate())[0].decode("utf-8", "replace")
@@ -488,15 +456,148 @@ async def read_results(req):
     if proc.returncode == 0 and file.exists():
         with open(file, newline="", encoding="utf-8") as fh:
             rows = list(csv.DictReader(fh))
-    # Keep in sync with the wording printed by report/*: "selected ...", "that holds", "WARNING", "no ..."
+    # Keep in sync with the wording printed by report/*: "selected ...", "that holds", "WARNING", "no ...",
+    # "GPUs: <run>: ... deduced from the fingerprint", "ERROR: ..."
     messages = [l for l in output.splitlines() if "selected" in l or "WARNING" in l or "that holds" in l
-                or re.search(r"\bno\b", l.lower())]
+                or l.startswith("GPUs:") or l.startswith("ERROR") or re.search(r"\bno\b", l.lower())]
+    return web.json_response({"rows": rows, "messages": messages, "output": output, "code": proc.returncode,
+                              "command": " ".join(cmd)})
+
+
+SELECTOR_OK = re.compile(r'^\s*[A-Za-z_][A-Za-z0-9_]*\s*(=|!=|=~|!~)\s*"[^"\\]*"'
+                         r'(\s*,\s*[A-Za-z_][A-Za-z0-9_]*\s*(=|!=|=~|!~)\s*"[^"\\]*")*\s*$')
+DURATION_OK = re.compile(r"^\d{1,6}[smhd]?$")
+DATE_OK = re.compile(r"^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}(:\d{2})?$")
+LABEL_OK = re.compile(r"^(api_key_alias|team_alias|user|end_user|metadata_[A-Za-z0-9_]{1,40})$")
+
+
+def valid_selector(v, what):
+    """Prometheus label selector (without braces), e.g. job="vllm",instance=~"10.0.0.*"; returned stripped.
+
+    Only label matchers against double-quoted strings without a backslash are accepted: a selector is pasted into
+    PromQL queries by observation/query.py, so nothing else (functions, operators, braces) may get through.
+
+    Raises:
+        Refusal: if it does not match; `what` names the field in the message."""
+    v = str(v or "").strip()
+    if not SELECTOR_OK.match(v):
+        raise Refusal(f'{what}: label selector expected, e.g. job="vllm"')
+    return v
+
+
+def valid_duration(v, field_name, max_days=None):
+    """Duration such as 30, 90s, 5m, 2h or 1d (stripped); `max_days` caps a duration given in days.
+
+    Raises:
+        Refusal: if the form is wrong or the number of days exceeds `max_days`."""
+    v = str(v or "").strip()
+    if not DURATION_OK.match(v) or (max_days and v.endswith("d") and int(v[:-1]) > max_days):
+        raise Refusal(f"{field_name}: duration expected, e.g. 5m, 2h, 1d" + (f" ({max_days} days at most)" if max_days else ""))
+    return v
+
+
+def valid_date(v, field_name):
+    """Local date and time YYYY-MM-DD HH:MM (a T separator, as sent by a datetime-local field, is accepted).
+
+    Raises:
+        Refusal: if the form is wrong."""
+    v = str(v or "").strip()
+    if not DATE_OK.match(v):
+        raise Refusal(f"{field_name}: date expected, form YYYY-MM-DD HH:MM")
+    return v.replace("T", " ")
+
+
+def valid_prometheus_url(v):
+    """Prometheus URL of the form http(s)://host[:port][/path] on this machine or a private network, without a
+    trailing slash. This server sends the Prometheus key there, so the host gets the same check as the target.
+
+    Raises:
+        Refusal: if the form is wrong or the host is public (see _check_private_host)."""
+    v = str(v or "").strip()
+    if not re.match(r"^https?://[A-Za-z0-9.\-]+(:\d{1,5})?(/[A-Za-z0-9._/-]*)?$", v):
+        raise Refusal("Prometheus URL: expected form http://host:9090")
+    _check_private_host(v, "Prometheus URL")
+    return v.rstrip("/")
+
+
+def observation_command(p, excluded=()):
+    """Command of the observation (observation/query.py, which queries Prometheus) from the fields `p`.
+
+    `excluded` lists (start, end) Unix times of ranges to discard (stress tests started from this interface).
+    Returns (command, environment, working directory); the Prometheus key goes in the environment only. The
+    command has no --output: the caller adds it.
+
+    Raises:
+        Refusal: if a field is invalid."""
+    cmd = [sys.executable, "-m", "observation.query", "--prometheus", valid_prometheus_url(p.get("prometheus")),
+           "--target", str(valid_number(p.get("target"), "target", 0.1, 10_000)),
+           "--gpu", str(valid_number(p.get("gpu"), "GPU", 1, 4096, True))]
+    cmd += ["--vllm", valid_selector(p.get("vllm") or 'job="vllm"', "vLLM selector")]
+    view = p.get("view") if p.get("view") in ("windows", "period", "agents") else "windows"
+    if p.get("litellm"):
+        by = str(p.get("by") or "metadata_agent").strip()
+        if not LABEL_OK.match(by):
+            raise Refusal("agents distinguished by: api_key_alias, team_alias, user, end_user or metadata_<field>")
+        cmd += ["--litellm", valid_selector(p.get("litellm"), "LiteLLM selector"), "--by", by]
+    elif view == "agents":
+        raise Refusal("per-agent view: give the LiteLLM selector")
+    for field_name, flag in (("window", "--window"), ("scrape", "--scrape"), ("since", "--since")):
+        v = valid_duration(p.get(field_name), field_name, 400 if field_name == "since" else None) if p.get(field_name) else ""
+        if v:
+            cmd += [flag, v]
+    for field_name, flag in (("start", "--start"), ("end", "--end")):
+        if str(p.get(field_name) or "").strip():
+            cmd += [flag, valid_date(p.get(field_name), field_name)]
+    if p.get("ttft_max") not in (None, ""):
+        cmd += ["--ttft-max", str(valid_number(p.get("ttft_max"), "max TTFT", 1, 10_000_000))]
+    cmd += ["--view", view, "--period", "hour" if p.get("period") == "hour" else "range"]
+    for start, end in excluded:
+        cmd += ["--exclude", f"{start:.0f}/{end:.0f}"]
+    key = valid_key(p.get("prometheus_key"))
+    return cmd, ({"BENCH_PROMETHEUS_KEY": key} if key else {}), ROOT
+
+
+async def observation(req):
+    """POST /api/observation: query Prometheus with `python -m observation.query`; nothing to start, no load.
+
+    The ranges of the runs started from this interface (plus a minute) are passed as --exclude: their load must
+    not count as real usage. Returns the table rows (CSV of the windows), the key messages, the full output,
+    the exit code and the command; 400 if the parameters are refused, 504 if Prometheus is too slow."""
+    try:
+        p = await read_body(req)
+        excluded = [(e["start"], (e["end"] or time.time()) + 60) for e in RUNS.values()]
+        cmd, env, cwd = observation_command(p, excluded)
+    except Refusal as e:
+        return web.json_response({"error": str(e)}, status=400)
+    LOGS_DIR.mkdir(exist_ok=True)
+    csv_file = LOGS_DIR / f"observation-{secrets.token_hex(4)}.csv"
+    proc = await asyncio.create_subprocess_exec(*cmd, "--output", str(csv_file), cwd=str(cwd),
+                                                env={**base_environment(), **env},
+                                                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
+    try:
+        output = (await asyncio.wait_for(proc.communicate(), timeout=120))[0].decode("utf-8", "replace")
+    except asyncio.TimeoutError:
+        proc.kill()
+        await proc.wait()
+        return web.json_response({"error": "Prometheus did not answer within 120 s: shorten the range"}, status=504)
+    rows = []
+    if csv_file.exists():
+        with open(csv_file, newline="", encoding="utf-8") as fh:
+            rows = list(csv.DictReader(fh))
+        csv_file.unlink()
+    # Keep in sync with the wording printed by observation/query.py
+    messages = [l for l in output.splitlines() if "WARNING" in l or "Highest" in l or l.startswith("No ")
+                or "unreachable" in l or "HTTP" in l]
     return web.json_response({"rows": rows, "messages": messages, "output": output, "code": proc.returncode,
                               "command": " ".join(cmd)})
 
 
 async def test_connection(req):
-    """Checks the target (/v1/models) and the vLLM metrics (/metrics), and records the server configuration."""
+    """POST /api/test-connection: check the target (/v1/models) and the vLLM metrics (/metrics), and read the
+    server configuration (tools.server_config.collect, plus the deduced GPU count under config.deduced_gpus).
+
+    Each metrics entry has ok, status and vllm_lines; each config server also carries vllm_lines and
+    metrics_status (an HTTP status, or "budget" when the time budget ran out)."""
     import aiohttp
     try:
         p = await read_body(req)
@@ -528,9 +629,11 @@ async def test_connection(req):
             except Exception as e:  # noqa: BLE001
                 res["metrics"].append({"url": u, "ok": False, "error": f"{type(e).__name__}: {e}"[:200]})
     try:  # version, cache, parallelism (fingerprint); /server_info only if VLLM_SERVER_DEV_MODE=1
-        from tools.server_config import collect
+        from tools.server_config import collect, deduced_gpus
         res["config"] = await asyncio.wait_for(asyncio.get_running_loop().run_in_executor(
             None, collect, url, valid_metrics_urls(p.get("metrics")), k, mod), timeout=60)
+        count, explanation, masking = deduced_gpus(res["config"])  # what `python -m report` will use without --gpu
+        res["config"]["deduced_gpus"] = {"count": count, "explanation": explanation, "masking_possible": masking}
     except Exception as e:  # noqa: BLE001
         res["config"] = {"error": f"{type(e).__name__}: {e}"[:200]}
     return web.json_response(res)
@@ -580,7 +683,8 @@ def main():
     app.add_routes([web.post("/api/runs", launch), web.get("/api/runs", list_runs),
                     web.get("/api/runs/{eid}/log", run_log), web.post("/api/runs/{eid}/stop", stop_run),
                     web.get("/api/roots", list_roots), web.get("/api/results", read_results),
-                    web.post("/api/test-connection", test_connection), web.get("/", home)])
+                    web.post("/api/test-connection", test_connection), web.post("/api/observation", observation),
+                    web.get("/", home)])
     if (DIST / "assets").exists():
         app.router.add_static("/assets", DIST / "assets")
     print(f"Bench interface: http://127.0.0.1:{p.port}/?token={TOKEN}\n(open this exact address; Ctrl-C stops the interface and the runs in progress)")

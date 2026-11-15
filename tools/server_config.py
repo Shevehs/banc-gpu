@@ -24,6 +24,7 @@ API key: environment variable BENCH_API_KEY. Standard library only.
 import argparse
 import json
 import os
+import pathlib
 import re
 import sys
 import time
@@ -119,12 +120,16 @@ def collect(url, metrics=None, key=None, model=None, budget_s=45):
     for um in urls_m:
         base = um[: -len("/metrics")] if um.endswith("/metrics") else um
         srv = {"metrics": um, "version": None, "cache_config": None, "speculative_tokens_metrics": None,
-               "configuration": None}
+               "configuration": None, "vllm_lines": None, "metrics_status": None}
         if time.time() < end:
             v = _get_json(base + "/version", timeout_s=remaining(5))
             srv["version"] = v.get("version") if v else None
         try:
+            if time.time() >= end:
+                srv["metrics_status"] = "budget"
             s, t = _request(um, timeout_s=remaining(5)) if time.time() < end else (0, "")
+            if s:
+                srv["metrics_status"] = s
             positions, vllm_lines = set(), 0
             for row in t.splitlines() if s == 200 else []:
                 vllm_lines += row.startswith("vllm:")
@@ -136,8 +141,11 @@ def collect(url, metrics=None, key=None, model=None, budget_s=45):
                 p = _POSITION.match(row)
                 if p:
                     positions.add(p.group(1))
+            srv["vllm_lines"] = vllm_lines if s == 200 else None
             if s == 200 and vllm_lines:
                 srv["speculative_tokens_metrics"] = len(positions)  # 0 = no speculative decoding (INFERRED)
+        except urllib.error.HTTPError as e:
+            srv["metrics_status"] = e.code  # 401/403: address protected by a key (LiteLLM), not vLLM's
         except Exception:  # noqa: BLE001
             pass
         # First call sometimes slow (vLLM collects the system environment): longer timeout.
@@ -157,6 +165,46 @@ def collect(url, metrics=None, key=None, model=None, budget_s=45):
     return res
 
 
+def deduced_gpus(r):
+    """Number of GPUs behind the target, deduced from a collected `r` (the content of server_config.json):
+    TP × PP × DP read from the target fingerprint, times the number of vLLM servers found (one metrics URL per
+    replica; all assumed identical to the one that answered). Prefill context parallelism (PCP), absent from
+    the fingerprint, is multiplied in when /server_info was read.
+
+    Returns (count or None, explanation, masking_possible). `masking_possible` is True when the fingerprint
+    carries no parallelism degree (--fingerprint-mode hash would hide it): the count then assumes 1 GPU per
+    server. None is returned, with the reason, when nothing allows deducing it."""
+    try:
+        dec = (r.get("fingerprint") or {}).get("decoded")
+        if not dec:
+            return None, "fingerprint absent (one-token completion not done, or --fingerprint-mode none or custom)", False
+        # A vLLM server is recognised by vllm: lines in /metrics (older files: version or metrics read)
+        servers = [s for s in (r.get("servers") or [])
+                   if ((s.get("vllm_lines") or 0) > 0 if "vllm_lines" in s
+                       else s.get("speculative_tokens_metrics") is not None or bool(s.get("cache_config")))]
+        if not servers:
+            return None, "no metrics URL answers like a vLLM server (METRICS empty or wrong)", False
+        tp, pp, dp = (int(dec[k]) for k in ("tensor_parallel_size", "pipeline_parallel_size", "data_parallel_size"))
+        par = ((servers[0].get("configuration") or {}).get("parallelism") or {})
+        pcp = int(par.get("prefill_context_parallel_size") or 1)
+    except (AttributeError, KeyError, TypeError, ValueError) as e:
+        return None, f"server_config.json has an unexpected shape ({type(e).__name__})", False
+    n = tp * pp * dp * pcp * len(servers)
+    return n, (f"{n} (TP {tp} × PP {pp} × DP {dp}" + (f" × PCP {pcp}" if pcp > 1 else "")
+               + f" × {len(servers)} vLLM server(s))"), bool(dec.get("masking_possible"))
+
+
+def run_gpus(directory):
+    """deduced_gpus() for the server_config.json of a run directory; (None, reason, False) if missing or unreadable."""
+    f = pathlib.Path(directory) / "server_config.json"
+    if not f.exists():
+        return None, "server_config.json missing", False
+    try:
+        return deduced_gpus(json.loads(f.read_text(encoding="utf-8")))
+    except (ValueError, OSError) as e:
+        return None, f"server_config.json unreadable ({e})", False
+
+
 def summary(r):
     """One line per server, for the logs."""
     dec = (r.get("fingerprint") or {}).get("decoded")
@@ -170,6 +218,10 @@ def summary(r):
                          + (" (or masked if --fingerprint-mode hash)" if dec["masking_possible"] else "")
                          if dec else "")
                       + ("" if r["fingerprint"].get("response") else " (no response: check the model, key or target)"))
+    n, expl, masked = deduced_gpus(r)
+    if n:
+        rows.append(f"[config] GPUs deduced: {expl}" + ("; 1 GPU per server unless --fingerprint-mode hash hides "
+                                                         "the parallelism" if masked else ""))
     for s in r["servers"]:
         cc = s["cache_config"] or {}
         sp = (s["configuration"] or {}).get("speculative_decoding")
@@ -179,6 +231,18 @@ def summary(r):
                       f"{js if js is not None else '?'}; /server_info "
                       + (f"read (speculative decoding: {sp or 'none'})" if s["configuration"] else
                          "absent or not read (VLLM_SERVER_DEV_MODE not enabled?)"))
+        st = s.get("metrics_status")
+        if s.get("vllm_lines") == 0 or st in (401, 403, 307, 308):
+            rows.append(f"[config] WARNING: {s['metrics']} is not vLLM's /metrics ("
+                        + ("no vllm: metric" if s.get("vllm_lines") == 0 else f"HTTP {st}: key required")
+                        + ", LiteLLM address?): preemptions, cache and KV cache will not be read; put vLLM's "
+                        "/metrics address in BENCH_METRICS (e.g. http://<vllm-host>:8000/metrics).")
+        elif st == "budget":
+            rows.append(f"[config] WARNING: {s['metrics']} not read (time budget exhausted, slow servers).")
+        elif s.get("vllm_lines") is None:
+            rows.append(f"[config] WARNING: {s['metrics']} unreachable"
+                        + (f" (HTTP {st})" if isinstance(st, int) else "")
+                        + ": preemptions, cache and KV cache will not be read.")
     return "\n".join(rows)
 
 

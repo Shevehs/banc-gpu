@@ -8,6 +8,61 @@ from dataclasses import dataclass, field
 KV_SATURATION = 0.95
 
 
+class GpuResolver:
+    """Number of GPUs behind the target, run by run: `--gpu` if given, else deduced from the fingerprint.
+
+    The deduction lives in tools.server_config.run_gpus (TP x PP x DP of the fingerprint stored in the run's
+    server_config.json, times the number of vLLM servers found). Usage: call `for_run(run_dir)` for every run,
+    skip the runs that return None, then call `finish(rows)` once, which stops with an error if some runs have
+    no GPU count and prints the notes (origin of the count, warnings)."""
+
+    def __init__(self, given):
+        """`given`: value of --gpu (None if not given); an integer below 1 stops with an error."""
+        if given is not None and given < 1:
+            raise SystemExit("--gpu: integer >= 1")
+        self.given = given
+        self.notes = {}       # run -> message to print
+        self.unknown = {}     # run -> reason why its GPU count is unknown
+
+    def for_run(self, run_dir):
+        """GPU count of the run in directory `run_dir` (its name is the run name); None if it cannot be known."""
+        from tools.server_config import run_gpus
+        run_dir = pathlib.Path(run_dir)
+        name = run_dir.name
+        n, explanation, masked = run_gpus(run_dir)
+        if self.given:
+            if n and n != self.given and not masked:
+                self.notes[name] = f"WARNING: {name}: --gpu {self.given}, but the fingerprint gives {explanation}: check the value."
+            return self.given
+        if n is None:
+            self.unknown[name] = explanation
+            return None
+        self.notes[name] = (f"GPUs: {name}: {explanation}, deduced from the fingerprint"
+                            + ("; WARNING: 1 GPU per server assumed, because the fingerprint has no parallelism "
+                               "degree (--fingerprint-mode hash would hide it): give --gpu if the server has more."
+                               if masked else "."))
+        return n
+
+    def finish(self, rows):
+        """Stop (SystemExit) if some runs have unknown GPUs; else print the notes, and warn when the repetitions
+        of one configuration (`row["run"]`, `row["gpu"]`) do not share the same GPU count."""
+        if self.unknown:
+            raise SystemExit("ERROR: number of GPUs unknown for "
+                             + "; ".join(f"{run} ({reason})" for run, reason in sorted(self.unknown.items()))
+                             + ": give --gpu (\"GPU\" field in the interface).")
+        for note in self.notes.values():
+            print(note)
+        by_configuration = {}
+        for row in rows:
+            if row.get("gpu") is not None:
+                by_configuration.setdefault(strip_repetition(row["run"]), {})[row["run"]] = row["gpu"]
+        for configuration, runs in sorted(by_configuration.items()):
+            if len(set(runs.values())) > 1:
+                print(f"WARNING: {configuration}: number of GPUs differs between repetitions ("
+                      + ", ".join(f"{run} = {gpu}" for run, gpu in sorted(runs.items()))
+                      + "): the median mixes configurations; check, or give --gpu.")
+
+
 def format_number(x, decimals=1):
     """Format `x` with `decimals` decimals; an em dash if `x` is None or empty."""
     return "—" if x is None or x == "" else f"{float(x):.{decimals}f}"

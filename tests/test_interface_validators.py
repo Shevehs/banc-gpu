@@ -345,41 +345,228 @@ def test_agentx_command_rejects(change):
         server.agentx_command({**AGENTX, **change})
 
 
-OBS = {"metrics": "http://h:8000/metrics", "label": "prod", "duration": 900}
+OBS = {"prometheus": "http://10.0.0.5:9090", "target": 30, "gpu": 4}
 
 
 def test_observation_command_minimal():
     cmd, env, cwd = server.observation_command(OBS)
-    assert cmd == [sys.executable, "-m", "observation.observer", "--metrics", "http://h:8000/metrics", "--duration", "900",
-                   "--label", "prod", "--output", str(server.ROOT / "results-observation")]
+    assert cmd == [sys.executable, "-m", "observation.query", "--prometheus", "http://10.0.0.5:9090", "--target", "30.0",
+                   "--gpu", "4", "--vllm", 'job="vllm"', "--view", "windows", "--period", "range"]
     assert env == {} and cwd == server.ROOT
 
 
 def test_observation_command_all_options():
-    cmd, env, _ = server.observation_command({**OBS, "interval": 60, "level": 4, "litellm": "http://l:4000/metrics/",
-                                              "per": "metadata_agent", "fingerprint": True, "url": "http://h:8000",
-                                              "model": "bench", "api_key": "k1", "litellm_key": "k2"})
+    cmd, env, _ = server.observation_command({
+        **OBS, "prometheus": " http://prom.lan:9090/ ", "prometheus_key": "tok-1", "vllm": 'job="vllm", instance=~"10.0.0.*"',
+        "litellm": 'job="litellm"', "by": "api_key_alias", "since": "6h", "window": "15m", "scrape": "30s",
+        "ttft_max": 2000, "view": "period", "period": "hour"}, excluded=[(1000.4, 2060.6)])
     joined = " ".join(cmd)
-    assert "--interval 60" in joined and "--level 4" in joined and "--by metadata_agent" in joined
-    assert "--url http://h:8000 --model bench" in joined
-    assert env == {"BENCH_API_KEY": "k1", "BENCH_LITELLM_KEY": "k2"}
+    assert "--prometheus http://prom.lan:9090 " in joined and "--ttft-max 2000.0" in joined
+    assert '--litellm job="litellm" --by api_key_alias' in joined and "--since 6h" in joined
+    assert "--window 15m" in joined and "--scrape 30s" in joined and "--view period --period hour" in joined
+    assert "--exclude 1000/2061" in joined and "--start" not in joined
+    assert cmd[cmd.index("--vllm") + 1] == 'job="vllm", instance=~"10.0.0.*"'
+    assert env == {"BENCH_PROMETHEUS_KEY": "tok-1"} and "tok-1" not in joined  # the key never goes in the command
 
 
-def test_observation_command_default_litellm_label_and_zero_level():
-    cmd, _, _ = server.observation_command({**OBS, "litellm": "http://l:4000/metrics", "level": 0})
-    assert cmd[cmd.index("--by") + 1] == "api_key_alias" and cmd[cmd.index("--level") + 1] == "0"
+def test_observation_command_dates_and_default_litellm_label():
+    cmd, _, _ = server.observation_command({**OBS, "litellm": 'job="l"', "start": "2026-05-01T08:00", "end": "2026-05-02 09:30"})
+    assert cmd[cmd.index("--start") + 1] == "2026-05-01 08:00" and cmd[cmd.index("--end") + 1] == "2026-05-02 09:30"
+    assert cmd[cmd.index("--by") + 1] == "metadata_agent"
+
+
+def test_observation_command_unknown_view_means_windows():
+    cmd, _, _ = server.observation_command({**OBS, "view": "x; ls", "period": "x"})
+    assert cmd[-4:] == ["--view", "windows", "--period", "range"]
 
 
 @pytest.mark.parametrize("change", [
-    {"metrics": ""}, {"metrics": "ftp://x"}, {"duration": 59}, {"duration": 7 * 86400 + 1}, {"duration": "x"},
-    {"interval": 59}, {"interval": 901}, {"level": -1}, {"level": "x"}, {"label": "-x"}, {"root": "/abs"},
-    {"litellm": "ftp://x"}, {"litellm": "http://l/m;ls"}, {"litellm": "http://l:4000/metrics", "per": "bad label"},
-    {"litellm": "http://l:4000/metrics", "per": "metadata_"}, {"litellm": "http://l:4000/metrics", "per": "x; ls"},
-    {"fingerprint": True}, {"fingerprint": True, "url": "http://h:8000", "model": "-x"}, {"api_key": "a b"},
+    {"prometheus": ""}, {"prometheus": "ftp://x"}, {"prometheus": "http://h:9090/a b"}, {"prometheus": "http://h;ls:9090"},
+    {"prometheus": "http://" + PUBLIC_ADDRESS + ":9090"}, {"prometheus": "http://public-prom.lan:9090"},
+    {"prometheus": "http://nope.invalid:9090"}, {"target": 0}, {"target": "x"}, {"target": None}, {"gpu": 0}, {"gpu": 5000},
+    {"gpu": ""}, {"gpu": None}, {"vllm": 'job="x"} or vector(1) #'}, {"vllm": "job=vllm"}, {"vllm": 'job="a\\"'},
+    {"vllm": 'job="a" and up'}, {"vllm": 'rate(x[5m])'}, {"vllm": '{job="a"}'}, {"vllm": 'job="a";rm -rf /'},
+    {"litellm": 'job="x"} or up{'}, {"litellm": "x"}, {"litellm": 'job="l"', "by": "bad label"},
+    {"litellm": 'job="l"', "by": "metadata_"}, {"litellm": 'job="l"', "by": "x; ls"}, {"view": "agents"},
+    {"since": "2 h"}, {"since": "401d"}, {"since": "-5m"}, {"since": "5x"}, {"window": "1e3"}, {"scrape": "5m;ls"},
+    {"start": "yesterday"}, {"start": "2026-05-01"}, {"end": "2026-05-01 08:00; ls"}, {"ttft_max": 0}, {"ttft_max": "x"},
+    {"prometheus_key": "a b"},
 ])
 def test_observation_command_rejects(change):
     with pytest.raises(Refusal):
         server.observation_command({**OBS, **change})
+
+
+@pytest.mark.parametrize("value", ['job="vllm"', 'job="vllm",instance=~"10.0.0.*"', ' job != "a" , env !~ "x|y" ',
+                                   'metadata_agent="a b"', 'job=""'])
+def test_valid_selector_accepts(value):
+    assert server.valid_selector(value, "s") == value.strip()
+
+
+@pytest.mark.parametrize("value", ["", None, "job", 'job=~', 'job="a"}', 'job="a" or x', "job='a'", 'job="a\\"b"',
+                                   'job="a"\n,x="b"; up', "1job=\"a\"", 'sum(job="a")', 'job="a",'])
+def test_valid_selector_rejects(value):
+    with pytest.raises(Refusal):
+        server.valid_selector(value, "s")
+
+
+def test_valid_prometheus_url_accepts_private_hosts_with_a_path():
+    assert server.valid_prometheus_url("http://localhost:9090/") == "http://localhost:9090"
+    assert server.valid_prometheus_url("https://prom.lan/prometheus/") == "https://prom.lan/prometheus"
+
+
+def test_valid_prometheus_url_public_host_allowed_by_environment(monkeypatch):
+    monkeypatch.setenv("BENCH_ALLOW_PUBLIC_URLS", "1")
+    assert server.valid_prometheus_url("http://prom.example.com:9090") == "http://prom.example.com:9090"
+
+
+class FakeQuery:
+    """Stand-in for the observation subprocess: records the call, writes the CSV asked by --output."""
+
+    def __init__(self, cmd, kw, output="Highest mean concurrency that holds: 3\nWARNING: x\nplain\n", code=0, hang=False):
+        self.cmd, self.kw, self.returncode, self.text, self.hang, self.killed = cmd, kw, code, output, hang, False
+        if code == 0 and "--output" in cmd:
+            with open(cmd[cmd.index("--output") + 1], "w", encoding="utf-8") as f:
+                f.write("start,verdict\n2026-05-01 08:00,holds\n")
+
+    async def communicate(self):
+        if self.hang:
+            await asyncio.sleep(5)
+        return self.text.encode(), b""
+
+    def kill(self):
+        self.killed = True
+
+    async def wait(self):
+        return -9
+
+
+@pytest.fixture
+def fake_subprocess(monkeypatch, tmp_path):
+    """Replaces create_subprocess_exec for observation() and read_results(): returns (spawned list, options dict)."""
+    spawned, options = [], {}
+
+    async def fake_exec(*cmd, **kw):
+        spawned.append((cmd, kw))
+        return FakeQuery(cmd, kw, **options)
+    monkeypatch.setattr(server.asyncio, "create_subprocess_exec", fake_exec)
+    monkeypatch.setattr(server, "LOGS_DIR", tmp_path / "logs")
+    monkeypatch.setattr(server, "RUNS", {})
+    return spawned, options
+
+
+def call_observation(body):
+    resp = asyncio.run(server.observation(FakeRequest(body)))
+    return resp.status, json.loads(resp.text)
+
+
+def test_observation_endpoint_reads_the_csv_and_filters_the_messages(fake_subprocess):
+    spawned, _ = fake_subprocess
+    status, body = call_observation({**OBS, "prometheus_key": "sk-PROM"})
+    assert status == 200 and body["code"] == 0
+    assert body["rows"] == [{"start": "2026-05-01 08:00", "verdict": "holds"}]
+    assert body["messages"] == ["Highest mean concurrency that holds: 3", "WARNING: x"]
+    (cmd, kw), = spawned
+    assert kw["env"]["BENCH_PROMETHEUS_KEY"] == "sk-PROM" and "sk-PROM" not in body["command"]
+    assert "BENCH_API_KEY" not in kw["env"] and kw["cwd"] == str(server.ROOT)
+    assert not list((server.LOGS_DIR).glob("observation-*.csv"))  # the temporary CSV is removed
+
+
+def test_observation_endpoint_excludes_the_runs_started_here(fake_subprocess):
+    spawned, _ = fake_subprocess
+    server.RUNS.update(a={"start": 1000.0, "end": 2000.0, "code": 0}, b={"start": 3000.0, "end": None, "code": None})
+    call_observation(OBS)
+    cmd = spawned[0][0]
+    exclusions = [cmd[i + 1] for i, c in enumerate(cmd) if c == "--exclude"]
+    assert exclusions[0] == "1000/2060" and exclusions[1].startswith("3000/")
+
+
+def test_observation_endpoint_refuses_with_400_and_runs_nothing(fake_subprocess):
+    spawned, _ = fake_subprocess
+    for body in ({**OBS, "vllm": 'job="x"} or up'}, {**OBS, "prometheus": "http://8.8.8.8:9090"}, ["list"]):
+        status, payload = call_observation(body)
+        assert status == 400 and payload["error"]
+    assert spawned == []
+
+
+def test_observation_endpoint_works_while_a_run_is_in_progress(fake_subprocess):
+    server.RUNS["x"] = {"start": 1.0, "end": None, "code": None}
+    status, _ = call_observation(OBS)
+    assert status == 200
+
+
+def test_observation_endpoint_times_out_with_504(fake_subprocess, monkeypatch):
+    _, options = fake_subprocess
+    options["hang"] = True
+    real_wait_for = asyncio.wait_for
+    monkeypatch.setattr(server.asyncio, "wait_for", lambda aw, timeout: real_wait_for(aw, 0.05))
+    status, payload = call_observation(OBS)
+    assert status == 504 and "120 s" in payload["error"]
+
+
+def test_observation_endpoint_keeps_the_error_output(fake_subprocess):
+    _, options = fake_subprocess
+    options.update(output="Prometheus unreachable (http://10.0.0.5:9090): refused\n", code=1)
+    status, body = call_observation(OBS)
+    assert status == 200 and body["code"] == 1 and body["rows"] == [] and body["messages"] == [body["output"].strip()]
+
+
+class FakeGet:
+    """Request with only a query string."""
+
+    def __init__(self, **query):
+        self.query = query
+
+
+def call_results(**query):
+    resp = asyncio.run(server.read_results(FakeGet(**query)))
+    return resp.status, json.loads(resp.text)
+
+
+@pytest.mark.parametrize("kind,module", [("aiperf", "aiperf"), ("agents", "agents"), (None, "aiperf")])
+def test_results_without_gpu_does_not_pass_it(fake_subprocess, kind, module):
+    spawned, _ = fake_subprocess
+    status, body = call_results(root="results", target="30", gpu="", type=kind)
+    cmd = spawned[0][0]
+    assert status == 200 and cmd[1:4] == ("-m", "report", module) and "--gpu" not in cmd and "--gpu" not in body["command"]
+
+
+def test_results_with_gpu_passes_it(fake_subprocess):
+    spawned, _ = fake_subprocess
+    call_results(root="results", target="30", gpu="8", require="1")
+    cmd = spawned[0][0]
+    assert cmd[cmd.index("--gpu") + 1] == "8" and "--require-metrics" in cmd
+
+
+def test_results_missing_gpu_parameter_is_also_deduced(fake_subprocess):
+    spawned, _ = fake_subprocess
+    call_results(root="results", target="30")
+    assert "--gpu" not in spawned[0][0]
+
+
+def test_results_keeps_the_gpu_deduction_notes_and_errors(fake_subprocess):
+    _, options = fake_subprocess
+    options.update(output="GPUs: r1: 8 (TP 8 x PP 1 x DP 1), deduced from the fingerprint.\nERROR: number of GPUs unknown\nnoise\n", code=1)
+    _, body = call_results(root="results", target="30", gpu="")
+    assert body["messages"] == ["GPUs: r1: 8 (TP 8 x PP 1 x DP 1), deduced from the fingerprint.",
+                                "ERROR: number of GPUs unknown"]
+
+
+@pytest.mark.parametrize("query", [dict(root="../x", target="30"), dict(root="r", target="0"), dict(root="r", target="30", gpu="0"),
+                                   dict(root="r", target="30", gpu="4097"), dict(root="r", target="30", gpu="x")])
+def test_results_refuses_bad_parameters(fake_subprocess, query):
+    status, body = call_results(**query)
+    assert status == 400 and body["error"] and fake_subprocess[0] == []
+
+
+def test_roots_have_no_observation_kind(monkeypatch, tmp_path):
+    monkeypatch.setattr(server, "ROOT", tmp_path)
+    (tmp_path / "results" / "r1" / "c1").mkdir(parents=True)
+    (tmp_path / "results" / "r1" / "c1" / "profile_export_aiperf.json").write_text("{}")
+    (tmp_path / "results-obs" / "r1").mkdir(parents=True)
+    (tmp_path / "results-obs" / "r1" / "observation.json").write_text("{}")
+    body = json.loads(asyncio.run(server.list_roots(None)).text)
+    assert body == {"synthetic": ["results"], "agents": [], "agentx": []}
 
 
 AGENTS = {"agents": ["code_review", "pentest"], "levels": "1 2", "mode": "scripted", "url": "http://127.0.0.1:8000",
@@ -487,12 +674,25 @@ def test_launch_masks_every_secret_name(launcher):
     assert status == 200
     command = server.RUNS[body["id"]]["command"]
     assert "sk-A" not in command and "sk-B" not in command and "BENCH_AGENT_KEYS=***" in command
-    status, body, _ = launcher({"type": "observation", **OBS, "label": "o2", "litellm_key": "sk-C"})
-    assert status == 200 and "sk-C" not in server.RUNS[body["id"]]["command"]
 
 
 def test_secret_names_are_the_bench_names():
-    assert set(server.SECRETS) == {"BENCH_API_KEY", "BENCH_AGENT_KEYS", "BENCH_LITELLM_KEY"}
+    assert set(server.SECRETS) == {"BENCH_API_KEY", "BENCH_AGENT_KEYS", "BENCH_PROMETHEUS_KEY"}
+
+
+def test_prometheus_key_is_masked_in_the_displayed_command(launcher, monkeypatch):
+    """Whatever command carries BENCH_PROMETHEUS_KEY in its environment, the log and the run record show ***."""
+    monkeypatch.setattr(server, "synthetic_command",
+                        lambda p: (["true"], {"BENCH_PROMETHEUS_KEY": "sk-PROM", "BENCH_URL": "http://h:1"}, server.ROOT))
+    status, body, _ = launcher({"type": "synthetic"})
+    run = server.RUNS[body["id"]]
+    assert status == 200 and "sk-PROM" not in run["command"] and "BENCH_PROMETHEUS_KEY=***" in run["command"]
+    assert "sk-PROM" not in open(run["log"], encoding="utf-8").read()
+
+
+def test_observation_is_not_a_run_type(launcher):
+    status, payload, spawned = launcher({"type": "observation", **OBS})
+    assert status == 400 and "unknown run type" in payload["error"] and spawned == []
 
 
 def test_launch_does_not_inherit_the_terminal_secrets(launcher, monkeypatch):

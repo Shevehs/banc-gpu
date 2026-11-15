@@ -1,9 +1,9 @@
-"""Characterization tests: the standard output and CSV of the three reports are compared with recorded outputs.
-To regenerate them after an intended change:  UPDATE_GOLDEN=1 python -m pytest tests/test_report_golden.py"""
+"""Characterization tests: the standard output and CSV of the reports (aiperf, agents) and of the three views of
+observation.query are compared with recorded outputs.
+To regenerate them after an intended change (then review the diff):  UPDATE_GOLDEN=1 python -m pytest tests/test_report_golden.py"""
 import json
 import os
 import pathlib
-import time
 
 import pytest
 
@@ -12,13 +12,7 @@ from tests import fixtures
 GOLDEN = pathlib.Path(__file__).parent / "golden"
 
 
-@pytest.fixture(autouse=True)
-def utc_timezone(monkeypatch):
-    monkeypatch.setenv("TZ", "UTC")
-    time.tzset()
-    yield
-    monkeypatch.undo()
-    time.tzset()
+pytestmark = pytest.mark.usefixtures("utc_timezone")
 
 
 def run_report(kind, argv, capsys):
@@ -69,11 +63,34 @@ def test_agents_required_metrics_and_missing(capsys, tmp_path):
     check("agents_strict.txt", normalize(output, root))
 
 
-@pytest.mark.parametrize("view,extra", [("windows", []), ("period", ["--period", "hour"]),
-                                         ("period", []), ("agents", [])])
-def test_observation_views(capsys, tmp_path, view, extra):
-    root = fixtures.observation_tree(tmp_path)
-    output = run_report("observation", [str(root), "--target", "30", "--gpu", "2", "--view", view, *extra], capsys)
-    name = "observation_" + view + ("_hour" if "hour" in extra else "")
-    check(name + ".txt", normalize(output, root))
-    check(name + ".csv", (root / "table_observation.csv").read_text())
+def run_query(prom, argv, capsys, monkeypatch):
+    """Run observation.query.main() against the Prometheus stub; the stub URL is replaced by <prometheus>."""
+    from observation import query
+    monkeypatch.setattr("sys.argv", ["observation.query", "--prometheus", prom.url, "--target", "30", "--gpu", "8",
+                                     "--start", "2024-05-14 00:00", "--end", "2024-05-15 00:00", "--window", "3h",
+                                     *argv])
+    query.main()
+    return capsys.readouterr().out.replace(prom.url, "<prometheus>")
+
+
+@pytest.fixture
+def day(prom):
+    """A Prometheus stub with the eight canned windows of fixtures.observation_day()."""
+    return prom(fixtures.prometheus_responder(fixtures.DAY + fixtures.WINDOW_3H, fixtures.WINDOW_3H,
+                                               fixtures.observation_day()))
+
+
+def test_query_windows(day, capsys, monkeypatch, tmp_path):
+    out = run_query(day, ["--litellm", 'job="litellm"', "--output", str(tmp_path / "t.csv")], capsys, monkeypatch)
+    check("query_windows.txt", out)
+    check("query_windows.csv", (tmp_path / "t.csv").read_text())
+
+
+@pytest.mark.parametrize("name,extra", [("query_period", ["--view", "period"]),
+                                        ("query_period_hour", ["--view", "period", "--period", "hour"])])
+def test_query_period(day, capsys, monkeypatch, name, extra):
+    check(name + ".txt", run_query(day, ["--litellm", 'job="litellm"', *extra], capsys, monkeypatch))
+
+
+def test_query_agents(day, capsys, monkeypatch):
+    check("query_agents.txt", run_query(day, ["--litellm", 'job="litellm"', "--view", "agents"], capsys, monkeypatch))

@@ -1,6 +1,9 @@
 """sweep.sh and agentx.sh: argument and environment validation, without AIPerf and without the network.
 
-Every case fails validation before aiperf would be called; a fake `aiperf` first on PATH records any call."""
+Every validation case fails before aiperf would be called; a fake `aiperf` first on PATH records any call. The
+tests that let agentx.sh reach aiperf (environment passed to it, final message) use their own fake that only dumps
+the AIPERF_* variables it receives and exits."""
+import json
 import os
 import shutil
 
@@ -175,3 +178,53 @@ def test_agentx_validation_order_reports_the_first_problem(sandbox):
 def test_sweep_bad_label_is_checked_before_anything_else(sandbox):
     r = sandbox(SWEEP, "bad label", "1 2", CLE_API="sk-x")
     assert r.returncode == 1 and r.stderr == ""          # no settings warning yet: the label comes first
+
+
+# ---------------------------------------------------------------- agentx.sh reaching aiperf (a fake that records its environment)
+TIMEOUTS = ("AIPERF_DATASET_CONFIGURATION_TIMEOUT", "AIPERF_SERVICE_PROFILE_CONFIGURE_TIMEOUT")
+
+
+@pytest.fixture
+def agentx_run(tmp_path):
+    """run(**env) -> (result, {AIPERF_* variable: value seen by aiperf}, results dir); the fake aiperf exits with 0."""
+    bin_dir, work = tmp_path / "bin", tmp_path / "work"
+    bin_dir.mkdir()
+    work.mkdir()
+    dump = tmp_path / "aiperf-env"
+    fake = bin_dir / "aiperf"
+    fake.write_text(f"#!/bin/sh\nenv | grep '^AIPERF_' | sort > '{dump}'\nexit 0\n")
+    fake.chmod(0o755)
+
+    def run(**env):
+        environment = helpers.clean_environment(PATH=f"{bin_dir}:{os.environ['PATH']}", BENCH_ROOT_DIR=str(work / "results"),
+                                                BENCH_URL="http://127.0.0.1:1", BENCH_SHORT_RUN="1", BENCH_DURATION="5", **env)
+        result = helpers.run([BASH, str(helpers.ROOT / AGENTX), "lbl", "1"], cwd=work, env=environment, timeout=120)
+        seen = dict(x.split("=", 1) for x in dump.read_text().splitlines()) if dump.exists() else None
+        return result, seen, work / "results" / "lbl"
+    return run
+
+
+@pytest.mark.skipif(shutil.which("awk") is None, reason="awk not found")
+@pytest.mark.parametrize("env,expected", [
+    ({}, ("1800", "1800")),                                                                   # defaults: 30 minutes
+    ({TIMEOUTS[0]: "600"}, ("600", "600")),                                                   # profile timeout follows
+    ({TIMEOUTS[0]: "600", TIMEOUTS[1]: "2400"}, ("600", "2400")),                             # larger profile value kept
+    ({TIMEOUTS[1]: "3000"}, ("1800", "3000")),
+    ({TIMEOUTS[1]: "100"}, ("1800", "1800")),                                                 # raised to the dataset value
+    ({TIMEOUTS[0]: "3000"}, ("3000", "3000")),
+    ({TIMEOUTS[0]: "900", TIMEOUTS[1]: "900"}, ("900", "900")),
+])
+def test_agentx_aiperf_timeouts(agentx_run, env, expected):
+    result, seen, _ = agentx_run(**env)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert (seen[TIMEOUTS[0]], seen[TIMEOUTS[1]]) == expected
+    assert int(seen[TIMEOUTS[1]]) >= int(seen[TIMEOUTS[0]])          # AIPerf requires it
+
+
+def test_agentx_final_message_says_the_gpus_are_deduced(agentx_run):
+    result, _, results = agentx_run()
+    assert result.returncode == 0
+    assert "(GPUs deduced from the fingerprint; --gpu N to force)" in result.stdout
+    assert "--gpu <GPU>" not in result.stdout and "python -m report aiperf" in result.stdout
+    config = json.loads((results / "server_config.json").read_text())      # collected even though the target is down
+    assert config["fingerprint"]["response"] is False and config["servers"][0]["vllm_lines"] is None

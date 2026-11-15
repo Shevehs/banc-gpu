@@ -1,34 +1,5 @@
-from observation.analysis import quantile, share_below, summarize, verdict
-
-
-def test_summarize_sums_counters_histograms_and_gauges():
-    series = [
-        ("vllm:generation_tokens", {"engine": "0"}, 10.0),
-        ("vllm:generation_tokens", {"engine": "1"}, 5.0),
-        ("vllm:time_to_first_token_seconds_bucket", {"le": "0.5"}, 3.0),
-        ("vllm:time_to_first_token_seconds_bucket", {"le": "0.5", "engine": "1"}, 2.0),
-        ("vllm:kv_cache_usage_perc", {}, 0.4),
-        ("vllm:kv_cache_usage_perc", {}, 0.7),
-    ]
-    c, h, g = summarize(series)
-    assert c["vllm:generation_tokens"] == 15.0
-    assert h["ttft"]["0.5"] == 5.0
-    assert g["kv"] == [0.4, 0.7]
-
-
-def test_http_errors_only_4xx_5xx_on_v1():
-    series = [
-        ("http_requests", {"handler": "/v1/chat/completions", "status": "2xx"}, 100.0),
-        ("http_requests", {"handler": "/v1/chat/completions", "status": "5xx"}, 3.0),
-        ("http_requests", {"handler": "/health", "status": "5xx"}, 9.0),
-    ]
-    c, _, _ = summarize(series)
-    assert c["http_requests"] == 3.0
-
-
-def test_http_errors_zero_as_soon_as_a_v1_series_exists():
-    c, _, _ = summarize([("http_requests", {"handler": "/v1/models", "status": "2xx"}, 4.0)])
-    assert c["http_requests"] == 0.0
+"""observation/analysis.py: quantiles, share below a bound and the verdict text."""
+from observation.analysis import quantile, share_below, verdict
 
 
 def test_quantile_upper_bound_of_the_bucket():
