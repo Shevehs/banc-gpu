@@ -1267,9 +1267,11 @@ in `tests/golden/`), the settings reading and the module structure, and checks t
 
 **Verified**
 
-- The test agents, the two kinds of report and the test suite, against the fake server. `sweep.sh` and `agentx.sh`
-  have not been run with AIPerf since the latest changes to the scripts; the smoke test of
-  [section 6](#6-smoke-test-without-a-gpu) does it.
+- The test agents, the two kinds of report and the test suite, against the fake server
+  ([section 6](#6-smoke-test-without-a-gpu)).
+- `sweep.sh` with AIPerf 0.12.0 and the AIPerf report, against a real vLLM 0.33.0 on a Mac (levels 1, 4 and 16, with
+  the preemption counter read from `/metrics`). `agentx.sh` has not been run end to end with AIPerf since the latest
+  changes to the scripts.
 - The observation against the fake server, with Prometheus 3.7.3 ([section 8.3](#83-query-the-observation)).
 - The per-agent view with a real LiteLLM 1.109.1: metric names, types and labels, and the Prisma and
   `prometheus_client` requirements ([section 8.5](#85-per-agent-view-through-litellm),
