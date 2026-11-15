@@ -1,0 +1,15 @@
+Prometheus <prometheus>, vLLM {job="vllm"}, LiteLLM {job="litellm"} by metadata_agent; 2024-05-14 00:00 → 2024-05-15 00:00, windows of 10800 s
+
+period                  windows avg conc requests  err   tput/GPU  at target inter P10≥ TTFT P95≤ ms preempt  cache   MTP  KV max  verdict
+00 h                          1      0.0        0    0        0.0          —          —            —       0      —     —      2%  no requests
+03 h                          1      0.1       40    0        0.2       95%*       40.0          500       0    60%   67%      5%  holds
+06 h                          1      4.2     4000    0       18.5       95%*       40.0          500       0    60%   67%     40%  holds
+09 h                          1     12.5     9000    0       41.7       95%*       40.0          500       0    60%   67%     40%  holds
+12 h                          1     20.0    12000    0       55.6       33%*       10.0          500       0    60%   67%     90%  does not hold
+18 h                          1      5.0     8000    0       37.0       95%*       40.0          500       3    60%   67%     97%  does not hold
+21 h                          1     15.0     6000    0       27.8       82%*       20.0          500       0    60%   67%     40%  undetermined
+
+Throughput/GPU: mean over the period; avg conc: requests in flight on average. Peak of a period: --view windows.
+   WARNING: 2024-05-14 03:00: fewer than 50 completed requests: percentiles unreliable.
+   WARNING: 2024-05-14 15:00: vLLM restarted during the window (counters reset to zero): window discarded.
+   WARNING: 2024-05-14 18:00: LiteLLM restarted during the window: discarded from the per-agent view.

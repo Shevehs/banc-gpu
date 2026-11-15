@@ -1,136 +1,146 @@
-"""Trois profils d'agents de test qui reproduisent une FORME de charge agentique.
+"""Three test agent profiles that reproduce the SHAPE of an agentic workload.
 
-Ils ne font aucun travail offensif réel : leurs outils sont simulés (commun.texte) et leur
-contenu est fabriqué. Seules comptent les tailles (prompt système, définitions d'outils,
-sorties d'outils, sorties du modèle), le nombre d'étapes, le parallélisme et les temps d'outil.
+They do no real offensive work: their tools are simulated (common.make_text) and their
+content is fabricated. Only the sizes (system prompt, tool definitions, tool outputs,
+model outputs), the number of steps, the parallelism and the tool latencies matter.
 
-Tailles par défaut (HYPOTHÈSES, à adapter à la charge visée) : revue de code ≈ 135K jetons par
-sous-agent, 3 sous-agents ; pentest pas à pas ≈ 69K, 1 fil ; rapport ≈ 135K, 1 fil
-(estimés avec le vocabulaire Qwen).
-Toutes les tailles sont multipliées par ECHELLE (par exemple 0,2 sur un Mac).
+Default sizes (ASSUMPTIONS, to adapt to the target workload): code review ≈ 135K tokens per
+sub-agent, 3 sub-agents; step-by-step pentest ≈ 69K, 1 thread; report ≈ 135K, 1 thread
+(estimated with the Qwen vocabulary).
+All sizes are multiplied by the scale factor (--scale, e.g. 0.2 on a Mac).
 """
-import random, threading, time
+import random
+import threading
+import time
 
-from commun import definitions_outils, texte
+from agents_test.common import tool_definitions, make_text
 
-PROFILS = {
-    "revue_code": dict(nom="Revue de code", systeme=3000, outils=4, jetons_par_outil=300,
-                liste_fichiers=1500, plan=300, sous_agents=3, systeme_sous_agent=2000,
-                etapes=6, lecture=22000, analyse=400, synthese=1500, latence_outil_s=5.0),
-    "pentest": dict(nom="Pentest pas à pas", systeme=3000, outils=6, jetons_par_outil=300,
-                etapes=15, resultat_outil=4000, reflexion=250, rapport=800, latence_outil_s=8.0),
-    "rapport": dict(nom="Rédaction de rapport", systeme=2000, notes=125000, plan=800,
-                 redaction=4000, latence_outil_s=2.0),
+PROFILES = {
+    "code_review": dict(name="Code review", system=3000, tools=4, tokens_per_tool=300,
+                list_files=1500, plan=300, sub_agents=3, sub_agent_system=2000,
+                steps=6, read=22000, analysis=400, summary=1500, tool_latency_s=5.0),
+    "pentest": dict(name="Step-by-step pentest", system=3000, tools=6, tokens_per_tool=300,
+                steps=15, tool_result=4000, thinking=250, report=800, tool_latency_s=8.0),
+    "report": dict(name="Report writing", system=2000, notes=125000, plan=800,
+                 writing=4000, tool_latency_s=2.0),
 }
-# Graines fixes : le prompt système et les définitions d'outils sont identiques d'une tâche à
-# l'autre (comme pour un vrai agent), ce qui permet au cache de préfixes de les réutiliser.
-GRAINE_FIXE = {"revue_code": 3_000_000, "pentest": 2_000_000, "rapport": 9_000_000}
-OUTILS = {"revue_code": ["lister_fichiers", "lire_fichier", "chercher_motif", "analyse_statique"],
-          "pentest": ["scanner_ports", "identifier_service", "lire_journal", "tester_auth", "chercher_vuln", "noter"]}
-NATURE = {"lister_fichiers": "code", "lire_fichier": "code", "chercher_motif": "code", "analyse_statique": "code",
-          "scanner_ports": "scan", "identifier_service": "scan", "lire_journal": "journal",
-          "tester_auth": "journal", "chercher_vuln": "scan", "noter": "notes"}
+# Fixed seeds: the system prompt and the tool definitions are identical from one task to the
+# next (as with a real agent), so the prefix cache can reuse them.
+FIXED_SEEDS = {"code_review": 3_000_000, "pentest": 2_000_000, "report": 9_000_000}
+TOOLS = {"code_review": ["list_files", "read_file", "search_pattern", "static_analysis"],
+          "pentest": ["scan_ports", "identify_service", "read_log", "test_auth", "search_vuln", "note"]}
+TEXT_KINDS = {"list_files": "code", "read_file": "code", "search_pattern": "code", "static_analysis": "code",
+          "scan_ports": "scan", "identify_service": "scan", "read_log": "log",
+          "test_auth": "log", "search_vuln": "scan", "note": "notes"}
 
 
-# Multiplie les temps d'outil simulés (réglé par le lanceur, option --facteur-latence).
-FACTEUR_LATENCE = 1.0
+# Multiplies the simulated tool latencies (set by the launcher, --latency-factor option).
+LATENCY_FACTOR = 1.0
 
 
-def _n(x, echelle, minimum=32):
-    return max(minimum, int(round(x * echelle)))
+def _scale(x, scale, minimum=32):
+    return max(minimum, int(round(x * scale)))
 
 
-def _systeme(agent, p, echelle, mode):
-    """Prompt système fixe. En mode scripté, les définitions d'outils sont incluses en texte
-    (même taille de prompt, sans dépendre du parseur d'appels d'outils du serveur)."""
-    g = GRAINE_FIXE[agent]
-    s = f"Tu es l'agent de test {p['nom']}. Réponds en texte.\n" + texte("notes", _n(p["systeme"], echelle), g)
-    outils = None
-    if agent in OUTILS:
-        outils = definitions_outils(OUTILS[agent], _n(p["jetons_par_outil"], echelle), g + 1000)
-        if mode == "scripte":
-            s += "\nOutils disponibles :\n" + "\n".join(f"{o['function']['name']} : {o['function']['description']}" for o in outils)
-            outils = None
-    return s, outils
+def _system_prompt(agent, p, scale, mode):
+    """Fixed system prompt. In scripted mode, the tool definitions are included as text
+    (same prompt size, without depending on the server's tool-call parser)."""
+    g = FIXED_SEEDS[agent]
+    s = f"You are the {p['name']} test agent. Answer in plain text.\n" + make_text("notes", _scale(p["system"], scale), g)
+    tools = None
+    if agent in TOOLS:
+        tools = tool_definitions(TOOLS[agent], _scale(p["tokens_per_tool"], scale), g + 1000)
+        if mode == "scripted":
+            s += "\nAvailable tools:\n" + "\n".join(f"{o['function']['name']}: {o['function']['description']}" for o in tools)
+            tools = None
+    return s, tools
 
 
-def _outil(nom, n_jetons, graine, latence_s):
-    """Exécute un outil simulé : attend la latence prévue et renvoie un texte de taille fixée."""
-    # latence variable (± 30 %) autour de la valeur prévue, pour éviter une charge trop régulière
-    time.sleep(latence_s * FACTEUR_LATENCE * random.uniform(0.7, 1.3))
-    return texte(NATURE.get(nom, "notes"), n_jetons, graine)
+def _run_tool(name, n_tokens, seed, latency_s):
+    """Run a simulated tool: wait for the expected latency and return text of a fixed size."""
+    # variable latency (± 30 %) around the expected value, to avoid an overly regular load
+    time.sleep(latency_s * LATENCY_FACTOR * random.uniform(0.7, 1.3))
+    return make_text(TEXT_KINDS.get(name, "notes"), n_tokens, seed)
 
 
-def _boucle(m, messages, outils, n_etapes, n_sortie, n_resultat, nom_outil, ctx, graine, latence_s, mode):
-    """Boucle outil → modèle. Scripté : l'outil est imposé à chaque étape.
-    Autonome : on exécute les outils choisis par le modèle, et on s'arrête quand il n'en appelle plus."""
-    dernier = ""
-    for e in range(n_etapes):
-        if mode == "scripte":
-            resultat = _outil(nom_outil, n_resultat, graine + e, latence_s)
-            messages.append({"role": "user", "content": f"Résultat de {nom_outil} :\n{resultat}"})
-            dernier, _ = m.appeler(messages, n_sortie, {**ctx, "etape": e})
-            messages.append({"role": "assistant", "content": dernier})
+def _agent_loop(m, messages, tools, n_steps, n_output, n_result, name_tool, ctx, seed, latency_s, mode):
+    """Tool → model loop. Scripted: the tool is forced at each step.
+    Autonomous: run the tools chosen by the model, and stop when it calls none."""
+    last = ""
+    for e in range(n_steps):
+        if mode == "scripted":
+            result = _run_tool(name_tool, n_result, seed + e, latency_s)
+            messages.append({"role": "user", "content": f"Result of {name_tool}:\n{result}"})
+            last, _ = m.call(messages, n_output, {**ctx, "step": e})
+            messages.append({"role": "assistant", "content": last})
         else:
-            dernier, appels = m.appeler(messages, n_sortie, {**ctx, "etape": e}, outils)
-            if not appels:
+            last, calls = m.call(messages, n_output, {**ctx, "step": e}, tools)
+            if not calls:
                 break
-            ids = [f"appel_{e}_{k}" for k in range(len(appels))]
-            messages.append({"role": "assistant", "content": dernier or None, "tool_calls": [
-                {"id": i, "type": "function", "function": {"name": a["nom"] or "noter", "arguments": a["args"] or "{}"}}
-                for i, a in zip(ids, appels)]})
-            for i, a in zip(ids, appels):
+            ids = [f"call_{e}_{k}" for k in range(len(calls))]
+            messages.append({"role": "assistant", "content": last or None, "tool_calls": [
+                {"id": i, "type": "function", "function": {"name": a["name"] or "note", "arguments": a["args"] or "{}"}}
+                for i, a in zip(ids, calls, strict=True)]})
+            for i, a in zip(ids, calls, strict=True):
                 messages.append({"role": "tool", "tool_call_id": i,
-                                 "content": _outil(a["nom"], n_resultat, graine + 100 * e + len(i), latence_s)})
-    return dernier
+                                 "content": _run_tool(a["name"], n_result, seed + 100 * e + len(i), latency_s)})
+    return last
 
 
-def revue_code(m, tache, graine, echelle, mode):
-    p = PROFILS["revue_code"]; ctx = {"agent": "revue_code", "tache": tache}
-    sysm, outils = _systeme("revue_code", p, echelle, mode)
-    msgs = [{"role": "system", "content": sysm},
-            {"role": "user", "content": "Revue de sécurité du dépôt. Liste des fichiers :\n"
-             + _outil("lister_fichiers", _n(p["liste_fichiers"], echelle), graine, p["latence_outil_s"])}]
-    plan, _ = m.appeler(msgs, _n(p["plan"], echelle), {**ctx, "fil": 0, "etape": "plan"})
+def code_review(m, task, seed, scale, mode):
+    """Code-review profile: file list, plan, parallel analysis sub-agents, then a summary.
+
+    `m` is the Model that logs the calls, `task` the task id, `seed` seeds the fabricated text, `scale`
+    multiplies all sizes and `mode` is "scripted" or "autonomous". Returns nothing."""
+    p = PROFILES["code_review"]; ctx = {"agent": "code_review", "task": task}
+    sysmsg, tools = _system_prompt("code_review", p, scale, mode)
+    msgs = [{"role": "system", "content": sysmsg},
+            {"role": "user", "content": "Security review of the repository. File list:\n"
+             + _run_tool("list_files", _scale(p["list_files"], scale), seed, p["tool_latency_s"])}]
+    plan, _ = m.call(msgs, _scale(p["plan"], scale), {**ctx, "thread": 0, "step": "plan"})
     msgs.append({"role": "assistant", "content": plan})
-    resumes = [None] * p["sous_agents"]
+    summaries = [None] * p["sub_agents"]
 
-    def sous_agent(k):
-        s_sys = "Sous-agent d'analyse.\n" + texte("notes", _n(p["systeme_sous_agent"], echelle), GRAINE_FIXE["revue_code"] + 7)
+    def sub_agent(k):
+        s_sys = "Analysis sub-agent.\n" + make_text("notes", _scale(p["sub_agent_system"], scale), FIXED_SEEDS["code_review"] + 7)
         s_msgs = [{"role": "system", "content": s_sys},
-                  {"role": "user", "content": f"Analyse la partie {k + 1} du dépôt selon ce plan :\n{plan}"}]
-        resumes[k] = _boucle(m, s_msgs, outils, p["etapes"], _n(p["analyse"], echelle), _n(p["lecture"], echelle),
-                             "lire_fichier", {**ctx, "fil": k + 1}, graine * 10 + k * 1000, p["latence_outil_s"], mode)
+                  {"role": "user", "content": f"Analyze part {k + 1} of the repository according to this plan:\n{plan}"}]
+        summaries[k] = _agent_loop(m, s_msgs, tools, p["steps"], _scale(p["analysis"], scale), _scale(p["read"], scale),
+                             "read_file", {**ctx, "thread": k + 1}, seed * 10 + k * 1000, p["tool_latency_s"], mode)
 
-    fils = [threading.Thread(target=sous_agent, args=(k,)) for k in range(p["sous_agents"])]
-    for f in fils: f.start()
-    for f in fils: f.join()
-    msgs.append({"role": "user", "content": "Synthèse des sous-agents :\n" + "\n---\n".join(r or "" for r in resumes)})
-    m.appeler(msgs, _n(p["synthese"], echelle), {**ctx, "fil": 0, "etape": "synthese"})
-
-
-def pentest(m, tache, graine, echelle, mode):
-    p = PROFILS["pentest"]; ctx = {"agent": "pentest", "tache": tache, "fil": 0}
-    sysm, outils = _systeme("pentest", p, echelle, mode)
-    msgs = [{"role": "system", "content": sysm},
-            {"role": "user", "content": "Évalue l'environnement de test simulé, étape par étape."}]
-    _boucle(m, msgs, outils, p["etapes"], _n(p["reflexion"], echelle), _n(p["resultat_outil"], echelle),
-            "scanner_ports", ctx, graine, p["latence_outil_s"], mode)
-    msgs.append({"role": "user", "content": "Rédige le rapport final."})
-    m.appeler(msgs, _n(p["rapport"], echelle), {**ctx, "etape": "rapport"})
+    threads = [threading.Thread(target=sub_agent, args=(k,)) for k in range(p["sub_agents"])]
+    for f in threads: f.start()
+    for f in threads: f.join()
+    msgs.append({"role": "user", "content": "Sub-agent summaries:\n" + "\n---\n".join(r or "" for r in summaries)})
+    m.call(msgs, _scale(p["summary"], scale), {**ctx, "thread": 0, "step": "summary"})
 
 
-def rapport(m, tache, graine, echelle, mode):
-    p = PROFILS["rapport"]; ctx = {"agent": "rapport", "tache": tache, "fil": 0}
-    sysm, _ = _systeme("rapport", p, echelle, mode)
-    time.sleep(p["latence_outil_s"] * FACTEUR_LATENCE)  # lecture des notes d'engagement (simulée)
-    msgs = [{"role": "system", "content": sysm},
-            {"role": "user", "content": "Notes d'engagement :\n" + texte("notes", _n(p["notes"], echelle), graine)
-             + "\nPropose le plan du rapport."}]
-    plan, _ = m.appeler(msgs, _n(p["plan"], echelle), {**ctx, "etape": "plan"})
-    # Deuxième appel : même début que le premier, donc réutilisable par le cache de préfixes.
-    msgs += [{"role": "assistant", "content": plan}, {"role": "user", "content": "Rédige le rapport complet."}]
-    m.appeler(msgs, _n(p["redaction"], echelle), {**ctx, "etape": "redaction"})
+def pentest(m, task, seed, scale, mode):
+    """Step-by-step pentest profile: one thread of simulated tool steps, then the final report.
+    Same parameters as `code_review`."""
+    p = PROFILES["pentest"]; ctx = {"agent": "pentest", "task": task, "thread": 0}
+    sysmsg, tools = _system_prompt("pentest", p, scale, mode)
+    msgs = [{"role": "system", "content": sysmsg},
+            {"role": "user", "content": "Assess the simulated test environment, step by step."}]
+    _agent_loop(m, msgs, tools, p["steps"], _scale(p["thinking"], scale), _scale(p["tool_result"], scale),
+            "scan_ports", ctx, seed, p["tool_latency_s"], mode)
+    msgs.append({"role": "user", "content": "Write the final report."})
+    m.call(msgs, _scale(p["report"], scale), {**ctx, "step": "report"})
 
 
-AGENTS = {"revue_code": revue_code, "pentest": pentest, "rapport": rapport}
+def report_writer(m, task, seed, scale, mode):
+    """Report-writing profile: long engagement notes, an outline, then the full report (the second call shares
+    its beginning with the first). Same parameters as `code_review`."""
+    p = PROFILES["report"]; ctx = {"agent": "report", "task": task, "thread": 0}
+    sysmsg, _ = _system_prompt("report", p, scale, mode)
+    time.sleep(p["tool_latency_s"] * LATENCY_FACTOR)  # reading the engagement notes (simulated)
+    msgs = [{"role": "system", "content": sysmsg},
+            {"role": "user", "content": "Engagement notes:\n" + make_text("notes", _scale(p["notes"], scale), seed)
+             + "\nPropose the report outline."}]
+    plan, _ = m.call(msgs, _scale(p["plan"], scale), {**ctx, "step": "plan"})
+    # Second call: same beginning as the first, so it can be reused by the prefix cache.
+    msgs += [{"role": "assistant", "content": plan}, {"role": "user", "content": "Write the full report."}]
+    m.call(msgs, _scale(p["writing"], scale), {**ctx, "step": "writing"})
+
+
+AGENTS = {"code_review": code_review, "pentest": pentest, "report": report_writer}

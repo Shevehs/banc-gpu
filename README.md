@@ -1,602 +1,824 @@
 # banc-gpu
+<a id="top"></a>
 
-Banc de mesure de capacité pour un modèle servi par vLLM : pour une installation donnée, combien de
-requêtes simultanées (ou de tâches d'agents) elle tient, et à quel débit par GPU, tant que chaque
-requête reçoit ses jetons à une vitesse visée (l'**interactivité**, en jetons/s par requête).
+*Banc* is the French word for bench; the repository keeps the name `banc-gpu` so that its URL stays stable.
 
-Deux familles de mesures :
+A capacity benchmark for a model served by vLLM: for a given installation, how many simultaneous
+requests (or agent tasks) it sustains, and at what throughput per GPU, as long as each request receives
+its tokens at a target speed (the **interactivity**, in tokens/s per request).
 
-- les **stress tests** : le banc génère lui-même la charge, par paliers croissants, jusqu'à la rupture ;
-  ils donnent la **capacité** de l'installation ;
-- l'**observation** : le banc ne génère rien et n'a rien à lancer ; Prometheus collecte en continu les métriques
-  de vLLM (et de LiteLLM) pendant que tes vrais agents tournent, et le banc l'interroge pour dire si l'installation
-  **tient la charge réelle**, par fenêtre, par période et par agent, sur n'importe quelle plage passée.
+Two families of measurements:
 
-| Mode | Outil | Charge | Cache de préfixes de vLLM | Ce qu'il donne | § |
-|---|---|---|---|---|---|
-| **Stress test synthétique** | `balayage.sh` (AIPerf) | requêtes à longueurs fixes | **désactivé** | plancher prudent | 3 |
-| **Stress test AgentX** | `agentx.sh` (AIPerf, scénario `inferencex-agentx-mvp`) | sessions publiques d'agents de code rejouées | activé | mesure comparable aux résultats AgentX d'InferenceX | 4 |
-| **Stress test agents de test** | `agents_test/` | trois profils d'agents simulés | activé | charge d'agents proche de vos usages | 5 |
-| **Observation** | `observation/interroger.py` + Prometheus | tes agents, en usage réel | tel que configuré | « ça tient ? », par fenêtre, période, agent | 6 |
+- **stress tests**: the bench generates the load itself, in increasing levels, until the installation breaks;
+  they give the installation's **capacity**;
+- **observation**: the bench generates nothing and has nothing to start; Prometheus continuously collects the
+  metrics of vLLM (and of LiteLLM) while your real agents run, and the bench queries it to tell you whether the
+  installation **sustains the real load**, per window, per period and per agent, over any past range.
 
-Écrit d'après le code de **vLLM au commit [`7f855f6`](https://github.com/vllm-project/vllm/tree/7f855f605892656ebf7265642e5d22a34a6ae731)** et testé avec **AIPerf 0.12.0** contre le serveur
-factice (§ 12). Contre un vrai vLLM, seulement sur un Mac (vllm-metal, vLLM 0.33.0) : connexion à travers
-LiteLLM, empreinte, `/metrics`, chargement des traces AgentX ; **pas encore sur un serveur GPU**. La vue par agent
-(§ 6.5, façon 2) a été vérifiée avec un vrai LiteLLM (1.109.1) lors de la validation. Contrôle les sorties réelles au § 2.4
-(sources en fin de document).
+> **Status.** Written from the code of **vLLM at commit [`7f855f6`](https://github.com/vllm-project/vllm/tree/7f855f605892656ebf7265642e5d22a34a6ae731)**
+> and tested with **AIPerf 0.12.0** against the fake server ([section 6](#6-smoke-test-without-a-gpu)),
+> before the rename of the code to English. After the rename, the launcher and the report kinds were
+> re-run against the fake server and the test suite passes; `sweep.sh` and `agentx.sh` (which need AIPerf) were
+> **not** re-run (command to run: the smoke test of [section 6](#6-smoke-test-without-a-gpu)).
+> **Against a real vLLM, only on a Mac** (vllm-metal, vLLM 0.33.0): connection through LiteLLM, fingerprint,
+> `/metrics` and loading of the AgentX traces; **not yet on a GPU server**. The observation (Prometheus 3.7.3) and the per-agent view
+> ([section 8.5](#85-per-agent-view-through-litellm), way 2) were checked, before the rename, with the fake server
+> and a real LiteLLM (1.109.1).
+> On your first real run, compare your outputs with the example in [section 5.4](#54-test-the-connection).
+> Unfamiliar terms: see [Appendix E](#appendix-e-glossary).
+> Statements that are documented, inferred or not verified are collected in the
+> [Validation status](#validation-status) box below.
 
-Les agents de test sont trois profils (`revue_code` avec sous-agents, `pentest` pas à pas, `rapport`).
-Leurs outils sont simulés : ils renvoient du texte fabriqué et n'agissent sur aucun système.
+### Validation status
+
+| Status | What | Where |
+|---|---|---|
+| Verified | Pipeline against the fake server before the English rename; after it, only the launcher, the two report kinds and the test suite were re-run (`sweep.sh` and `agentx.sh` were not); observation against the fake server with Prometheus 3.7.3 (before the rename); per-agent view with a real LiteLLM 1.109.1 (metric names, types, labels, Prisma and `prometheus_client` requirements); connection, fingerprint, `/metrics` and AgentX trace loading against a real vLLM on a Mac (vLLM 0.33.0) | [section 6](#6-smoke-test-without-a-gpu), [section 8.3](#83-query-the-observation), [section 8.5](#85-per-agent-view-through-litellm), [Appendix B](#appendix-b-litellm-per-key-setup-and-install-details) |
+| Documented (code or help text) | AgentX scenario rules (AIPerf `inferencex_agentx_mvp.py`); `--max-context-length` (AIPerf help); `get_max_tokens` reduces `max_tokens` (vLLM code); histogram and client-abort behaviour (`stats.py`); `process_start_time_seconds` exposed on Linux only and not with several API processes (`cli/serve.py`, `prometheus.py`); unknown request fields ignored by vLLM (`protocol.py`) | [section 7.3](#73-agentx-stress-test), [section 7.5](#75-context-shorter-than-the-traces), [section 8.1](#81-tune-vllm-for-exact-interactivity), [section 8.5](#85-per-agent-view-through-litellm) |
+| Inferred, to check on first use | Chat template adds tokens beyond the trace lengths; `--max-num-seqs` for AgentX (sessions x parallel sub-agents); name and labels of the `http_requests_total` counter (the `err` column shows "—" otherwise); bias toward short sessions in a `BENCH_MAX_CONTEXT` replay; observation limits (window edges, undetected short restarts, series appearing mid-window); GPU count of a data-parallel deployment with one API server per rank (fingerprints carry the global DP: the deduced count would be too high); that a limited LiteLLM virtual key is enough for `/metrics/` | [section 4.2](#42-check-the-vllm-in-place), [section 7.5](#75-context-shorter-than-the-traces), [section 8.1](#81-tune-vllm-for-exact-interactivity) |
+| Not verified | That the AgentX Hugging Face repository stores one trace per JSON file in one folder (the download script counts the files); that LiteLLM forwards `min_tokens` / `ignore_eos`; Prometheus versions newer than 3.7.3 | [section 7.4](#74-agentx-without-internet-access), [section 7.7](#77-stress-test-through-litellm) |
+
+## Contents
+
+- [1. Choose a mode](#1-choose-a-mode)
+- [2. Quick start](#2-quick-start)
+- [3. How the pieces connect](#3-how-the-pieces-connect)
+- [4. Requirements and installation](#4-requirements-and-installation)
+  - [4.1 What must already be in place](#41-what-must-already-be-in-place)
+  - [4.2 Check the vLLM in place](#42-check-the-vllm-in-place)
+  - [4.3 Install the bench](#43-install-the-bench)
+- [5. Configure the client](#5-configure-the-client)
+  - [5.1 Activate the environment](#51-activate-the-environment)
+  - [5.2 Set the connection](#52-set-the-connection)
+  - [5.3 Copy the tokenizer](#53-copy-the-tokenizer)
+  - [5.4 Test the connection](#54-test-the-connection)
+- [6. Smoke test without a GPU](#6-smoke-test-without-a-gpu)
+- [7. Stress tests](#7-stress-tests)
+  - [7.1 Synthetic stress test](#71-synthetic-stress-test)
+  - [7.2 Reading the stress-test report](#72-reading-the-stress-test-report)
+  - [7.3 AgentX stress test](#73-agentx-stress-test)
+  - [7.4 AgentX without Internet access](#74-agentx-without-internet-access)
+  - [7.5 Context shorter than the traces](#75-context-shorter-than-the-traces)
+  - [7.6 Test-agents stress test](#76-test-agents-stress-test)
+  - [7.7 Stress test through LiteLLM](#77-stress-test-through-litellm)
+- [8. Observation (real use)](#8-observation-real-use)
+  - [8.1 Tune vLLM for exact interactivity](#81-tune-vllm-for-exact-interactivity)
+  - [8.3 Query the observation](#83-query-the-observation)
+  - [8.4 Per-period view](#84-per-period-view)
+  - [8.5 Per-agent view through LiteLLM](#85-per-agent-view-through-litellm)
+- [9. Measurement protocol](#9-measurement-protocol)
+- [10. Interface](#10-interface)
+- [11. Reference](#11-reference)
+  - [11.1 Outputs on disk](#111-outputs-on-disk)
+  - [11.2 Repository contents](#112-repository-contents)
+  - [11.3 Troubleshooting](#113-troubleshooting)
+- [Appendix A. Security notes](#appendix-a-security-notes)
+- [Appendix B. LiteLLM per-key setup and install details](#appendix-b-litellm-per-key-setup-and-install-details)
+- [Appendix C. Sources](#appendix-c-sources)
+- [Appendix D. Tests](#appendix-d-tests)
+- [Appendix E. Glossary](#appendix-e-glossary)
 
 ---
 
-## 1. Requis
+## 1. Choose a mode
 
-### 1.1 Ce qui doit déjà être en place
-
-| Requis | Détail | Vérification |
-|---|---|---|
-| **vLLM installé et le modèle servi** | API compatible OpenAI sur `http://<hôte>:<port>`. Le banc ne démarre pas vLLM. | `curl -s http://<hôte>:8000/v1/models` liste le modèle |
-| **`/metrics` de vLLM joignable** depuis la machine cliente | Actif par défaut ; il donne préemptions, cache, décodage spéculatif, occupation du cache KV. Il n'exige pas la clé d'API (§ 1.2). | `curl -s http://<hôte>:8000/metrics \| grep -c '^vllm:'` affiche un nombre supérieur à 0 |
-| **LiteLLM installé** (optionnel) | Seulement pour mesurer à travers la passerelle. Modèle déclaré en `hosted_vllm/<nom>` avec `api_base: http://<hôte>:8000/v1` et, si vLLM a une clé, `api_key` ([LiteLLM, vLLM](https://docs.litellm.ai/docs/providers/vllm) ; [configuration](https://docs.litellm.ai/docs/proxy/configs)). | `curl -s -H "Authorization: Bearer <clé>" http://<vm>:4000/v1/models` |
-| **Prometheus** (observation seulement) | Serveur à part qui collecte `/metrics` de vLLM (et de LiteLLM) et garde l'historique ; vLLM n'en fournit pas. Un seul binaire ([téléchargement](https://prometheus.io/download/)), ou l'image Docker `prom/prometheus`. Configuration fournie : `outils/prometheus.yml.exemple` (§ 6.2). | `curl -s http://<hôte>:9090/-/ready` |
-| **Python 3.11 à 3.13** sur la machine cliente | Exigé par AIPerf 0.12. | `python3 --version` |
-| **bash** | Testé avec bash 5 ; écrit pour bash 3.2 (macOS), vérifié seulement avec un bash 3.2 compilé sous Linux. | `bash --version` |
-| **Réseau** | La machine cliente atteint vLLM (et LiteLLM). Aucun accès Internet n'est nécessaire une fois le tokenizer copié dans `outils/tokenizer/` (§ 2.3). | — |
-
-La **machine cliente** est celle qui lance les mesures : le même poste que vLLM pour un essai local, ou
-une VM sur le même réseau privé que les serveurs GPU. Ne lance pas les clients sur les serveurs mesurés.
-
-### 1.2 Vérifier la configuration du vLLM en place
-
-Le banc ne lance jamais vLLM : il mesure celui qui tourne. Mais la façon dont ce vLLM a été lancé change le sens
-de certaines mesures. Avant chaque mode, vérifie ses options ; le test de connexion (§ 2.4) affiche le cache de
-préfixes, la version et le parallélisme du vLLM en place.
-
-En pratique :
-
-- **Observation** : rien à changer ; `--custom-histogram-buckets` rend seulement la part à la cible exacte
-  (sinon interpolée), à ajouter au prochain redémarrage prévu.
-- **AgentX, agents de test** : le vLLM de production convient en général (cache de préfixes activé, le défaut) ;
-  vérifie `--max-model-len` et `--max-num-seqs` ci-dessous.
-- **Synthétique** : seul mode qui demande un **redémarrage** dédié, avec `--no-enable-prefix-caching` ; sinon le
-  débit mesuré est gonflé par le cache. Hors d'un serveur de production en service, donc.
-
-Options qui comptent pour le banc :
-
-| Option de `vllm serve` | Synthétique | AgentX | Agents de test | Observation | Pourquoi |
+| Mode | Tool | Load | vLLM prefix cache | What it gives | Section |
 |---|---|---|---|---|---|
-| `--served-model-name <nom>` | conseillé | conseillé | conseillé | — | nom court à donner au banc (`MODELE`) |
-| `--no-enable-prefix-caching` | **requis** | **ne pas mettre** | **ne pas mettre** | selon ta production | AIPerf réutilise ses invites synthétiques : avec le cache, le débit serait gonflé. Les agents relisent leur contexte : le cache fait partie de ce qu'on mesure. |
-| `--max-model-len` | ≥ entrée + sortie + gabarit de conversation (ex. 2 048 + 256, plus une marge) | ≥ le plus long contexte des traces : jusqu'à ≈ 990 000 jetons d'entrée par requête (jeu complet), 256 000 (variante `256k`) ; sinon `CONTEXTE_MAX` (§ 4.2) | ≥ ≈ 135 000 × `--echelle`, plus la sortie | — | AIPerf ne tronque pas les traces AgentX ; les agents de test atteignent ≈ 135 000 jetons à l'échelle 1 (estimé avec le vocabulaire Qwen) |
-| `--max-num-seqs` | ≥ la plus haute concurrence | ≥ sessions × sous-agents en parallèle (INFÉRÉ ; garde une marge) | ≥ le plus haut palier × 3 (`revue_code` lance 3 sous-agents) | — | sinon les requêtes en trop attendent |
-| `--enable-prompt-tokens-details` | — | — | conseillé | — | chaque réponse indique les jetons lus en cache |
-| `--enable-auto-tool-choice --tool-call-parser <parseur>` | — | — | mode `autonome` seulement | — | appel d'outils choisi par le modèle |
-| `--custom-histogram-buckets '…'` | — | — | — | **conseillé** | bornes de l'histogramme du temps par jeton à tes cibles : interactivité exacte (§ 6.1) |
-| `--api-key <clé>` | optionnel | optionnel | optionnel | optionnel | à donner au banc (`CLE_API`) ; voir la mise en garde ci-dessous |
-| `--fingerprint-mode` | défaut (`full`) | défaut | défaut | défaut | le banc lit le parallélisme (TP, PP, DP, EP) dans l'empreinte des réponses ; en mode `hash`, il est masqué |
+| **Synthetic stress test** | `sweep.sh` (AIPerf) | fixed-length requests | **disabled** | conservative floor | [7.1](#71-synthetic-stress-test) |
+| **AgentX stress test** | `agentx.sh` (AIPerf, scenario `inferencex-agentx-mvp`) | replayed public coding-agent sessions | enabled | measurement comparable to InferenceX's AgentX results | [7.3](#73-agentx-stress-test) |
+| **Test-agents stress test** | `agents_test/` | three simulated agent profiles | enabled | agent load close to your usage | [7.6](#76-test-agents-stress-test) |
+| **Observation** | `observation/query.py` + Prometheus | your agents, in real use | as configured | "does it hold?", per window, period, agent | [8](#8-observation-real-use) |
 
-**`--api-key` ne suffit pas à protéger vLLM.** Elle ne s'applique qu'aux chemins `/v1`, `/v2`, `/inference`
-et `/cohere` ; les autres restent ouverts, dont `/metrics` et `/invocations`, qui donne la même inférence
-que `/v1` ([vLLM, `cli_args.py`](https://github.com/vllm-project/vllm/blob/7f855f605892656ebf7265642e5d22a34a6ae731/vllm/entrypoints/common/cli_args.py#L337-L347) ;
-[sécurité vLLM](https://docs.vllm.ai/en/latest/usage/security.html#api-key-authentication-limitations)).
-Ouvre le port de vLLM au seul client de test (pare-feu, réseau privé). Côté serveur, `DO_NOT_TRACK=1`
-coupe l'envoi de statistiques d'usage de vLLM ([`envs.py`](https://github.com/vllm-project/vllm/blob/7f855f605892656ebf7265642e5d22a34a6ae731/vllm/envs.py), [`usage_lib.py`](https://github.com/vllm-project/vllm/blob/7f855f605892656ebf7265642e5d22a34a6ae731/vllm/usage/usage_lib.py)).
+**Start with the synthetic stress test**: it needs no trace download and is the quickest way to validate your setup.
+Use observation instead if you already have agents running in production (it needs a Prometheus, [section 8.2](#82-install-and-start-prometheus-once)). Changing the prefix cache
+requires restarting vLLM (see [section 4.2](#42-check-the-vllm-in-place)).
 
-Changer le cache de préfixes impose de **redémarrer vLLM** entre la charge synthétique et les autres modes.
+[↑ Back to top](#top)
 
-### 1.3 Ce que le banc installe
+---
+
+## 2. Quick start
+
+A first synthetic measurement (about 15 commands, using a vLLM that is already running).
 
 ```bash
-git clone https://github.com/Shevehs/banc-gpu.git ~/banc && cd ~/banc
+git clone https://github.com/Shevehs/banc-gpu.git ~/banc-gpu && cd ~/banc-gpu
+python3 -m venv .venv-aiperf && source .venv-aiperf/bin/activate
+pip install aiperf==0.12.0 "openai>=1.40" httpx
+cp tools/target.env.example target.env       # set BENCH_URL, BENCH_MODEL, BENCH_API_KEY (and BENCH_METRICS: required if BENCH_URL is LiteLLM)
+source target.env
+./tools/download_tokenizer.sh <Hugging Face repository of your model>
+python tools/server_config.py --url "$BENCH_URL" --model "$BENCH_MODEL" --metrics "$BENCH_METRICS" > /dev/null
+./sweep.sh first-r1 "1 4 16"
+python -m report aiperf results --target 30             # GPUs deduced from the fingerprint; add --gpu N to force
+```
+
+For this run, vLLM must already serve the model with `--no-enable-prefix-caching`
+(see [section 4.2](#42-check-the-vllm-in-place)). The `server_config.py` line must print `[config]` lines
+([section 5.4](#54-test-the-connection)). Python 3.11 to 3.13 is required (an older Python: [uv](#43-install-the-bench), section 4.3).
+
+Unfamiliar terms: see [Appendix E](#appendix-e-glossary). No GPU at hand? Check the scripts first with the fake server ([section 6](#6-smoke-test-without-a-gpu)).
+
+Next steps: the other stress tests ([section 7](#7-stress-tests)), observation of your real agents
+([section 8](#8-observation-real-use)), or the local interface ([section 10](#10-interface)).
+
+[↑ Back to top](#top)
+
+---
+
+## 3. How the pieces connect
+
+```mermaid
+flowchart LR
+  subgraph client["Client machine (this repository)"]
+    env["target.env<br/>BENCH_URL · BENCH_MODEL<br/>BENCH_METRICS · BENCH_API_KEY"]
+    sweep["sweep.sh<br/>(AIPerf, synthetic load)"]
+    agentx["agentx.sh<br/>(AIPerf, AgentX scenario)"]
+    launcher["agents_test.launcher<br/>(3 simulated agents)"]
+    query["observation.query<br/>(generates no load)"]
+    ui["interface.server<br/>127.0.0.1:8765<br/>(starts the scripts and the query)"]
+    results[("results*/&lt;label&gt;/<br/>JSON, JSONL, server_config.json")]
+    report["python -m report<br/>aiperf | agents"]
+    tables[/"table*.csv + printed<br/>selected operating point"/]
+    windows[/"printed windows, periods, agents<br/>+ optional CSV (--output)"/]
+  end
+  prom[("Prometheus<br/>(scrapes every 15 s,<br/>keeps the history)")]
+  gw["LiteLLM gateway (optional)<br/>/v1 · /metrics/"]
+  vllm["vLLM server(s)<br/>/v1 · /metrics"]
+  yours["Your real agents / users"]
+
+  env -.-> sweep
+  env -.-> agentx
+  env -.-> launcher
+  ui -->|spawns| sweep
+  ui -->|spawns| agentx
+  ui -->|spawns| launcher
+  ui -->|runs| query
+  ui -->|runs| report
+
+  sweep -->|"inference requests<br/>to BENCH_URL"| vllm
+  agentx --> vllm
+  launcher --> vllm
+  sweep -.->|"via gateway if<br/>BENCH_URL is LiteLLM"| gw
+  agentx -.-> gw
+  launcher -.-> gw
+  gw -->|forwards| vllm
+  yours -->|real traffic| gw
+  yours -.->|or directly| vllm
+
+  sweep -. "/metrics (BENCH_METRICS)" .-> vllm
+  launcher -. "/metrics, no key" .-> vllm
+  prom -. "scrapes /metrics, no key<br/>(job vllm)" .-> vllm
+  prom -. "scrapes /metrics/, key<br/>(job litellm, per-agent view)" .-> gw
+  query -->|"PromQL<br/>(HTTP API)"| prom
+  query --> windows
+
+  sweep --> results
+  agentx --> results
+  launcher --> results
+  results --> report --> tables
+```
+
+Solid arrows are traffic and file writes, dashed arrows are optional paths or metric reads. Observation sends
+no load and starts nothing: Prometheus (a separate server) scrapes vLLM's `/metrics` (and LiteLLM's) and keeps the
+history, and `observation.query` only queries it. When the target is the LiteLLM gateway, `BENCH_METRICS` must list
+vLLM's `/metrics` URLs, because the gateway does not expose them (a launch warning says so if it points elsewhere).
+
+[↑ Back to top](#top)
+
+---
+
+## 4. Requirements and installation
+
+### 4.1 What must already be in place
+
+| Requirement | Detail | Check |
+|---|---|---|
+| **vLLM installed and the model served** | OpenAI-compatible API on `http://<host>:<port>`. The bench does not start vLLM. | `curl -s http://<host>:8000/v1/models` lists the model |
+| **vLLM's `/metrics` reachable** from the client machine | Enabled by default; it provides preemptions, cache, speculative decoding, KV cache occupancy. It does **not** require the API key (see [Appendix A](#appendix-a-security-notes)). | `curl -s http://<host>:8000/metrics \| grep -c '^vllm:'` prints a number greater than 0 |
+| **LiteLLM installed** (optional) | Only to measure through the gateway. Model declared as `hosted_vllm/<name>` with `api_base: http://<host>:8000/v1` and, if vLLM has a key, `api_key` ([LiteLLM, vLLM](https://docs.litellm.ai/docs/providers/vllm); [configuration](https://docs.litellm.ai/docs/proxy/configs)). | `curl -s -H "Authorization: Bearer <key>" http://<vm>:4000/v1/models` |
+| **Prometheus** (observation only) | A separate server that scrapes vLLM's `/metrics` (and LiteLLM's) and keeps the history; vLLM does not provide one. A single binary ([download](https://prometheus.io/download/)), or the `prom/prometheus` Docker image. Configuration provided: `tools/prometheus.yml.example` ([section 8.2](#82-install-and-start-prometheus-once)). | `curl -s http://<host>:9090/-/ready` |
+| **Python 3.11 to 3.13** on the client machine | Required by AIPerf 0.12. | `python3 --version` |
+| **bash** | Tested with bash 5; written for bash 3.2 (macOS), verified only with a bash 3.2 built on Linux. | `bash --version` |
+| **Network** | The client machine reaches vLLM (and LiteLLM). No Internet access is needed once the tokenizer is copied into `tools/tokenizer/` ([section 5.3](#53-copy-the-tokenizer)). | — |
+
+The **client machine** is the one that runs the measurements: the same machine as vLLM for a local trial, or
+a VM on the same private network as the GPU servers. Do not run the clients on the servers being measured.
+
+### 4.2 Check the vLLM in place
+
+The bench never starts vLLM: it measures the one that runs. But the way that vLLM was launched changes the meaning of
+some measurements. Before each mode, check its options; the connection test ([section 5.4](#54-test-the-connection))
+prints the prefix cache, the version and the parallelism of the vLLM in place.
+
+In practice:
+
+- **Observation**: nothing to change; `--custom-histogram-buckets` only makes the share at the exact target available
+  (otherwise interpolated), to be added at the next planned restart.
+- **AgentX, test agents**: the production vLLM is usually fine (prefix cache enabled, the default); check
+  `--max-model-len` and `--max-num-seqs` below.
+- **Synthetic**: the only mode that asks for a dedicated **restart**, with `--no-enable-prefix-caching`; otherwise
+  the measured throughput is inflated by the cache. So not on a production server in service.
+
+**Options that matter to the bench**
+
+- `--served-model-name <name>` (recommended): the short name you give the bench as `BENCH_MODEL`.
+- **Prefix caching**: pass `--no-enable-prefix-caching` for the **synthetic** stress test (AIPerf reuses its
+  synthetic prompts, so the cache would inflate throughput); do **not** pass it for AgentX and the test agents
+  (agents re-read their context: the cache is part of what is measured); for observation, keep your production setting.
+  Changing it requires **restarting vLLM** between the synthetic load and the other modes.
+- `--max-model-len`: large enough for the mode (table below). The bench does not truncate.
+- `--max-num-seqs`: at least the highest concurrency, otherwise the extra requests wait. AgentX: at least sessions x parallel sub-agents (inferred; keep a margin). Test agents: at least the highest level x 3 (`code_review` launches 3 sub-agents).
+
+| Mode | `--max-model-len` at least | Why |
+|---|---|---|
+| Synthetic | input + output + chat template (e.g. 2,048 + 256, plus a margin) | requests have a fixed length |
+| AgentX | the longest trace context: up to about 990,000 input tokens (full set), 256,000 (`256k` variant); otherwise set `BENCH_MAX_CONTEXT` ([section 7.5](#75-context-shorter-than-the-traces)) | AIPerf does not truncate AgentX traces |
+| Test agents | about 135,000 x `--scale`, plus the output | contexts reach about 135,000 tokens at scale 1 (estimated with the Qwen vocabulary) |
+| Observation | not applicable | the bench sends nothing |
+
+**Optional options**
+
+| `vllm serve` option | Used by | Why |
+|---|---|---|
+| `--enable-prompt-tokens-details` | test agents (recommended) | each response reports the tokens read from cache |
+| `--enable-auto-tool-choice --tool-call-parser <parser>` | test agents, `autonomous` mode only | tool calls chosen by the model |
+| `--custom-histogram-buckets '…'` | observation (recommended at the next restart) | histogram bounds at your targets, for exact interactivity ([section 8.1](#81-tune-vllm-for-exact-interactivity)) |
+| `--api-key <key>` | any mode | key to give the bench (`BENCH_API_KEY`); it does not protect everything, see [Appendix A](#appendix-a-security-notes) |
+| `--fingerprint-mode` | any mode (keep the default `full`) | the bench reads the parallelism (TP, PP, DP, EP) from the responses' fingerprint; in `hash` mode it is hidden |
+
+### 4.3 Install the bench
+
+On the client machine (the commands of the [quick start](#2-quick-start)):
+
+```bash
+git clone https://github.com/Shevehs/banc-gpu.git ~/banc-gpu && cd ~/banc-gpu
 python3 -m venv .venv-aiperf && source .venv-aiperf/bin/activate
 pip install aiperf==0.12.0 "openai>=1.40" httpx
 aiperf --version && python -c "import openai, aiohttp; print('ok')"
 ```
 
-AIPerf installe aussi `aiohttp` (interface) et la commande `hf` (tokenizer). Sans accès Internet,
-`pip` doit pointer vers un miroir de paquets.
+AIPerf also installs `aiohttp` (interface) and the `hf` command (tokenizer). Without Internet access,
+`pip` must point to a package mirror.
 
-**Python trop ancien** (ex. 3.9 livré avec macOS), **à la place** des lignes `python3 -m venv` et `pip install`
-ci-dessus (si `.venv-aiperf` existe déjà, supprime-le d'abord) : sans toucher au Python du système,
-[uv](https://docs.astral.sh/uv/guides/install-python/) télécharge un Python 3.12 pour cet environnement seulement :
+**Python too old** (e.g. 3.9, shipped with macOS), **instead of** the `python3 -m venv` and `pip install` lines
+above (if `.venv-aiperf` already exists, delete it first): without touching the system Python,
+[uv](https://docs.astral.sh/uv/guides/install-python/) downloads a Python 3.12 for this environment only:
 
 ```bash
-python3 -m pip install --user uv            # ou l'installeur de https://docs.astral.sh/uv/getting-started/installation/
-uv venv --seed --python 3.12 .venv-aiperf   # --seed : met pip dans l'environnement
+python3 -m pip install --user uv            # or the installer from https://docs.astral.sh/uv/getting-started/installation/
+uv venv --seed --python 3.12 .venv-aiperf   # --seed: puts pip in the environment
 source .venv-aiperf/bin/activate && python --version
 pip install aiperf==0.12.0 "openai>=1.40" httpx
 ```
 
----
-
-## 2. Préparer la machine cliente (une fois)
-
-### 2.1 Activer l'environnement (dans chaque nouveau terminal)
-
-```bash
-cd ~/banc && source .venv-aiperf/bin/activate
-```
-
-### 2.2 Renseigner la connexion
-
-```bash
-cp outils/cible.env.exemple cible.env     # cible.env est ignoré par git : il contient la clé
-```
-
-Remplis `cible.env` (garde les `export`), puis charge-le dans chaque nouveau terminal : `source cible.env`.
-
-Pourquoi `METRIQUES` doit viser vLLM : les stress tests y lisent l'état du moteur, que seul vLLM connaît.
-Si ce sont les métriques de LiteLLM (ou rien), sont perdus : les **préemptions** (un palier où vLLM manque de
-mémoire peut alors être retenu comme sain), le cache KV maximal, la file d'attente du moteur, le cache de
-préfixes et l'acceptation du décodage spéculatif ; les colonnes restent vides. Restent valables le débit,
-l'interactivité, le TTFT et les erreurs, mesurés côté client. Au lancement de chaque essai, une ligne
-`[config] ATTENTION : … n'est pas le /metrics de vLLM` signale l'erreur (LiteLLM répond « HTTP 401 : clé
-demandée », ou sans aucune métrique `vllm:`).
-
-| Variable | Sens | Exemple |
-|---|---|---|
-| `URL` | **cible** des requêtes : vLLM directement (mesure des GPU) ou LiteLLM (mesure à travers la passerelle) | `http://10.0.0.5:8000` |
-| `MODELE` | nom servi par vLLM (`--served-model-name`) ou alias LiteLLM | `banc` |
-| `METRIQUES` | adresse `/metrics` **de vLLM** (jamais de LiteLLM ni de Prometheus), une par réplique, séparées par des espaces. Vide = `URL/metrics`, qui ne convient que si `URL` vise vLLM directement. Si `URL` vise LiteLLM, donne l'adresse de vLLM | `http://10.0.0.5:8000/metrics` |
-| `CLE_API` | clé de la cible (`--api-key` de vLLM, ou clé LiteLLM). Envoyée à la cible seulement, jamais journalisée | — |
-| `TOKENIZER` | vide = `outils/tokenizer/` (§ 2.3) ; sinon chemin absolu d'un dossier qui contient `tokenizer.json` (sans copie), ou nom Hugging Face (AIPerf le télécharge ; les agents de test, qui ne lisent qu'un dossier local, estiment alors les tailles) | vide |
-
-**En entreprise seulement** (sur un poste local, rien à faire) :
-- **Proxy** : si `HTTP_PROXY` ou `HTTPS_PROXY` sont définis, le banc les ignore et joint les serveurs
-  directement, comme AIPerf : sa clé d'API ne sort pas du réseau privé par le proxy, et la mesure n'inclut pas
-  la latence du proxy. Si la machine cliente ne peut joindre les serveurs **que** par un proxy (rare sur un
-  réseau privé), le banc ne fonctionnera pas tel quel.
-- **Certificat interne** : si la cible est en `https://` avec un certificat signé par l'autorité de
-  certification de l'entreprise, indique le fichier de cette autorité : `export SSL_CERT_FILE=/chemin/ac.pem`
-  (lu par AIPerf, les scripts et les agents de test).
-
-Ne mets pas `HF_HUB_OFFLINE=1` dans ce fichier : avec un tokenizer local, AIPerf 0.12 échoue quand cette
-variable est active (`balayage.sh` la retire de toute façon pour AIPerf).
-
-### 2.3 Copier le tokenizer du modèle mesuré
-
-AIPerf en a besoin pour fabriquer des invites de la bonne longueur ; les agents s'en servent pour ajuster
-leurs tailles. Sur une machine avec accès à Hugging Face :
-
-```bash
-./outils/telecharger_tokenizer.sh <dépôt Hugging Face du modèle>   # dépose les fichiers dans outils/tokenizer/
-ls outils/tokenizer/tokenizer.json
-```
-
-Sans accès à Hugging Face, copie `tokenizer.json` et `tokenizer_config.json` depuis le dossier des poids
-dans `outils/tokenizer/`. **Sans copie** : indique dans `cible.env` le dossier qui contient déjà `tokenizer.json`,
-par exemple celui que vLLM a téléchargé :
-`TOKENIZER=$HOME/.cache/huggingface/hub/models--<organisation>--<modèle>/snapshots/<hash>` (chemin absolu ; le
-dossier, pas le fichier ; celui du modèle réellement servi). Vérifie la licence du modèle avant de versionner ces fichiers.
-
-### 2.4 Tester la connexion
-
-```bash
-curl -s -H "Authorization: Bearer $CLE_API" "$URL/v1/models"
-python outils/config_serveur.py --url "$URL" --modele "$MODELE" --metriques "$METRIQUES" > /dev/null
-```
-
-**Tu dois voir** le modèle, puis des lignes `[config]` :
-
-```
-[config] empreinte de la cible : vllm-<version>-tp8-ep-<hash> -> TP 8, PP 1, DP 1, EP oui
-[config] GPU déduits : 8 (TP 8 × PP 1 × DP 1 × 1 serveur(s) vLLM)
-[config] http://10.0.0.5:8000/metrics : vLLM <version> ; cache de préfixes False ; jetons spéculatifs (métriques) 3 ; /server_info absent ou non lu (VLLM_SERVER_DEV_MODE non activé ?)
-```
-
-(exemple pour un serveur TP 8 avec parallélisme d'experts et 3 jetons spéculatifs ; « jetons spéculatifs 0 »
-= pas de décodage spéculatif).
-
-Contrôle que le **cache de préfixes** et le **parallélisme** sont ceux de la mesure que tu vas faire.
-- **Empreinte absente, « pas de réponse »** : nom du modèle, clé ou cible à corriger avant de continuer.
-- **Empreinte absente sans autre message** : version de vLLM qui ne la produit pas, `--fingerprint-mode none`,
-  ou passerelle qui ne la transmet pas ; vise vLLM directement, ou note la commande de lancement avec tes résultats.
-- **« TP 1, PP 1, DP 1, EP non (ou masqué…) »** : vrai pour un serveur sans parallélisme, mais aussi ce
-  qu'affiche un serveur lancé en `--fingerprint-mode hash` : vérifie la commande de lancement.
+[↑ Back to top](#top)
 
 ---
 
-## 3. Stress test synthétique
+## 5. Configure the client
 
-vLLM lancé **avec** `--no-enable-prefix-caching` (§ 1.2).
+### 5.1 Activate the environment
 
-### 3.1 Balayer
+In each new terminal:
 
 ```bash
-./balayage.sh essai-r1 "1 2 4 8 16 32 64"
+cd ~/banc-gpu && source .venv-aiperf/bin/activate
 ```
 
-- Une **étiquette** par essai (`essai-r1`) ; le suffixe `-r1`, `-r2`… marque les répétitions d'une même
-  configuration, que le dépouillement regroupe. Une étiquette déjà utilisée est refusée (`ECRASER=1` la remplace).
-- Une liste de **concurrences** : un palier par valeur.
-- Réglages par variables, devant la commande :
+### 5.2 Set the connection
 
-| Variable | Défaut | Sens |
+```bash
+cp tools/target.env.example target.env     # target.env is ignored by git: it contains the key
+```
+
+Fill in `target.env` (keep the `export`s), then load it in each new terminal: `source target.env`.
+
+**Why `BENCH_METRICS` must point to vLLM**: the stress tests read there the state of the engine, which only vLLM knows.
+If it holds LiteLLM's metrics (or nothing), these are lost: **preemptions** (a level where vLLM runs out of memory
+can then be kept as healthy), maximum KV cache, the engine's queue, the prefix cache and speculative-decoding
+acceptance; the columns stay empty. Throughput, interactivity, TTFT and errors, measured at the client, remain valid.
+At the start of each run, a `[config] WARNING: … is not vLLM's /metrics` line flags the mistake (LiteLLM answers "HTTP 401:
+key required", or there is no `vllm:` metric at all).
+
+| Variable | Meaning | Example |
 |---|---|---|
-| `ISL` / `OSL` | 2048 / 256 | jetons d'entrée / de sortie par requête (sortie imposée : `min_tokens` + `ignore_eos`) |
-| `DUREE` | vide | secondes par palier ; vide = 8 × concurrence requêtes (au moins 16) |
-| `RACINE` | `resultats` | dossier des résultats |
-| `TEMPERATURE` | 0.7 | fixée pour que le décodage spéculatif soit comparable d'un essai à l'autre |
-| `EXTRA` | vide | options AIPerf en plus, ex. `--use-server-token-count` |
+| `BENCH_URL` | **target** of the requests: vLLM directly (GPU measurement) or LiteLLM (measurement through the gateway) | `http://10.0.0.5:8000` |
+| `BENCH_MODEL` | name served by vLLM (`--served-model-name`) or LiteLLM alias | `bench` |
+| `BENCH_METRICS` | `/metrics` address **of vLLM** (never LiteLLM's or Prometheus'), one per replica, separated by spaces. Empty = `BENCH_URL/metrics`, which only suits a `BENCH_URL` that points to vLLM directly. If `BENCH_URL` points to LiteLLM, give vLLM's address | `http://10.0.0.5:8000/metrics` |
+| `BENCH_API_KEY` | the target's key (vLLM's `--api-key`, or a LiteLLM key). Sent to the target only; it is not written to the bench's logs, but see [Appendix A](#appendix-a-security-notes) (visible in `ps` while AIPerf runs) | — |
+| `BENCH_TOKENIZER` | empty = `tools/tokenizer/` ([section 5.3](#53-copy-the-tokenizer)); otherwise the absolute path of a folder that holds `tokenizer.json` (no copy), or a Hugging Face name (AIPerf downloads it; the test agents, which only read a local folder, then estimate the sizes) | empty |
 
-Exemple pour une mesure de référence : `ISL=32768 OSL=512 DUREE=900 ./balayage.sh conf-a-r1 "48 52 56 60 64"`.
+Settings are read from the `BENCH_*` variables.
 
-**Tu dois voir** une ligne par palier avec sa durée, puis `Terminé`. Des requêtes en erreur n'arrêtent pas
-AIPerf : vérifie la colonne `err` au dépouillement.
+**In a company only** (on a local workstation, nothing to do):
 
-### 3.2 Dépouiller
+- **Proxy**: if `HTTP_PROXY` or `HTTPS_PROXY` are set, the bench ignores them and reaches the servers directly, like
+  AIPerf: its API key does not leave the private network through the proxy, and the measurement does not include the
+  proxy's latency. If the client machine can reach the servers **only** through a proxy (rare on a private network),
+  the bench will not work as is.
+- **Internal certificate**: if the target is `https://` with a certificate signed by the company's certificate
+  authority, give the file of that authority: `export SSL_CERT_FILE=/path/ca.pem` (read by AIPerf, the scripts and the
+  test agents).
+
+Do not put `HF_HUB_OFFLINE=1` in this file: with a local tokenizer, AIPerf 0.12 fails when this
+variable is set (`sweep.sh` removes it for AIPerf anyway).
+
+### 5.3 Copy the tokenizer
+
+AIPerf needs the tokenizer of the measured model to build prompts of the right length; the agents use it to adjust
+their sizes. On a machine with Hugging Face access:
 
 ```bash
-python depouiller.py resultats --cible 30
+./tools/download_tokenizer.sh <model's Hugging Face repository>   # puts the files in tools/tokenizer/
+ls tools/tokenizer/tokenizer.json
 ```
 
-- `--cible` : interactivité visée, en jetons/s par requête.
-- `--gpu` : nombre de GPU derrière la cible (toutes répliques comprises). **Facultatif** : sans lui, le
-  dépouillement le déduit du `config_serveur.json` de chaque essai (TP × PP × DP lus dans l'empreinte, × nombre
-  de serveurs vLLM reconnus dans `METRIQUES`) et l'affiche (`GPU : <essai> : 8 (TP 8 × PP 1 × DP 1 × 1 serveur(s)
-  vLLM)`) ; un ATTENTION signale des répétitions d'une même configuration aux nombres différents. **Donne-le**
-  si l'empreinte manque (le script le demande, raison à l'appui), si elle n'a aucun degré de parallélisme alors
-  que le serveur a plusieurs GPU (`--fingerprint-mode hash` les masque ; un ATTENTION le rappelle ; sur un Mac,
-  cet ATTENTION est attendu), si des répliques diffèrent, avec le parallélisme de contexte (PCP, absent de
-  l'empreinte ; lu seulement si `/server_info` existe), ou avec un DP réparti en un serveur d'API par rang
-  (chaque empreinte porte le DP global : le compte serait trop haut ; INFÉRÉ). Donné, il prévaut ; s'il
-  contredit l'empreinte, un ATTENTION le signale.
-- `--exiger-metriques` : refuse un palier sans métriques du serveur.
-- `--ttft-max <ms>` : refuse un palier dont le TTFT P95 dépasse ce seuil.
+Without Hugging Face access, copy `tokenizer.json` and `tokenizer_config.json` from the weights folder
+into `tools/tokenizer/`. **Without a copy**: set in `target.env` the folder that already holds `tokenizer.json`, for
+example the one vLLM downloaded:
+`BENCH_TOKENIZER=$HOME/.cache/huggingface/hub/models--<organization>--<model>/snapshots/<hash>` (absolute path; the
+folder, not the file; the one of the model actually served). Check the model's license before versioning these files.
 
-| Colonne | Sens |
+### 5.4 Test the connection
+
+```bash
+curl -s -H "Authorization: Bearer $BENCH_API_KEY" "$BENCH_URL/v1/models"
+python tools/server_config.py --url "$BENCH_URL" --model "$BENCH_MODEL" --metrics "$BENCH_METRICS" > /dev/null
+```
+
+**You should see** the model, then `[config]` lines. The exact wording is set by `tools/server_config.py`; the content is
+the target's fingerprint (vLLM version, decoded TP / PP / DP / EP), the number of GPUs deduced from it, then for each
+`/metrics` URL the vLLM version, whether the prefix cache is on, and the number of speculative tokens read from the metrics (0 =
+no speculative decoding). Example for a TP 8 server with expert parallelism and 3 speculative tokens:
+
+```
+[config] target fingerprint: vllm-<version>-tp8-ep-<hash> -> TP 8, PP 1, DP 1, EP yes
+[config] GPUs deduced: 8 (TP 8 × PP 1 × DP 1 × 1 vLLM server(s))
+[config] http://10.0.0.5:8000/metrics : vLLM <version>; prefix cache False; speculative tokens (metrics) 3; /server_info absent or unreadable (VLLM_SERVER_DEV_MODE not enabled?)
+```
+
+Check that the **prefix cache** and the **parallelism** are those of the measurement you are about to make. The GPU
+count is the TP x PP x DP of the fingerprint, times the number of vLLM servers recognised in `BENCH_METRICS`
+(all assumed identical to the one that answered); the reports reuse it when `--gpu` is not given ([section 7.2](#72-reading-the-stress-test-report)).
+
+- **`[config] WARNING: … is not vLLM's /metrics`**: `BENCH_METRICS` points to LiteLLM (HTTP 401, key required) or to
+  something that exposes no `vllm:` metric: put vLLM's `/metrics` address there ([section 5.2](#52-set-the-connection)).
+
+- **No fingerprint, and the output says the server did not respond**: fix the model name, key or target before going on.
+- **No fingerprint and no other message**: the vLLM version does not produce it, `--fingerprint-mode none` is set,
+  or a gateway drops the field; target vLLM directly, or note the launch command with your results.
+- **"TP 1, PP 1, DP 1, EP no (or hidden…)"**: true for a server without parallelism, but also what a
+  server launched with `--fingerprint-mode hash` shows: check the launch command.
+
+[↑ Back to top](#top)
+
+---
+
+## 6. Smoke test without a GPU
+
+A fake OpenAI-compatible server lets you test the scripts without a model (the figures measure nothing).
+It also imitates vLLM's histograms and gauges (including `vllm:num_requests_running`) and, on `/litellm/metrics/`,
+LiteLLM's per-key and per-`metadata_agent` metrics. For testing, `GET /admin?rate=<x>` changes its simulated error
+rate while it runs. The observation is checked with a Prometheus that scrapes the fake server
+(`tools/prometheus-fake.yml`: scrape every 5 s, jobs `vllm` and `litellm` on port 8001; the fake server does not
+expose `process_start_time_seconds`):
+
+```bash
+python tools/fake_server.py --port 8001 --token-delay 0.02 \
+  --itl-bounds '[0.01, 0.0133, 0.02, 0.0333, 0.05, 0.1]' &      # stop it afterwards: kill %1
+python -m agents_test.launcher --url http://127.0.0.1:8001 --levels "1 2" --duration 20 \
+  --warmup 2 --scale 0.05 --latency-factor 0.02 --label trial --output /tmp/trial
+python -m report agents /tmp/trial --target 30          # GPUs deduced from the fake server's fingerprint: 8
+# observation: Prometheus scrapes the fake server, a load runs for 5 min, then the query
+printf key > tools/litellm.key                           # ignored by git; any key will do
+prometheus --config.file=tools/prometheus-fake.yml --storage.tsdb.path=/tmp/prom-data &   # stop it afterwards
+python -m agents_test.launcher --url http://127.0.0.1:8001 --levels "2" --duration 300 --warmup 2 \
+  --scale 0.05 --latency-factor 0.05 --label load --output /tmp/load --label-agents
+python -m observation.query --prometheus http://127.0.0.1:9090 --since 5m --window 1m --scrape 5s \
+  --target 30 --gpu 8            # 8: as in the fake server's fingerprint
+python -m observation.query --prometheus http://127.0.0.1:9090 --litellm 'job="litellm"' \
+  --since 5m --window 1m --scrape 5s --target 30 --gpu 8 --view agents
+```
+
+[↑ Back to top](#top)
+
+---
+
+## 7. Stress tests
+
+The bench generates the load, level by level, until the installation breaks. The prefix-cache setting
+required by each test is in [section 4.2](#42-check-the-vllm-in-place). A **label** names each run; the suffix `-r1`, `-r2`…
+marks repetitions of the same configuration, which the report groups together.
+
+### 7.1 Synthetic stress test
+
+vLLM launched **with** `--no-enable-prefix-caching`.
+
+```bash
+./sweep.sh trial-r1 "1 2 4 8 16 32 64"
+```
+
+- One **label** per run (`trial-r1`). A label already used is refused (`BENCH_OVERWRITE=1` replaces it).
+- A list of **concurrencies**: one level per value.
+- Settings by variables, in front of the command:
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `BENCH_ISL` / `BENCH_OSL` | 2048 / 256 | input / output tokens per request (output enforced: `min_tokens` + `ignore_eos`) |
+| `BENCH_DURATION` | empty | seconds per level; empty = 8 x concurrency requests (at least 16; `BENCH_REQUESTS_PER_CONCURRENCY` replaces the 8) |
+| `BENCH_ROOT_DIR` | `results` | results folder |
+| `BENCH_TEMPERATURE` | 0.7 | fixed so that speculative decoding is comparable from one run to the next |
+| `BENCH_EXTRA` | empty | additional AIPerf options, e.g. `--use-server-token-count` |
+
+Example for a reference measurement: `BENCH_ISL=32768 BENCH_OSL=512 BENCH_DURATION=900 ./sweep.sh conf-a-r1 "48 52 56 60 64"`.
+
+**You should see** one line per level with its duration, then a completion message. Failed requests do not stop
+AIPerf: check the `err` column in the report ([section 7.2](#72-reading-the-stress-test-report)).
+
+### 7.2 Reading the stress-test report
+
+The same report reads the synthetic and the AgentX results:
+
+```bash
+python -m report aiperf results --target 30
+```
+
+- `--target`: target interactivity, in tokens/s per request.
+- `--gpu`: number of GPUs behind the target (all replicas included). **Optional**: without it, the report deduces it
+  from the `server_config.json` of each run (TP x PP x DP read from the fingerprint, times the number of vLLM servers
+  recognised in `BENCH_METRICS`) and prints it (`GPUs: <run>: 8 (TP 8 × PP 1 × DP 1 × 1 vLLM server(s)), deduced from the
+  fingerprint`); a WARNING flags repetitions of one configuration with different counts. **Give it** if the
+  fingerprint is missing (the report then stops with an error and the reason), if it carries no parallelism degree
+  while the server has several GPUs (`--fingerprint-mode hash` hides them; a WARNING says so; on a Mac this warning is
+  expected), if the replicas differ, with prefill context parallelism (PCP, absent from the fingerprint; read only
+  when `/server_info` exists), or with a data-parallel deployment split into one API server per rank (each
+  fingerprint carries the global DP: the count would be too high; inferred). When given, it prevails; if it
+  contradicts the fingerprint, a WARNING says so.
+- `--require-metrics`: rejects a level without server metrics.
+- `--ttft-max <ms>`: rejects a level whose P95 TTFT exceeds this threshold (`aiperf` report only; `observation.query` has its own `--ttft-max`, [section 8.3](#83-query-the-observation)).
+
+| Column | Meaning |
 |---|---|
-| débit/GPU | jetons de sortie par seconde, toutes requêtes confondues, ÷ nombre de GPU |
-| inter P10 | interactivité au 10e centile : 90 % des requêtes ont écrit au moins à cette vitesse |
-| TTFT P95 ms | attente avant le premier jeton, 95e centile |
-| préempt | requêtes suspendues faute de mémoire ; doit être 0 |
-| err | requêtes en erreur ; doit être 0 |
-| cache | part des jetons d'entrée trouvés dans le cache de préfixes ; « — » ou ≈ 0 ici (cache désactivé) |
-| MTP | taux d'acceptation du décodage spéculatif ; « — » sans décodage spéculatif |
-| sortie moy | jetons de sortie moyens par requête ; doit valoir `OSL` |
+| throughput/GPU | output tokens per second, all requests combined, ÷ number of GPUs |
+| inter P10 | interactivity at the 10th percentile: 90% of requests wrote at least at this speed |
+| TTFT P95 ms | wait before the first token, 95th percentile |
+| preempt | requests suspended for lack of memory; must be 0 |
+| err | failed requests; must be 0 |
+| cache | share of input tokens found in the prefix cache; "—" or about 0 for the synthetic load (cache disabled) |
+| MTP | speculative-decoding acceptance rate; "—" without speculative decoding |
+| mean output | average output tokens per request; must equal `BENCH_OSL` (varies from trace to trace for AgentX) |
 
-Puis le **point retenu** : le palier au débit le plus élevé qui respecte la cible, sans erreur ni préemption
-(médiane des répétitions), et une **estimation interpolée exactement à la cible**. Lis les avertissements :
-« plus haut palier testé » veut dire qu'il faut ajouter des paliers au-dessus. Tableau complet :
-`resultats/tableau.csv`.
+Then the **selected point**: the level with the highest throughput that meets the target, with no errors or preemptions
+(median of the repetitions), and an **estimate interpolated exactly at the target**. Read the warnings:
+"highest level tested" means you need to add levels above it. Full table:
+`results/table.csv` (`results-agentx/table.csv` for AgentX).
 
----
+### 7.3 AgentX stress test
 
-## 4. Stress test AgentX
+Replays the coding-agent sessions (Claude Code, sub-agents included) published by SemiAnalysis, with AIPerf's
+locked scenario `inferencex-agentx-mvp`, the one behind InferenceX's AgentX measurements
+([method](https://inferencex.semianalysis.com/blog/agentic-benchmark-agent-benchmark-guide)). The result
+is therefore comparable to the published AgentX exports (same traces, same scenario; different engine and hardware).
+Contexts are long (median about 142,000 input tokens, according to
+[InferenceX](https://inferencex.semianalysis.com/blog/agentic-benchmark-agent-benchmark-guide)) and are not truncated: the full measurement is
+done on GPU servers: on a small model (Mac, 32,768 tokens), no trace fits ([section 7.5](#75-context-shorter-than-the-traces)).
 
-Rejoue les sessions d'agents de code (Claude Code, sous-agents compris) publiées par SemiAnalysis, avec le
-scénario verrouillé d'AIPerf `inferencex-agentx-mvp`, celui des mesures AgentX d'InferenceX
-([méthode](https://inferencex.semianalysis.com/blog/agentic-benchmark-agent-benchmark-guide)). Le résultat
-se compare donc aux exports AgentX publiés (mêmes traces, même scénario ; moteur et matériel différents).
-Les contextes sont longs (médiane ≈ 142 000 jetons d'entrée, d'après
-[InferenceX](https://inferencex.semianalysis.com/blog/agentic-benchmark-agent-benchmark-guide)) et ne sont pas tronqués : la mesure complète se
-fait sur serveurs GPU : sur un petit modèle (Mac, 32 768 jetons), aucune trace ne tient (§ 4.2).
+What the scenario enforces (documented in the AIPerf 0.12.0 code, `aiperf/common/scenario/inferencex_agentx_mvp.py`,
+and in AIPerf's message at run time): streaming; output at the trace's length (`ignore_eos`, added
+automatically); **at least 900 s per level** (1,800 by default); no truncation of inputs; delays between
+turns replayed; first-turn prefix scrambled, so that a run does not benefit from the previous run's cache; trace set
+**pinned** (`semianalysisai/cc-traces-weka-062126`) so that the run is marked valid.
 
-Ce que le scénario impose (DOCUMENTÉ, code d'AIPerf 0.12.0, `aiperf/common/scenario/inferencex_agentx_mvp.py`,
-et message d'AIPerf à l'exécution) : streaming ; sortie à la longueur de la trace (`ignore_eos`, ajouté
-d'office) ; **au moins 900 s par palier** (1 800 par défaut) ; aucune troncature des entrées ; délais entre
-tours rejoués ; préfixe du premier tour brouillé, pour qu'un essai ne profite pas du cache du précédent ; jeu de
-traces **épinglé** (`semianalysisai/cc-traces-weka-062126`) pour que l'essai soit marqué valide.
+The traces are published on Hugging Face: by default, `agentx.sh` **downloads them itself** on the first run
+(about 1.85 GB, Internet access required), and the run is marked valid. Without Internet access, see [section 7.4](#74-agentx-without-internet-access).
 
-Les traces sont publiées sur Hugging Face : par défaut, `agentx.sh` les **télécharge lui-même** au premier essai
-(≈ 1,85 Go, accès Internet requis), et l'essai est marqué valide. Sans Internet, voir § 4.1.
-
-vLLM lancé avec le cache de préfixes **activé** (les traces portent les empreintes des blocs de cache, pour
-reproduire leur réutilisation). Puis :
+vLLM launched with the prefix cache **enabled** (the traces carry the cache block fingerprints, to
+reproduce their reuse). Then:
 
 ```bash
-DUREE=1800 ./agentx.sh agentx-r1 "1 2 4 8"
-python depouiller.py resultats-agentx --cible 30
+BENCH_DURATION=1800 ./agentx.sh agentx-r1 "1 2 4 8"
+python -m report aiperf results-agentx --target 30
 ```
 
-| Variable | Défaut | Sens |
+| Variable | Default | Meaning |
 |---|---|---|
-| `DUREE` | 1800 | secondes par palier ; au moins 900 |
-| `AGENTX_DOSSIER` | vide | dossier local des traces (sans accès Internet, § 4.1) ; l'essai est alors marqué `submission_valid=false` (AIPerf ne peut pas vérifier le jeu) |
-| `AGENTX_VARIANTE` | vide | vide : jeu complet `semianalysisai/cc-traces-weka-062126` ; `256k` : `…-062126-256k`, où SemiAnalysis a retiré les requêtes de plus de 256 000 jetons (pour un `--max-model-len` d'environ 256 000 ; accepté par le scénario). D'après la description du jeu dans AIPerf (`plugins.yaml`) |
-| `RACINE` | `resultats-agentx` | dossier des résultats |
-| `ESSAI_COURT` | vide | `1` = paliers de moins de 900 s, pour vérifier la chaîne seulement (non comparable) |
-| `CONTEXTE_MAX` | vide | jetons ; AIPerf écarte les traces dont le contexte de pointe dépasse cette valeur (`--max-context-length`) |
-| `AIPERF_DATASET_CONFIGURATION_TIMEOUT` | 1800 | secondes accordées au chargement des traces (AIPerf : 300 par défaut, trop court pour les 393 traces) ; `AIPERF_SERVICE_PROFILE_CONFIGURE_TIMEOUT` est porté à au moins cette valeur, comme AIPerf l'exige |
+| `BENCH_DURATION` | 1800 | seconds per level; at least 900 |
+| `BENCH_AGENTX_DIR` | empty | local traces folder (without Internet access, [section 7.4](#74-agentx-without-internet-access)); the run is then marked `submission_valid=false` (AIPerf cannot verify the set) |
+| `BENCH_AGENTX_VARIANT` | empty | empty: full set `semianalysisai/cc-traces-weka-062126`; `256k`: `…-062126-256k`, where SemiAnalysis removed requests above 256,000 tokens (for a `--max-model-len` of about 256,000; accepted by the scenario). From the dataset description in AIPerf (`plugins.yaml`) |
+| `BENCH_ROOT_DIR` | `results-agentx` | results folder |
+| `BENCH_SHORT_RUN` | empty | `1` = levels shorter than 900 s, to check the pipeline only (not comparable) |
+| `BENCH_MAX_CONTEXT` | empty | tokens; AIPerf discards traces whose peak context exceeds this value (`--max-context-length`) |
+| `AIPERF_DATASET_CONFIGURATION_TIMEOUT` | 1800 | seconds allowed for loading the traces (AIPerf: 300 by default, too short for the 393 traces); `AIPERF_SERVICE_PROFILE_CONFIGURE_TIMEOUT` is raised to at least this value, as AIPerf requires |
 
-Les paliers sont des nombres de **sessions rejouées en même temps** (`--concurrency` d'AIPerf). Le dépouillement
-est celui de la charge synthétique (§ 3.2), sauf la colonne « sortie moy », qui varie ici d'une trace à l'autre.
-Durée : 5 paliers × 30 min × 3 répétitions ≈ 7 h 30 par configuration (≈ 3 h 45 à 15 min par palier).
+The levels are numbers of **sessions replayed at the same time** (AIPerf's `--concurrency`). The report
+is the one described in [section 7.2](#72-reading-the-stress-test-report).
+Duration: 5 levels x 30 min x 3 repetitions is about 7 h 30 per configuration (about 3 h 45 at 15 min per level).
 
-### 4.1 Machine cliente sans accès Internet : copier les traces
+### 7.4 AgentX without Internet access
 
-Une fois, sur une machine qui a accès à Hugging Face (où les traces sont publiées) :
-
-```bash
-./outils/telecharger_traces_agentx.sh traces-agentx     # 393 traces, ≈ 1,85 Go
-```
-
-Copie le dossier sur la machine cliente, puis `AGENTX_DOSSIER=traces-agentx ./agentx.sh …`. Le jeu est publié
-sous licence Apache-2.0 d'après sa [fiche Hugging Face](https://huggingface.co/datasets/semianalysisai/cc-traces-weka-062126) :
-vérifie-la avant de le faire entrer dans ta zone. Non vérifié : que le dépôt range bien une trace par fichier
-JSON dans un seul dossier (le script compte les fichiers et le signale).
-
-### 4.2 Contexte plus court que les traces (`CONTEXTE_MAX`)
-
-Le scénario interdit de tronquer une trace (et AIPerf n'a pas d'option pour le faire), mais il accepte d'écarter
-celles qui ne tiennent pas (`--max-context-length` d'AIPerf : DOCUMENTÉ par son aide, et sans avertissement du
-scénario à l'essai). Utile sur un serveur GPU dont `--max-model-len` est un peu plus court que les plus longues
-traces :
+Client machine without Internet access: copy the traces. Once, on a machine with Hugging Face access (where the traces are published):
 
 ```bash
-CONTEXTE_MAX=129024 DUREE=1800 ./agentx.sh agentx-128k-r1 "1 2 4 8"   # vLLM : --max-model-len 131072
+./tools/download_agentx_traces.sh traces-agentx     # 393 traces, about 1.85 GB
 ```
 
-Le filtre porte sur le contexte **maximal** de chaque session. **Pas sur un petit modèle** : à 30 720 jetons
-(vLLM à 32 768), aucune des 393 traces ne tient (constaté lors de la répétition sur Mac : « No eligible traces …
-scanned 393 »). AIPerf s'arrête alors avant le premier palier, et le script le dit. Sur un Mac, la charge
-d'agents se mesure avec les agents de test (§ 5) ; AgentX se mesure sur les serveurs GPU.
+Copy the folder to the client machine, then `BENCH_AGENTX_DIR=traces-agentx ./agentx.sh …`. The set is published
+under the Apache-2.0 license according to its [Hugging Face page](https://huggingface.co/datasets/semianalysisai/cc-traces-weka-062126):
+check it before bringing it into your environment. Not verified: that the repository stores one trace per JSON
+file in a single folder (the script counts the files and reports it).
 
-Laisse une **marge** sous `--max-model-len` (ici 2 048 jetons) : le filtre compare les longueurs enregistrées
-dans les traces, alors que le serveur compte en plus le gabarit de conversation (rôles, séparateurs ; INFÉRÉ).
-Une requête dont l'**entrée** dépasse `--max-model-len` est refusée par vLLM ; AIPerf la retire de ses métriques,
-et le dépouillement la compte dans `err` et refuse le palier. Si l'entrée tient mais pas la sortie, vLLM ne refuse
-pas : il réduit `max_tokens` à la place restante (DOCUMENTÉ par le code de vLLM, `vllm/entrypoints/serve/utils/api_utils.py`, `get_max_tokens`) ;
-le dépouillement le signale par un ATTENTION (`osl_mismatch_count` d'AIPerf, colonne `sorties_raccourcies`).
+### 7.5 Context shorter than the traces
 
-Ce sous-ensemble n'est **pas comparable** aux résultats AgentX publiés (INFÉRÉ : biais vers les sessions plus
-courtes) ; note le nombre de traces écartées avec le résultat (journal du palier, `resultats-agentx/<étiquette>/c<N>.log`).
-
----
-
-## 5. Stress test agents de test
-
-**Redémarre vLLM avec le cache de préfixes activé** (sans `--no-enable-prefix-caching`, § 1.2), vérifie
-`cache de préfixes True` dans la ligne `[config]` du § 2.4, puis :
+The scenario forbids truncating a trace (and AIPerf has no option to do so), but it accepts discarding those that do not
+fit (AIPerf's `--max-context-length`: documented by its help, and no scenario warning when tried). Useful on a GPU server whose
+`--max-model-len` is a little shorter than the longest traces:
 
 ```bash
-cd agents_test
-python lanceur.py --url "$URL" --modele "$MODELE" --metriques "${METRIQUES:-$URL/metrics}" \
-  --paliers "1 2 4 8" --duree 900 --prechauffe 300 --echelle 1 --etiquette conf-a-r1
-python depouiller_agents.py resultats-agents --cible 30
+BENCH_MAX_CONTEXT=129024 BENCH_DURATION=1800 ./agentx.sh agentx-128k-r1 "1 2 4 8"   # vLLM: --max-model-len 131072
 ```
 
-| Option | Sens |
+The filter applies to the **maximum** context of each session. **Not on a small model**: at 30,720 tokens (vLLM at
+32,768), none of the 393 traces fits (observed during the trial on a Mac: "No eligible traces … scanned 393"). AIPerf
+then stops before the first level, and the script says so. On a Mac, agent load is measured with the test agents
+([section 7.6](#76-test-agents-stress-test)); AgentX is measured on GPU servers.
+
+Leave a **margin** below `--max-model-len` (here 2,048 tokens): the filter compares the lengths recorded
+in the traces, whereas the server also counts the chat template (roles, separators; inferred).
+A request whose **input** exceeds `--max-model-len` is refused by vLLM; AIPerf removes it from its metrics,
+and the report counts it in `err` and rejects the level. If the input fits but not the output, vLLM does not refuse:
+it reduces `max_tokens` to the remaining room (documented by vLLM's code, `vllm/entrypoints/serve/utils/api_utils.py`, `get_max_tokens`);
+the report flags it with a WARNING (AIPerf's `osl_mismatch_count`, column `shortened_outputs`).
+
+This subset is **not comparable** to the published AgentX results (inferred: bias toward shorter sessions); note the
+number of discarded traces with the result (level log, `results-agentx/<label>/c<N>.log`: line
+`traces: scanned N, rejected_by_maxctx X (--max-context-length=…), eligible Y`).
+
+### 7.6 Test-agents stress test
+
+The test agents are three profiles (`code_review` with sub-agents, step-by-step `pentest`, `report`).
+Their tools are simulated: they return fabricated text and act on no system.
+
+**Restart vLLM with the prefix cache enabled** (without `--no-enable-prefix-caching`, [section 4.2](#42-check-the-vllm-in-place)), check
+`prefix cache True` in the `[config]` line ([section 5.4](#54-test-the-connection)), then:
+
+```bash
+python -m agents_test.launcher --url "$BENCH_URL" --model "$BENCH_MODEL" --metrics "${BENCH_METRICS:-$BENCH_URL/metrics}" \
+  --levels "1 2 4 8" --duration 900 --warmup 300 --scale 1 --label conf-a-r1
+python -m report agents results-agents --target 30
+```
+
+| Option | Meaning |
 |---|---|
-| `--paliers` | nombres de tâches simultanées ; chaque palier tient `--duree` secondes en alternant les trois profils |
-| `--prechauffe` | secondes exclues de la mesure en début de palier (au moins la durée d'une tâche) ; doit être < `--duree` |
-| `--echelle` | multiplie toutes les tailles : 1 = contextes jusqu'à ≈ 135 000 jetons ; 0.2 pour un petit modèle à 32 768 de contexte |
-| `--agents` | sous-ensemble de `revue_code,pentest,rapport` |
-| `--mode` | `scripte` (défaut, mesure : outils et longueurs imposés) ou `autonome` (vérifie l'appel d'outils, ne mesure pas) |
-| `--sortie` | dossier des résultats (défaut `resultats-agents`) |
-| `--etiqueter-agents` | ajoute `metadata.agent` = nom du profil à chaque requête (vue par agent via LiteLLM, § 6.5) |
+| `--levels` | numbers of simultaneous tasks; each level holds for `--duration` seconds, alternating the three profiles |
+| `--warmup` | seconds excluded from the measurement at the start of a level (at least the duration of one task); must be < `--duration` |
+| `--scale` | multiplies all sizes: 1 = contexts up to about 135,000 tokens; 0.2 for a small model with 32,768 of context |
+| `--agents` | subset of `code_review,pentest,report` |
+| `--mode` | `scripted` (default, measurement: tools and lengths enforced) or `autonomous` (checks tool calling, does not measure) |
+| `--output` | results folder (default `results-agents`, relative to the current folder; runs started from the [interface](#10-interface) use `agents_test/results-agents`) |
+| `--label-agents` | adds `metadata.agent` = profile name to each request (per-agent view through LiteLLM, [section 8.5](#85-per-agent-view-through-litellm)) |
 
-La clé est lue dans `BANC_CLE_API` si elle existe, sinon dans `CLE_API` ; `BANC_CLES_AGENTS` donne une clé par
-profil (§ 6.5). Le dépouillement donne une ligne « tous » par palier
-puis une par profil (débit/GPU, inter P10, TTFT P95, part du cache, durée des tâches, préemptions, MTP,
-cache KV maximal), et le palier retenu. **À vérifier** : la colonne cache nettement au-dessus de 0
-pour `pentest` et `rapport`. Tableau complet : `resultats-agents/tableau_agents.csv`.
+Other options: `--spread` (staggers the workers' start over this many seconds), `--latency-factor` (multiplies the simulated tool times; 1 to measure), `--no-metrics` (does not read `/metrics`) and `--overwrite` (replaces existing results with the same label).
 
-Pour une première vérification rapide : `--paliers "1 2" --duree 300 --prechauffe 60 --echelle 0.2`.
+The key is read from `BENCH_API_KEY`; `BENCH_AGENT_KEYS` gives one key per
+profile ([section 8.5](#85-per-agent-view-through-litellm)). The report gives an "all" row per level
+then one per profile (throughput/GPU, inter P10, TTFT P95, cache share, task duration, preemptions, MTP,
+maximum KV cache), and the selected level. **To check**: the cache column clearly above 0
+for `pentest` and `report`. Full table: `results-agents/table_agents.csv`. The report accepts `--require-metrics` but not `--ttft-max`.
+
+For a quick first check: `--levels "1 2" --duration 300 --warmup 60 --scale 0.2`.
+
+### 7.7 Stress test through LiteLLM
+
+A variant of the synthetic stress test ([section 7.1](#71-synthetic-stress-test)): the same sweep, aiming at LiteLLM and giving the URL of vLLM's metrics:
+
+```bash
+BENCH_URL=http://<vm>:4000 BENCH_MODEL=<alias> BENCH_API_KEY=<LiteLLM key> BENCH_METRICS=http://<host>:8000/metrics \
+  ./sweep.sh conf-a-litellm-r1 "1 4 16"
+```
+
+Compare with the same sweep made directly on vLLM: the TTFT gap is the latency added by the gateway.
+**Check** that the report's "mean output" column equals `BENCH_OSL`: otherwise LiteLLM does not forward `min_tokens` /
+`ignore_eos` and the two measurements are not comparable (not verified).
+
+Several replicas behind LiteLLM: `BENCH_METRICS` takes one URL per replica; the deduced GPU count adds them all
+([section 7.2](#72-reading-the-stress-test-report)), assuming they are identical to the one that answered.
+Measure the replicas **together**, as they will serve.
+
+[↑ Back to top](#top)
 
 ---
 
-## 6. Observation (usage réel)
+## 8. Observation (real use)
 
-Tes agents appellent vLLM, directement ou via LiteLLM ; le banc ne génère **aucune** requête et n'a **rien à
-lancer**. Le travail se répartit ainsi :
+Your agents call vLLM, directly or through LiteLLM; the bench generates **no** request and has **nothing to
+start**. The work is split as follows:
 
-- **vLLM** expose ses compteurs sur `/metrics`, cumulés depuis son démarrage ; il ne garde aucun historique
-  ([métriques de vLLM](https://docs.vllm.ai/en/latest/design/metrics.html)) ;
-- **Prometheus**, serveur à part, lit `/metrics` toutes les 15 s et garde l'historique
-  ([présentation](https://prometheus.io/docs/introduction/overview/)) ; il lit aussi les métriques de LiteLLM pour
-  la vue par agent ;
-- **`observation/interroger.py`** (ou l'onglet Observation de l'interface) interroge Prometheus sur une plage
-  passée, la découpe en fenêtres et calcule, par fenêtre : requêtes terminées, concurrence moyenne (requêtes en
-  cours), débit de sortie par GPU, **part des requêtes qui tiennent l'interactivité visée**, TTFT, préemptions,
-  requêtes en erreur, cache de préfixes, acceptation MTP, cache KV et file d'attente ; puis un verdict.
+- **vLLM** exposes its counters on `/metrics`, cumulated since its start; it keeps no history
+  ([vLLM metrics](https://docs.vllm.ai/en/latest/design/metrics.html));
+- **Prometheus**, a separate server, reads `/metrics` every 15 s and keeps the history
+  ([overview](https://prometheus.io/docs/introduction/overview/)); it also reads LiteLLM's metrics for the
+  per-agent view;
+- **`observation/query.py`** (`python -m observation.query`, or the Observation tab of the [interface](#10-interface))
+  queries Prometheus over a past range, cuts it into windows and computes, per window: completed requests, mean
+  concurrency (requests in flight), output throughput per GPU, **share of requests that sustain the target
+  interactivity**, TTFT, preemptions, failed requests, prefix cache, MTP acceptance, KV cache and queue; then a verdict.
 
-Une seule lecture de `/metrics` ne suffirait pas : ses compteurs mélangent tout depuis le démarrage. Il faut la
-différence entre le début et la fin de chaque fenêtre : `interroger.py` la demande à Prometheus (valeur à la fin
-moins valeur au début, [`offset`](https://prometheus.io/docs/prometheus/latest/querying/basics/#offset-modifier)).
-Une fenêtre où le serveur a redémarré est écartée : ses compteurs repartent de zéro et la différence n'a plus de
-sens (repérée par [`resets()`](https://prometheus.io/docs/prometheus/latest/querying/functions/#resets) et, quand
-vLLM l'expose, par `process_start_time_seconds`). Une fenêtre sans collecte juste avant son début (Prometheus
-arrêté) est aussi écartée : `offset` irait chercher une valeur jusqu'à 5 min plus tôt
-([lookback](https://prometheus.io/docs/prometheus/latest/querying/basics/#staleness)) et la fenêtre compterait la coupure.
+A single read of `/metrics` would not be enough: its counters mix everything since the start. What is needed is the
+difference between the start and the end of each window: `observation.query` asks Prometheus for it (value at the end
+minus value at the start, [`offset`](https://prometheus.io/docs/prometheus/latest/querying/basics/#offset-modifier)).
+A window in which the server restarted is discarded: its counters start again from zero and the difference no longer
+means anything (detected with [`resets()`](https://prometheus.io/docs/prometheus/latest/querying/functions/#resets)
+and, when vLLM exposes it, with `process_start_time_seconds`). A window with no scrape just before its start
+(Prometheus stopped) is discarded too: `offset` would fetch a value up to 5 min earlier
+([lookback](https://prometheus.io/docs/prometheus/latest/querying/basics/#staleness)) and the window would count the gap.
 
-**Sans danger pour les outils ?** L'observation ne change rien à tes agents. Mais si tu montes leur nombre pour
-chercher la limite, leurs outils agissent pour de vrai à chaque fois : champ de tir isolé ou outils simulés.
+### 8.1 Tune vLLM for exact interactivity
 
-### 6.1 Régler vLLM pour une interactivité exacte
+Optional: nothing has to change on vLLM for observation, and a restart is not needed just for this. Add the option
+below at the next planned restart; it only makes the share at the exact target available (otherwise interpolated).
 
-L'interactivité vient de l'histogramme `vllm:request_time_per_output_token_seconds` : temps moyen entre deux
-jetons de chaque requête, premier jeton exclu ([`stats.py`](https://github.com/vllm-project/vllm/blob/7f855f605892656ebf7265642e5d22a34a6ae731/vllm/v1/metrics/stats.py),
-[`loggers.py`](https://github.com/vllm-project/vllm/blob/7f855f605892656ebf7265642e5d22a34a6ae731/vllm/v1/metrics/loggers.py#L957-L963)), même définition que l'interactivité des stress
-tests (même définition côté seuil ; voir les différences ci-dessous). Ses bornes par défaut (10, 25, 50, 75 ms…) ne tombent pas sur 33 ms (30 jetons/s) : la part à la cible
-serait interpolée ([`buckets.py`](https://github.com/vllm-project/vllm/blob/7f855f605892656ebf7265642e5d22a34a6ae731/vllm/v1/metrics/buckets.py#L84-L92)). Ajoute des bornes à
-1/30, 1/50, 1/75 et 1/100 s au lancement de vLLM
-([`--custom-histogram-buckets`](https://github.com/vllm-project/vllm/blob/7f855f605892656ebf7265642e5d22a34a6ae731/vllm/config/observability.py#L72-L80)) :
+Interactivity comes from the histogram `vllm:request_time_per_output_token_seconds`: average time between two
+tokens of each request, first token excluded ([`stats.py`](https://github.com/vllm-project/vllm/blob/7f855f605892656ebf7265642e5d22a34a6ae731/vllm/v1/metrics/stats.py),
+[`loggers.py`](https://github.com/vllm-project/vllm/blob/7f855f605892656ebf7265642e5d22a34a6ae731/vllm/v1/metrics/loggers.py#L957-L963)), the same definition as the stress-test
+interactivity (see the differences below). Its default bounds (10, 25, 50, 75 ms…) do not fall on 33 ms (30 tokens/s): the share at the target
+would be interpolated ([`buckets.py`](https://github.com/vllm-project/vllm/blob/7f855f605892656ebf7265642e5d22a34a6ae731/vllm/v1/metrics/buckets.py#L84-L92)). Add bounds at
+1/30, 1/50, 1/75 and 1/100 s when launching vLLM
+([`--custom-histogram-buckets`](https://github.com/vllm-project/vllm/blob/7f855f605892656ebf7265642e5d22a34a6ae731/vllm/config/observability.py#L72-L80)):
 
 ```bash
 vllm serve … --custom-histogram-buckets '{"inter_token_latency": [0.005, 0.01, 0.0133, 0.02, 0.025, 0.0333, 0.05, 0.075, 0.1, 0.2, 0.5, 1.0, 2.5, 5.0]}'
 ```
 
-La famille `inter_token_latency` règle aussi cet histogramme par requête (même famille de bornes dans
-`loggers.py`). Le dépouillement marque d'un `*` une part interpolée, et dit « indéterminé » quand la cible tombe
-dans un seau qui encadre 90 %.
+The `inter_token_latency` family also sets this per-request histogram (same family of bounds in
+`loggers.py`). The query marks an interpolated share with a `*`, and says "undetermined" when the target falls
+in a bucket that straddles 90%.
 
-**Différences avec la mesure des stress tests** (DOCUMENTÉ, `stats.py`, sauf mention) : vLLM horodate dans le
-moteur, AIPerf chez le client (réseau et proxy en plus) ; une requête de 0 ou 1 jeton de sortie compte chez vLLM
-pour un temps par jeton nul, donc « à la cible », alors qu'AIPerf l'exclut ; une requête abandonnée par le client
-n'entre pas dans l'histogramme. Les requêtes en erreur viennent du compteur `http_requests_total` (handlers `/v1/…`,
-statuts 4xx et 5xx), ajouté par la bibliothèque prometheus_fastapi_instrumentator que vLLM installe
-([`metrics.py`](https://github.com/vllm-project/vllm/blob/7f855f605892656ebf7265642e5d22a34a6ae731/vllm/entrypoints/serve/instrumentator/metrics.py#L64-L74)) ;
-nom et étiquettes INFÉRÉS de la bibliothèque, à vérifier au premier essai (colonne « err » à « — » sinon).
+**Differences from the stress-test measurement** (documented in `stats.py`, unless noted): vLLM timestamps inside the
+engine, AIPerf at the client (network and proxy included); a request with 0 or 1 output token counts for vLLM
+as a zero time per token, hence "at the target", whereas AIPerf excludes it; a request aborted by the client
+does not enter the histogram. Failed requests come from the `http_requests_total` counter (`/v1/…` handlers,
+4xx and 5xx statuses), added by the prometheus_fastapi_instrumentator library that vLLM installs
+([`metrics.py`](https://github.com/vllm-project/vllm/blob/7f855f605892656ebf7265642e5d22a34a6ae731/vllm/entrypoints/serve/instrumentator/metrics.py#L64-L74));
+name and labels inferred from the library, to be checked on the first try (the "err" column shows "—" otherwise).
 
-### 6.2 Installer et lancer Prometheus (une fois)
+### 8.2 Install and start Prometheus (once)
 
-Sur la machine cliente ou une VM du même réseau privé (pas sur les serveurs mesurés). Deux façons, au choix.
+On the client machine or on a VM of the same private network (not on the servers being measured). Two ways, your choice.
 
-**A. Binaire** (VM Linux ; sans Internet, copie l'archive depuis la
-[page de téléchargement](https://prometheus.io/download/), un seul binaire) :
+**A. Binary** (Linux VM; without Internet access, copy the archive from the
+[download page](https://prometheus.io/download/): a single binary):
 
 ```bash
-(cd /tmp && tar xzf <chemin>/prometheus-*.linux-amd64.tar.gz && sudo cp prometheus-*.linux-amd64/prometheus /usr/local/bin/)
-cp outils/prometheus.yml.exemple prometheus.yml        # puis remplace les adresses (une ligne par réplique vLLM)
-(umask 077; printf '%s' "<clé LiteLLM>" > litellm.cle)  # seulement si tu gardes le bloc litellm
+(cd /tmp && tar xzf <path>/prometheus-*.linux-amd64.tar.gz && sudo cp prometheus-*.linux-amd64/prometheus /usr/local/bin/)
+cp tools/prometheus.yml.example prometheus.yml        # then replace the addresses (one line per vLLM replica)
+(umask 077; printf '%s' "<LiteLLM key>" > litellm.key)  # only if you keep the litellm block
 prometheus --config.file=prometheus.yml --storage.tsdb.path=prometheus-data --storage.tsdb.retention.time=30d
 ```
 
-`prometheus.yml`, `litellm.cle` et `prometheus-data/` sont ignorés par git. Le chemin de `credentials_file` est
-relatif au dossier de `prometheus.yml` (constaté lors de la validation, Prometheus 3.7.3).
+`prometheus.yml`, `litellm.key` and `prometheus-data/` are ignored by git. The path of `credentials_file` is relative to
+the folder of `prometheus.yml` (observed during validation, Prometheus 3.7.3). `tools/prometheus.yml.example` declares
+two jobs, `vllm` (the default selector of `--vllm`) and `litellm` (`metrics_path: /metrics/`, key in `litellm.key`).
 
-**B. Docker Compose** (pratique si LiteLLM tourne déjà en Compose). Le `docker-compose.yml` publié par LiteLLM
-contient peut-être **déjà** un service `prometheus`, ouvert au réseau sur le port 9090 (constaté par le validateur
-sur un miroir du fichier, non sur le dépôt lui-même) : dans ce cas, **modifie-le** pour qu'il ressemble à ce qui
-suit, au lieu d'en ajouter un second (Compose refuse deux services ou deux blocs `volumes:` de même nom). Sinon,
-ajoute-le :
+**B. Docker Compose** (handy if LiteLLM already runs under Compose). The `docker-compose.yml` published by LiteLLM
+may **already** contain a `prometheus` service, open to the network on port 9090 (observed by the validator on a
+mirror of the file, not on the repository itself): in that case **edit it** to look like what follows instead of
+adding a second one (Compose refuses two services or two `volumes:` blocks with the same name). Otherwise, add it:
 
 ```yaml
 services:
   prometheus:
     image: prom/prometheus:v3.7.3
-    ports: ["127.0.0.1:9090:9090"]        # Prometheus ne demande pas de clé : ne l'ouvre pas au réseau
+    ports: ["127.0.0.1:9090:9090"]        # Prometheus asks for no key: do not open it to the network
     volumes:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
-      - ./litellm.cle:/etc/prometheus/litellm.cle:ro
+      - ./litellm.key:/etc/prometheus/litellm.key:ro
       - prometheus-data:/prometheus
     command: ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.retention.time=30d"]
 volumes:
   prometheus-data:
 ```
 
-Crée `prometheus.yml` et `litellm.cle` **avant** `docker compose up -d prometheus` (sinon Docker crée des dossiers
-vides à leur place et refuse de démarrer). Dans `prometheus.yml`, un vLLM qui tourne sur la machine hôte se joint
-par `host.docker.internal:8000` (Docker Desktop), LiteLLM par le nom de son service Compose (`litellm:4000`), et
-`credentials_file: /etc/prometheus/litellm.cle`. Le conteneur lit en tant que `nobody` : le fichier de clé doit
-être lisible par lui (`printf '%s' "<clé>" > litellm.cle && chmod 644 litellm.cle` ; il devient lisible par tous les
-comptes de la machine, d'où l'intérêt d'une clé virtuelle limitée plutôt que la clé maîtresse). Si LiteLLM n'est
-pas dans le même Compose (installé par pip sur l'hôte), cible `host.docker.internal:4000` comme vLLM.
+Create `prometheus.yml` and `litellm.key` **before** `docker compose up -d prometheus` (otherwise Docker creates empty
+folders in their place and refuses to start). In `prometheus.yml`, a vLLM running on the host machine is reached at
+`host.docker.internal:8000` (Docker Desktop), LiteLLM by the name of its Compose service (`litellm:4000`), and
+`credentials_file: /etc/prometheus/litellm.key`. The container reads as `nobody`: the key file must be readable by it
+(`printf '%s' "<key>" > litellm.key && chmod 644 litellm.key`; it then becomes readable by every account of the
+machine, hence the interest of a limited virtual key rather than the master key). If LiteLLM is not in the same Compose
+(installed with pip on the host), target `host.docker.internal:4000` like vLLM.
 
-Dans tous les cas :
+In every case:
 
-- **Un job par configuration** : toutes les cibles d'un job sont additionnées (toutes les répliques d'une même
-  installation). Deux installations à comparer = deux jobs (`job_name: vllm-tep8`, `job_name: vllm-tp4`).
-- **Collecte toutes les 15 s** (`scrape_interval`) : les fenêtres doivent durer au moins 4 collectes (1 min) ; si
-  tu changes ce réglage, donne la même valeur à `--collecte`.
-- **Vérifier** : page `http://<hôte>:9090/targets`, chaque cible doit être « UP » (sinon l'erreur est affichée
-  à côté). Puis `curl -s 'http://<hôte>:9090/api/v1/query?query=up'`.
-- **Historique** : il commence au lancement de Prometheus. Laisse-le tourner en service ; rétention de 15 jours
-  par défaut, 30 avec l'option ci-dessus.
-- **Prometheus existant** : si ton équipe d'exploitation a déjà un Prometheus qui collecte vLLM, sers-t'en ;
-  donne son URL, le sélecteur de son job (`--vllm 'job="<son job>"'`) et son intervalle de collecte (`--collecte`).
-- Testé avec Prometheus 3.7.3 ; les versions plus récentes n'ont pas été essayées.
+- **One job per configuration**: all the targets of a job are added up (all the replicas of one installation). Two
+  installations to compare mean two jobs (`job_name: vllm-tep8`, `job_name: vllm-tp4`).
+- **Scrape every 15 s** (`scrape_interval`): windows must last at least 4 scrapes (1 min); if you change this
+  setting, give the same value to `--scrape`.
+- **Check**: page `http://<host>:9090/targets`, every target must be "UP" (otherwise the error is shown next to it).
+  Then `curl -s 'http://<host>:9090/api/v1/query?query=up'`.
+- **History**: it starts when Prometheus starts. Leave it running as a service; the default retention is 15 days,
+  30 with the option above.
+- **Existing Prometheus**: if your operations team already has a Prometheus that scrapes vLLM, use it: give its URL,
+  the selector of its job (`--vllm 'job="<its job>"'`) and its scrape interval (`--scrape`).
+- Tested with Prometheus 3.7.3; newer versions have not been tried.
 
-### 6.3 Interroger
+### 8.3 Query the observation
 
 ```bash
-python observation/interroger.py --prometheus http://127.0.0.1:9090 --depuis 2h --fenetre 5m --cible 30 --gpu 8
+python -m observation.query --prometheus http://127.0.0.1:9090 --since 2h --window 5m --target 30 --gpu 8
 ```
 
-| Option | Sens |
+| Option | Meaning |
 |---|---|
-| `--prometheus` | URL de Prometheus (**obligatoire**) ; jeton dans `BANC_CLE_PROMETHEUS` s'il en exige un |
-| `--vllm` | sélecteur des cibles vLLM, défaut `job="vllm"` ; seulement des étiquettes de cible (`job`, `instance`), pas de métrique (`model_name`…) ; toutes les cibles qui correspondent sont additionnées |
-| `--depuis` | plage qui se termine maintenant : `30m`, `2h`, `1d` (défaut `2h`) |
-| `--debut`, `--fin` | plage passée, heure locale : `--debut "2026-11-14 09:00" --fin "2026-11-14 17:00"` |
-| `--fenetre` | durée d'une fenêtre (défaut `5m`) ; au plus 10 000 fenêtres par interrogation |
-| `--collecte` | `scrape_interval` de Prometheus (défaut `15s`) |
-| `--cible`, `--gpu` | interactivité visée (jetons/s par requête) ; GPU derrière le sélecteur, toutes répliques (**obligatoire** ici : Prometheus ne voit pas l'empreinte) |
-| `--ttft-max` | TTFT P95 maximal accepté, en ms (optionnel) |
-| `--vue` | `fenetres` (défaut), `periode` (§ 6.4), `agents` (§ 6.5) |
-| `--exclure "début/fin"` | plage à écarter, répétable : un stress test sur le même serveur mêlerait sa charge à l'usage réel |
-| `--sortie` | écrit les fenêtres dans un CSV |
+| `--prometheus` | Prometheus URL (**required**); token in `BENCH_PROMETHEUS_KEY` if it asks for one |
+| `--vllm` | selector of the vLLM targets, default `job="vllm"`; target labels only (`job`, `instance`), no metric label (`model_name`…); all matching targets are added up |
+| `--since` | range ending now: `30m`, `2h`, `1d` (default `2h`) |
+| `--start`, `--end` | past range, local time: `--start "2026-11-14 09:00" --end "2026-11-14 17:00"` (`--end` defaults to now) |
+| `--window` | length of a window (default `5m`; at least 4 x `--scrape`); at most 10,000 windows per query |
+| `--scrape` | Prometheus `scrape_interval` (default `15s`) |
+| `--target`, `--gpu` | target interactivity (tokens/s per request); GPUs behind the selector, all replicas (**both required here**: Prometheus does not see the fingerprint, so the GPUs cannot be deduced as in the stress-test reports) |
+| `--ttft-max` | maximum accepted P95 TTFT, in ms (optional) |
+| `--view` | `windows` (default), `period` ([section 8.4](#84-per-period-view)), `agents` ([section 8.5](#85-per-agent-view-through-litellm)) |
+| `--period` | with `--view period`: `range` (default, 6-hour ranges) or `hour` |
+| `--litellm`, `--by` | per-agent view: selector of the LiteLLM targets, label that tells agents apart (default `metadata_agent`) ([section 8.5](#85-per-agent-view-through-litellm)) |
+| `--exclude "start/end"` | range to discard, repeatable: a stress test on the same server would mix its load with the real usage |
+| `--output` | writes the windows to a CSV file |
 
-Une fenêtre **tient** si au moins 90 % des requêtes terminées atteignent `--cible` (même seuil que
-l'interactivité P10 des stress tests, § 6.1), sans préemption ni requête en erreur, et, avec `--ttft-max`, si le
-TTFT P95 reste sous le seuil ; « indéterminé » si la part à la cible ne peut pas être tranchée (§ 6.1) ;
-« aucune requête » si rien n'a été servi. Une fenêtre est **écartée** si une cible vLLM était injoignable au début
-ou pendant la fenêtre, si vLLM a redémarré, s'il manque la collecte qui précède la fenêtre ou des collectes dans
-la fenêtre (Prometheus arrêté, ou `--collecte` plus
-court que son `scrape_interval`) ; elle est marquée « essai en cours » si elle chevauche `--exclure`. Le TTFT et l'interactivité P10 sont des bornes lues dans les
-seaux des histogrammes (`≤`, `≥`).
+A window **holds** if at least 90% of completed requests reach `--target` (same threshold as the
+P10 interactivity of the stress tests, [section 8.1](#81-tune-vllm-for-exact-interactivity)), with no preemption or failed request, and, with `--ttft-max`, if the
+P95 TTFT stays under the threshold; "undetermined" if the share at the target cannot be decided ([section 8.1](#81-tune-vllm-for-exact-interactivity));
+"no requests" if nothing was served. A window is **discarded** if a vLLM target was unreachable at the start or during the
+window, if vLLM restarted, or if the scrape before the window or scrapes within it are missing (Prometheus stopped, or
+`--scrape` shorter than its `scrape_interval`); it is shown as "run in progress" if it overlaps an `--exclude` range.
+TTFT and P10 interactivity are bounds read from the histogram buckets (`≤`, `≥`).
 
-**Chercher la limite avec tes vrais agents** : la colonne `conc moy` donne la concurrence réelle de chaque fenêtre
-(requêtes en cours, moyenne de `vllm:num_requests_running`). Le script donne la **plus haute concurrence moyenne
-tenue** sur la plage, et prévient si aucune fenêtre plus chargée n'échoue (limite pas encore atteinte). Pour la
-chercher, fais monter le nombre d'agents par étapes de quelques fenêtres chacune.
+**Looking for the limit with your real agents**: the `avg conc` column gives the real concurrency of each window
+(requests in flight, mean of `vllm:num_requests_running`). The command prints the **highest mean concurrency that
+holds** in the range (among windows of at least 50 completed requests), and warns if no busier window fails (limit not
+reached yet). To look for it, raise the number of agents in steps of a few windows each. Observation changes nothing
+about your agents, but raising their number makes their tools act for real each time: use an isolated test range or
+simulated tools.
 
-**Limites** (INFÉRÉ sauf mention) :
-- une fenêtre couvre de la dernière collecte avant son début à la dernière collecte avant sa fin : ses bords
-  sont décalés d'au plus une collecte et demie (une fenêtre sans collecte récente à l'un de ses bords est
-  écartée), mais des fenêtres successives s'additionnent sans perte ni double
-  compte (vérifié lors de la validation : erreurs et requêtes par agent égales aux compteurs des serveurs) ;
-- un redémarrage est repéré par une baisse d'un compteur entre deux collectes (`resets()`) ou par un changement de
-  `process_start_time_seconds`. vLLM n'expose ce dernier que sous Linux, et pas quand il lance plusieurs processus
-  d'API (`--api-server-count` > 1, le cas par défaut avec `--data-parallel-size` > 1 ; DOCUMENTÉ,
+**Limits** (inferred unless stated otherwise):
+
+- a window covers the period from the last scrape before its start to the last scrape before its end: its edges are
+  shifted by at most one and a half scrapes (a window with no recent scrape at one of its edges is discarded), but
+  successive windows add up with no loss and no double counting (checked during validation: errors and requests per
+  agent equal to the servers' counters);
+- a restart is spotted by a counter dropping between two scrapes (`resets()`) or by a change of
+  `process_start_time_seconds`. vLLM exposes the latter only on Linux, and not when it starts several API processes
+  (`--api-server-count` > 1, the default with `--data-parallel-size` > 1; documented,
   [`cli/serve.py`](https://github.com/vllm-project/vllm/blob/7f855f605892656ebf7265642e5d22a34a6ae731/vllm/entrypoints/cli/serve.py#L107-L130),
   [`v1/metrics/prometheus.py`](https://github.com/vllm-project/vllm/blob/7f855f605892656ebf7265642e5d22a34a6ae731/vllm/v1/metrics/prometheus.py#L39-L53)).
-  Sans lui, un redémarrage plus court qu'une collecte, dont les compteurs dépassent déjà leur valeur d'avant,
-  passe inaperçu : la fenêtre sous-compte, et si ses seaux restent croissants le verdict peut être faux (constaté
-  lors de la validation : sinon « indéterminé ») ;
-- une série qui disparaît alors que sa cible répond perd ses derniers incréments (rare : les compteurs de vLLM et de
-  LiteLLM ne disparaissent pas sans redémarrage) ;
-- une série qui apparaît pendant la fenêtre (premier code d'erreur 5xx depuis le démarrage, premier appel d'un
-  agent dans LiteLLM) est comptée pour sa valeur entière, à condition que sa cible fût déjà collectée au début de
-  la fenêtre ; la fenêtre où la collecte commence est écartée ;
-- les requêtes en erreur viennent de `http_requests_total` (handlers `/v1/…`, statuts 4xx et 5xx ; § 6.1) ;
-- les jauges (cache KV, file d'attente, concurrence) sont lues toutes les 15 s : une pointe plus courte peut échapper.
+  Without it, a restart shorter than one scrape, whose counters already exceed their earlier value, goes unnoticed: the
+  window undercounts, and if its buckets stay increasing the verdict can be wrong (seen during validation: otherwise
+  "undetermined");
+- a series that disappears while its target answers loses its last increments (rare: vLLM's and LiteLLM's counters do not
+  disappear without a restart);
+- a series that appears during the window (first 5xx status code since the start, first call of an agent in LiteLLM)
+  is counted for its whole value, provided its target was already scraped at the start of the window; the window in
+  which scraping starts is discarded;
+- failed requests come from `http_requests_total` (`/v1/…` handlers, 4xx and 5xx statuses; [section 8.1](#81-tune-vllm-for-exact-interactivity));
+- gauges (KV cache, queue, concurrency) are read at each scrape (15 s): a shorter peak can be missed.
 
-### 6.4 Vue par période
+### 8.4 Per-period view
 
 ```bash
-python observation/interroger.py --prometheus http://127.0.0.1:9090 --depuis 1d --fenetre 15m \
-  --cible 30 --gpu 8 --vue periode --periode plage
+python -m observation.query --prometheus http://127.0.0.1:9090 --since 1d --window 15m \
+  --target 30 --gpu 8 --view period --period range
 ```
 
-Les fenêtres de la plage sont regroupées par plage de 6 h (nuit, matin, après-midi, soir) ou par heure
-(`--periode heure`), en heure locale de la machine qui interroge. Le débit d'une période est une moyenne : pour
-la pointe, regarde ses fenêtres une à une (`--vue fenetres`).
+The windows of the range are grouped by 6-hour range (night, morning, afternoon, evening) or by hour
+(`--period hour`), in the local time of the machine that queries. A period's throughput is an average: for the peak,
+look at its windows one by one (`--view windows`).
 
-### 6.5 Vue par agent (via LiteLLM)
+### 8.5 Per-agent view through LiteLLM
 
-vLLM ne sait pas quel agent appelle ; LiteLLM, si, à condition que chaque requête porte l'identité de son agent.
-Deux façons de la porter ; dans les deux cas, active d'abord les métriques Prometheus de LiteLLM
-([LiteLLM, Prometheus](https://docs.litellm.ai/docs/proxy/prometheus)). Le module `prometheus_client` n'est pas
-installé par `pip install "litellm[proxy]"`, et LiteLLM refuse alors de démarrer avec ce réglage (constaté lors
-de la validation, LiteLLM 1.109.1) : `pip install prometheus_client` dans son environnement.
+vLLM does not know which agent is calling; LiteLLM does, provided each request carries its agent's identity.
+In both ways below, first enable LiteLLM's Prometheus metrics
+([LiteLLM, Prometheus](https://docs.litellm.ai/docs/proxy/prometheus)):
 
 ```yaml
 litellm_settings:
   callbacks: ["prometheus"]
 ```
 
-**Façon 1 : une clé virtuelle par agent** (rien à changer dans le code des agents ; recommandé en production).
-LiteLLM range les clés virtuelles dans une base PostgreSQL : `DATABASE_URL` à définir avant de démarrer LiteLLM
-([documentation](https://docs.litellm.ai/docs/proxy/virtual_keys)). Il lui faut aussi Prisma, que
-`pip install "litellm[proxy]"` n'installe pas : sans lui, LiteLLM refuse de démarrer avec `DATABASE_URL`, et sans
-base, `/key/generate` échoue (constaté lors de la validation, LiteLLM 1.109.1). Avec pip :
-`pip install "litellm[proxy,extra_proxy]"` puis, dans le même environnement,
-`prisma generate --schema "$(python -c 'import litellm_proxy_extras,os;print(os.path.join(os.path.dirname(litellm_proxy_extras.__file__),"schema.prisma"))')"`
-([documentation LiteLLM](https://docs.litellm.ai/docs/troubleshoot/pip_venv_upgrade)). Cette commande installe la
-CLI Prisma par npm (Node.js requis) puis télécharge ses moteurs depuis binaries.prisma.sh : sans Internet, il faut
-un miroir npm et un miroir des moteurs (constaté lors de la validation : téléchargement des moteurs refusé hors Internet). Le plus simple est de passer par l'installation de LiteLLM de ton équipe si elle a déjà
-une base. Crée ensuite une clé par agent, avec la clé maîtresse :
+LiteLLM refuses to start with this setting if `prometheus_client` is missing
+([Appendix B](#appendix-b-litellm-per-key-setup-and-install-details)).
 
-```bash
-curl -s -X POST http://<vm>:4000/key/generate -H "Authorization: Bearer $LITELLM_MASTER_KEY" \
-  -H "Content-Type: application/json" -d '{"key_alias": "revue-code"}'      # renvoie la clé de l'agent
-```
+**Way 1: one virtual key per agent** (nothing to change in the agents' code; recommended in production).
+It needs a PostgreSQL database and Prisma on the LiteLLM side; the setup is in
+[Appendix B](#appendix-b-litellm-per-key-setup-and-install-details). Each agent uses **its** key as the API key
+(`OpenAI(api_key=…)`, or its framework's key variable). The metrics then carry the label
+`api_key_alias="code-review"`: `--by api_key_alias` (the default is `metadata_agent`, way 2).
 
-Chaque agent utilise **sa** clé comme clé d'API (`OpenAI(api_key=…)`, ou la variable de clé de son
-framework). Les métriques portent alors l'étiquette `api_key_alias="revue-code"` : `--par api_key_alias` (le
-défaut est `metadata_agent`, la façon 2).
-
-**Façon 2 : un champ dans la requête** (pas de base de données ; une ligne dans l'agent). Chaque requête envoie
-`"metadata": {"agent": "<nom>"}` dans son corps ; avec le client OpenAI en Python :
+**Way 2: a field in the request** (no database; one line in the agent). Each request sends
+`"metadata": {"agent": "<name>"}` in its body; with the OpenAI Python client:
 
 ```python
-client.chat.completions.create(model=…, messages=…, extra_body={"metadata": {"agent": "revue-code"}})
+client.chat.completions.create(model=…, messages=…, extra_body={"metadata": {"agent": "code-review"}})
 ```
 
-et LiteLLM en fait une étiquette :
+and LiteLLM turns it into a label:
 
 ```yaml
 litellm_settings:
@@ -604,242 +826,349 @@ litellm_settings:
   custom_prometheus_metadata_labels: ["metadata.agent"]
 ```
 
-L'étiquette s'appelle alors `metadata_agent` : `--par metadata_agent`. Si l'agent appelle vLLM sans passer par
-LiteLLM, vLLM accepte les champs inconnus et les ignore (trace au niveau debug seulement ; DOCUMENTÉ,
+The label is then called `metadata_agent`: `--by metadata_agent`. If the agent calls vLLM without going through
+LiteLLM, vLLM accepts unknown fields and ignores them (trace at debug level only; documented in
 [`protocol.py`](https://github.com/vllm-project/vllm/blob/7f855f605892656ebf7265642e5d22a34a6ae731/vllm/entrypoints/serve/engine/protocol.py#L39-L75)).
 
-**Agents de test** : ils savent faire les deux.
-- Façon 1 : `BANC_CLES_AGENTS="revue_code=<clé>,pentest=<clé>,rapport=<clé>"` (variable d'environnement, ou
-  champ « Clés par agent » de l'interface) ; un profil sans clé garde la clé commune.
-- Façon 2 : `lanceur.py --etiqueter-agents` (ou case « Étiqueter les agents ») : `metadata.agent` = nom du profil.
+**Test agents** support both ([section 7.6](#76-test-agents-stress-test)):
 
-**Collecter, puis interroger** : déclare LiteLLM dans `prometheus.yml` (bloc `litellm` de l'exemple : chemin
-**`/metrics/`** avec la barre finale, celui que LiteLLM sert ; clé dans le fichier `litellm.cle` désigné par
-`credentials_file` (§ 6.2), car ses métriques exigent une clé par défaut dans les versions récentes : 1.85.0
-d'après sa documentation, dès 1.84 d'après son code). Une clé virtuelle limitée vaut mieux que la clé maîtresse
-(INFÉRÉ : à vérifier qu'elle suffit pour `/metrics/` sur ta version). Puis :
+- Way 1: `BENCH_AGENT_KEYS="code_review=<key>,pentest=<key>,report=<key>"` (environment variable, or the
+  "Keys per agent" field of the interface); a profile without a key keeps the common key.
+- Way 2: `agents_test.launcher --label-agents` (or the "Label agents" checkbox): `metadata.agent` = profile name.
 
-```bash
-python observation/interroger.py --prometheus http://127.0.0.1:9090 --litellm 'job="litellm"' \
-  --par metadata_agent --depuis 2h --cible 30 --gpu 8 --vue agents
-```
-
-Par agent : requêtes, part des jetons de sortie, jetons d'entrée et de sortie par requête, TTFT P50 et P95,
-latence P95 et une vitesse moyenne de génération (jetons de sortie ÷ (latence − TTFT) ; moyenne, pas centile ;
-vide si une partie des requêtes n'est pas en streaming ; temps du proxy compris). Les requêtes sans identité
-apparaissent sous « (sans identité) » (LiteLLM les étiquette `None`). Noms, types et étiquettes des métriques de LiteLLM vérifiés avec LiteLLM
-1.109.1 lors de la validation ; contrôle-les sur ta version au premier essai :
+**Collect, then query**: declare LiteLLM in `prometheus.yml` (the `litellm` block of the example: path **`/metrics/`**
+with the trailing slash, the one LiteLLM serves; key in the `litellm.key` file named by `credentials_file`,
+[section 8.2](#82-install-and-start-prometheus-once)), because its metrics require a key by default in recent versions
+(1.85.0 according to its documentation; from 1.84 according to its code). A limited virtual key is better than the
+master key (inferred: check that it is enough for `/metrics/` on your version). Then:
 
 ```bash
-curl -s -H "Authorization: Bearer <clé>" http://<vm>:4000/metrics/ | grep -E '^litellm_(output_tokens|request_total_latency)' | head
+python -m observation.query --prometheus http://127.0.0.1:9090 --litellm 'job="litellm"' \
+  --by metadata_agent --since 2h --target 30 --gpu 8 --view agents
 ```
 
----
-
-## 7. Stress test à travers LiteLLM (optionnel)
-
-Même balayage, en visant LiteLLM et en donnant l'URL des métriques de vLLM :
+Per agent: requests, share of output tokens, input and output tokens per request, TTFT P50 and P95,
+P95 latency and an average generation speed (output tokens ÷ (latency − TTFT); average, not percentile;
+empty if some of the requests are not streaming; proxy time included). Requests without an identity
+appear under "(no identity)" (LiteLLM labels them `None`). Names, types and labels of LiteLLM's metrics were
+checked with LiteLLM 1.109.1 during validation; check them on your version on the first try:
 
 ```bash
-URL=http://<vm>:4000 MODELE=<alias> CLE_API=<clé LiteLLM> METRIQUES=http://<hôte>:8000/metrics \
-  ./balayage.sh conf-a-litellm-r1 "1 4 16"
+curl -s -H "Authorization: Bearer <key>" http://<vm>:4000/metrics/ | grep -E '^litellm_(output_tokens|request_total_latency)' | head
 ```
 
-Compare au même balayage direct sur vLLM : l'écart de TTFT est la latence ajoutée par la passerelle.
-**Vérifie** que la colonne « sortie moy » du dépouillement vaut `OSL` : sinon LiteLLM ne transmet pas `min_tokens` /
-`ignore_eos` et les deux mesures ne sont pas comparables (non vérifié).
-
-Plusieurs répliques derrière LiteLLM : `METRIQUES` reçoit une URL par réplique ; le nombre de GPU déduit les
-compte toutes (§ 3.2), en les supposant identiques à celle qui a répondu.
-Mesure les répliques **ensemble**, comme elles serviront.
+[↑ Back to top](#top)
 
 ---
 
-## 8. Protocole de mesure conseillé
+## 9. Measurement protocol
 
-Une passe courte ne suffit pas pour retenir un chiffre. Pour chaque configuration de serveur à mesurer :
+A single short pass is not enough to settle on a figure. For each server configuration to measure:
 
-1. **Passe grossière** (charge synthétique) : paliers larges, 2 min chacun, pour situer le coude —
-   `DUREE=120 ./balayage.sh conf-a-grossier "1 2 4 8 16 32 48 64 96 128 192 256"`.
-2. **Passe fine** : 4 ou 5 paliers resserrés (≈ 5 à 15 % d'écart, ex. `"48 52 56 60 64"`) autour du coude (dernier palier qui tient la cible,
-   premier qui ne la tient pas), **15 min** chacun (`DUREE=900`), **trois répétitions** (`conf-a-r1`, `-r2`, `-r3`).
-   Retiens la médiane et l'écart min–max, et l'estimation interpolée à la cible. Plus de 10 % d'écart entre
-   répétitions (seuil indicatif) : machine perturbée, à refaire.
-3. **Sans décodage spéculatif** (si le modèle en utilise) : relance vLLM sans `--speculative-config` et refais
-   la passe fine dans une autre racine (`RACINE=resultats-sansmtp`). Le gain du décodage spéculatif dépend du
-   texte et de la température : note le taux d'acceptation (colonne MTP) à côté de chaque point.
-4. **AgentX** (cache activé) : 4 ou 5 niveaux de sessions, 30 min (ou 15) par palier, trois répétitions ;
-   à comparer aux exports AgentX publiés.
-   **Agents de test** (cache activé) : paliers jusqu'au-delà du palier retenu, 15 min, préchauffe 300 s,
-   trois répétitions.
-5. **À travers LiteLLM** : un balayage court (§ 7), pour la latence ajoutée.
-6. **Reprise** : arrête une réplique, relance-la, et mesure le temps jusqu'à la première réponse
-   (`curl -s -H "Authorization: Bearer $CLE_API" "$URL/v1/models"` toutes les 10 s) ; pas de balayage pendant
-   ce test.
-7. **Comparer** les configurations : débit synthétique avec et sans MTP, débit AgentX, débit des agents et
-   taux de cache, TTFT P95, cache KV maximal, temps de reprise. Le choix de la configuration et de la cible ne
-   relève pas du banc.
-8. **En production** : observation continue (Prometheus en service, § 6.2) ; l'écart avec les stress tests montre ce qu'ils ne
-   reproduisent pas de ta charge réelle.
+1. **Coarse pass** (synthetic load): wide levels, 2 min each, to locate the knee:
+   `BENCH_DURATION=120 ./sweep.sh conf-a-coarse "1 2 4 8 16 32 48 64 96 128 192 256"`.
+2. **Fine pass**: 4 or 5 tighter levels (about 5 to 15% apart, e.g. `"48 52 56 60 64"`) around the knee (last level that meets the target,
+   first that does not), **15 min** each (`BENCH_DURATION=900`), **three repetitions** (`conf-a-r1`, `-r2`, `-r3`).
+   Keep the median and the min–max spread, and the estimate interpolated at the target. More than 10% spread between
+   repetitions (indicative threshold): disturbed machine, redo.
+3. **Without speculative decoding** (if the model uses it): restart vLLM without `--speculative-config` and redo
+   the fine pass in another root (`BENCH_ROOT_DIR=results-nomtp`). The gain from speculative decoding depends on the
+   text and the temperature: note the acceptance rate (MTP column) next to each point.
+4. **AgentX** (cache enabled): 4 or 5 session levels, 30 min (or 15) per level, three repetitions;
+   to compare with the published AgentX exports ([section 7.3](#73-agentx-stress-test)).
+   **Test agents** (cache enabled): levels up to beyond the selected level, 15 min, 300 s warmup,
+   three repetitions ([section 7.6](#76-test-agents-stress-test)).
+5. **Through LiteLLM**: a short sweep ([section 7.7](#77-stress-test-through-litellm)), for the added latency.
+6. **Recovery**: stop a replica, restart it, and measure the time until the first response
+   (`curl -s -H "Authorization: Bearer $BENCH_API_KEY" "$BENCH_URL/v1/models"` every 10 s); no sweep during
+   this test.
+7. **Compare** the configurations: synthetic throughput with and without MTP, AgentX throughput, agent throughput and
+   cache rate, P95 TTFT, maximum KV cache, recovery time. Choosing the configuration and the target is
+   not the bench's job.
+8. **In production**: continuous observation (Prometheus in service, [section 8.2](#82-install-and-start-prometheus-once); per-period view, [section 8.4](#84-per-period-view)); the gap with the stress tests shows what they do not
+   reproduce of your real load.
 
-Ordre de grandeur, par configuration et par contexte : ≈ 4 h pour les passes grossière et fine (5 paliers ×
-15 min × 3), ≈ 7 h 30 pour AgentX (5 × 30 min × 3), ≈ 5 h 30 pour les agents de test avec 7 paliers (7 × 15 min × 3).
+Order of magnitude, per configuration and per context: about 4 h for the coarse and fine passes (5 levels x
+15 min x 3), about 7 h 30 for AgentX (5 x 30 min x 3), about 5 h 30 for the test agents with 7 levels (7 x 15 min x 3).
+
+[↑ Back to top](#top)
 
 ---
 
-## 9. Interface (optionnel)
+## 10. Interface
+
+An optional local app to start the runs, follow their logs and read the results.
 
 ```bash
-python interface/serveur.py            # option --port, défaut 8765
+python -m interface.server            # --port option, default 8765
 ```
 
-Ouvre **l'adresse exacte affichée** (elle contient un jeton d'accès). Sur une VM distante :
-`ssh -L 8765:127.0.0.1:8765 <vm>`, puis la même adresse sur ton poste.
+Open **the exact address printed** (it contains an access token). On a remote VM:
+`ssh -L 8765:127.0.0.1:8765 <vm>`, then the same address on your own machine.
 
-- **Lancer** : champs de connexion (mêmes sens qu'au § 2.2), bouton « Tester la connexion » qui affiche la
-  configuration du serveur (version, cache de préfixes, TP/PP/DP/EP…), puis l'un des trois stress tests :
-  synthétique, AgentX ou agents de test.
-- **Essais** : journal en direct, arrêt.
-- **Résultats** : tableaux, point retenu, courbe des stress tests.
-- **Observation** : rien à lancer ; URL de Prometheus, plage et fenêtre, puis « Afficher » (vues par fenêtre,
-  par période et par agent ; case « actualiser chaque minute »). Les plages des essais lancés depuis l'interface
-  sont écartées (« essai en cours ») ; celles des essais lancés à la main, seulement si tu les donnes à
-  `interroger.py --exclure`.
+- **Launch**: connection fields (same meanings as [section 5.2](#52-set-the-connection)), a "Test connection" button that shows the
+  server configuration (version, prefix cache, TP/PP/DP/EP…, GPUs deduced), then one of the three stress tests:
+  synthetic, AgentX or test agents.
+- **Runs**: live log, stop.
+- **Results**: tables, selected point, curve of the stress tests; the "GPU" field is optional (deduced from the
+  fingerprint when empty).
+- **Observation** (own tab): nothing to start. Fields: Prometheus URL and optional key, vLLM targets selector, LiteLLM
+  targets selector with the label that tells agents apart (per-agent view), range (since, or start and end), window length,
+  scrape interval, target interactivity, **GPUs** (required, as on the command line), optional max TTFT P95 and the view
+  (by window, period or agent). "Show" runs `observation.query`; a checkbox refreshes it every minute. The ranges of
+  the runs started from the interface (plus one minute) are discarded ("run in progress"); those of runs started by
+  hand only if you give them to `observation.query --exclude`.
 
-Les champs ne sont pas enregistrés, et l'interface n'hérite pas des variables de `cible.env`. Un seul essai
-à la fois ; l'observation peut s'afficher pendant un essai. Détails : `interface/README.md`.
+The fields are not saved, and the interface does not inherit the variables from `target.env`. It accepts only
+local or private target, metrics and Prometheus URLs (`BENCH_ALLOW_PUBLIC_URLS=1` allows public ones) and traces folders under the
+repository, your home directory or `BENCH_ALLOWED_DIRS` ([Appendix A](#appendix-a-security-notes)). One run
+at a time. Test-agents runs started here write to `agents_test/results-agents` by default (the command line writes to
+`results-agents`); the other runs use the same folders as the command line. Observation can be displayed during a run. Details: [`interface/README.md`](interface/README.md).
+
+[↑ Back to top](#top)
 
 ---
 
-## 10. Ce que chaque essai enregistre
+## 11. Reference
+
+### 11.1 Outputs on disk
 
 ```
-resultats/<étiquette>/config_serveur.json     # configuration du serveur au début de l'essai
-resultats/<étiquette>/c<N>/                    # sorties AIPerf du palier de concurrence N (+ c<N>.log)
-resultats-agentx/<étiquette>/c<N>/             # idem pour AgentX, plus agentx.txt (jeu de traces, durée)
-agents_test/resultats-agents/<étiquette>/config_serveur.json     # lanceur lancé depuis agents_test/
-agents_test/resultats-agents/<étiquette>/n<N>/   # appels.jsonl, taches.jsonl, palier.json (dont métriques vLLM)
+results/<label>/server_config.json            # server configuration at the start of the run
+results/<label>/c<N>/                          # AIPerf outputs for concurrency level N (+ c<N>.log)
+results-agentx/<label>/c<N>/                   # same for AgentX, plus agentx.txt (trace set, duration)
+results-agents/<label>/server_config.json     # launcher (default output relative to the current folder)
+results-agents/<label>/n<N>/                   # calls.jsonl, tasks.jsonl, level.json (including vLLM metrics)
 ```
 
-L'observation n'écrit rien d'office : l'historique est dans Prometheus ; `interroger.py --sortie f.csv` écrit
-les fenêtres d'une interrogation.
+Runs started from the interface put the test-agents results in `agents_test/results-agents/` instead.
 
-`config_serveur.json` contient : version de vLLM, modèle et contexte maximal, configuration du cache,
-empreinte et parallélisme décodé, nombre de jetons spéculatifs (compté dans `/metrics`), et, seulement si
-vLLM est lancé avec `VLLM_SERVER_DEV_MODE=1`, la méthode de décodage spéculatif et l'ordonnanceur
-(`max_num_seqs`, `max_num_batched_tokens`). **Ce mode est déconseillé** : il ouvre aussi des points
-d'accès de contrôle (dont le remplacement des poids) qui répondent sans clé
-([enregistrement](https://github.com/vllm-project/vllm/blob/7f855f605892656ebf7265642e5d22a34a6ae731/vllm/entrypoints/launchers/api_server/routers.py#L46-L53),
-[routes](https://github.com/vllm-project/vllm/blob/7f855f605892656ebf7265642e5d22a34a6ae731/vllm/entrypoints/rl/online/api_router.py)). La page sécurité de vLLM présente certaines de ces
-routes comme ouvertes même hors mode dev ; dans le doute, traite tout port vLLM comme sensible. Si tu l'utilises : serveur de banc seulement, port ouvert au seul client de
-test, jamais en production.
+Observation writes nothing by default: the history is in Prometheus (`prometheus-data/` if you start the binary
+yourself); `observation.query --output f.csv` writes the windows of a query.
 
----
+`server_config.json` contains: vLLM version, model and maximum context, cache configuration,
+fingerprint and decoded parallelism, number of speculative tokens (counted in `/metrics`), for each `/metrics` URL the
+number of `vllm:` lines read (`vllm_lines`) and the HTTP status (`metrics_status`) from which the reports and the
+launch warning tell vLLM's address from another one, and, only if
+vLLM is launched with `VLLM_SERVER_DEV_MODE=1`, the speculative decoding method and the scheduler
+(`max_num_seqs`, `max_num_batched_tokens`). That mode is **not recommended**, see [Appendix A](#appendix-a-security-notes).
 
-## 11. Dépannage
+### 11.2 Repository contents
 
-| Symptôme | Cause probable | Que faire |
-|---|---|---|
-| `ÉCHEC à la concurrence N` | voir `resultats/<étiquette>/c<N>.log` | souvent tokenizer introuvable (§ 2.3) ou cible injoignable (§ 2.4) |
-| `HFValidationError` ou tokenizer introuvable dans le journal AIPerf | AIPerf lancé à la main avec `HF_HUB_OFFLINE=1`, ou `TOKENIZER` = nom Hugging Face absent du cache local | passe par `balayage.sh` avec le tokenizer de `outils/tokenizer/` (§ 2.3) |
-| colonnes préempt / cache / MTP vides | `/metrics` non lu | vérifie `METRIQUES` (obligatoire via LiteLLM) |
-| `err` > 0 | requêtes refusées ou expirées | clé, nom du modèle, `--max-model-len`, `--max-num-seqs` |
-| débit des agents « — » | fenêtre de mesure vide | `--prechauffe` plus court que `--duree`, paliers assez longs |
-| cache ≈ 0 pour les agents | cache de préfixes désactivé | redémarre vLLM sans `--no-enable-prefix-caching` |
-| TP/PP/DP « n/d » dans l'interface | pas d'empreinte | modèle et clé corrects ; `--fingerprint-mode` par défaut ; viser vLLM directement |
-| « Un essai est en cours : pas de complétion d'un jeton, donc pas d'empreinte » | test de connexion pendant un essai | normal : la complétion d'un jeton fausserait la mesure |
-| AgentX : « Scenario invariants violated » | `DUREE` < 900 s, ou AIPerf lancé à la main sur des traces locales | `DUREE` ≥ 900 (ou `ESSAI_COURT=1` pour une simple vérification) ; passer par `agentx.sh` |
-| AgentX : `err` > 0 au dépouillement | requêtes plus longues que `--max-model-len` (AIPerf les retire de ses métriques ; le dépouillement les compte dans `err`) | augmente-le ; `AGENTX_VARIANTE=256k` pour un modèle à ≈ 256 000 jetons ; ou `CONTEXTE_MAX` ≈ `--max-model-len` − 2 048 pour écarter les traces trop longues (§ 4.2) |
-| AgentX : « Aucune trace ne tient » | `CONTEXTE_MAX` sous le contexte de toutes les traces | augmente `CONTEXTE_MAX` et `--max-model-len` ; sur un petit modèle, AgentX n'est pas faisable (§ 4.2) |
-| AgentX : `timed out waiting for dataset configuration` | chargement des traces plus long que le délai d'AIPerf | `AIPERF_DATASET_CONFIGURATION_TIMEOUT` plus grand (§ 4) |
-| `ERREUR : nombre de GPU inconnu` au dépouillement | empreinte absente, ou `METRIQUES` ne vise pas vLLM pendant l'essai | `--gpu N` (champ « GPU » de l'interface) |
-| LiteLLM dans Docker : erreur de connexion vers vLLM | `127.0.0.1` désigne le conteneur, pas la machine | `api_base: http://host.docker.internal:<port de vLLM>/v1` ([Docker Desktop](https://docs.docker.com/desktop/features/networking/networking-how-tos/)) |
-| `api_base` sur un port comme 56964 | port lu dans le journal de vLLM : c'est celui de l'appelant | le port de vLLM est son `--port` (8000 par défaut) |
-| Observation : « part interpolée * » | pas de borne d'histogramme à la cible | `--custom-histogram-buckets` (§ 6.1) |
-| Observation : « Aucune cible vLLM … dans Prometheus » | sélecteur faux, ou Prometheus ne collecte pas vLLM | page `http://<hôte>:9090/targets` : la cible doit être « UP » ; `--vllm 'job="<job_name>"'` |
-| Observation : fenêtres « écartée » | cible injoignable, redémarrage de vLLM, ou collectes manquantes (message ATTENTION) | page Targets de Prometheus : erreur affichée ; pare-feu, adresse, vLLM arrêté |
-| Observation : « Plage plus courte qu'une fenêtre » | `--depuis` ou `--debut`/`--fin` plus courts que `--fenetre` | allonge la plage ou raccourcis la fenêtre |
-| Vue par agent vide | LiteLLM non collecté ou étiquette absente | cible `litellm` « UP » dans Prometheus ; `callbacks: ["prometheus"]`, `prometheus_client` installé, `metrics_path: /metrics/`, clé ; `--par` |
-| Cible LiteLLM « DOWN » dans Prometheus, erreur 401 ou fichier de clé introuvable | clé absente ou fausse, ou `litellm.cle` manquant ou illisible | crée `litellm.cle` (§ 6.2) avec une clé valide ; `metrics_path: /metrics/` |
-| Docker : « not a directory: Are you trying to mount a directory onto a file » | `prometheus.yml` ou `litellm.cle` absent au premier `up` : Docker a créé un dossier à sa place | `rmdir prometheus.yml litellm.cle`, crée les fichiers, relance (§ 6.2, B) |
-| Observation : fenêtres « écartée » en série | `--collecte` plus court que le `scrape_interval` réel | donne la valeur de `prometheus.yml` |
-| LiteLLM ne démarre pas avec `callbacks: ["prometheus"]` | module `prometheus_client` absent | `pip install prometheus_client` dans l'environnement de LiteLLM |
-
----
-
-## 12. Vérifier la chaîne sans GPU
-
-Un faux serveur compatible OpenAI permet de tester les scripts sans modèle (les chiffres ne mesurent rien).
-Il imite aussi les histogrammes et jauges de vLLM et, sur `/litellm/metrics/`, les métriques de LiteLLM par clé
-et par `metadata_agent`. L'observation se vérifie avec un Prometheus qui collecte le factice
-(`outils/prometheus-factice.yml`, collecte toutes les 5 s, vLLM et « LiteLLM » sur le port 8001 ; le factice
-n'expose pas `process_start_time_seconds`) :
-
-```bash
-python outils/serveur_factice.py --port 8001 --delai-jeton 0.02 \
-  --bornes-itl '[0.01, 0.0133, 0.02, 0.0333, 0.05, 0.1]' &      # à arrêter ensuite : kill %1
-cd agents_test && python lanceur.py --url http://127.0.0.1:8001 --paliers "1 2" --duree 20 \
-  --prechauffe 2 --echelle 0.05 --facteur-latence 0.02 --etiquette essai --sortie /tmp/essai
-python depouiller_agents.py /tmp/essai --cible 30          # GPU déduits de l'empreinte du factice : 8
-# observation : Prometheus collecte le factice, une charge tourne 5 min, puis on interroge
-cd .. && printf cle > outils/litellm.cle                      # ignoré par git
-prometheus --config.file=outils/prometheus-factice.yml --storage.tsdb.path=/tmp/prom-data &   # à arrêter ensuite
-(cd agents_test && python lanceur.py --url http://127.0.0.1:8001 --paliers "2" --duree 300 --prechauffe 2 \
-  --echelle 0.05 --facteur-latence 0.05 --etiquette charge --sortie /tmp/charge --etiqueter-agents)
-python observation/interroger.py --prometheus http://127.0.0.1:9090 --depuis 5m --fenetre 1m --collecte 5s \
-  --cible 30 --gpu 8            # 8 : comme l'empreinte du factice
-python observation/interroger.py --prometheus http://127.0.0.1:9090 --litellm 'job="litellm"' \
-  --depuis 5m --fenetre 1m --collecte 5s --cible 30 --gpu 8 --vue agents
-```
-
----
-
-## Contenu du dépôt
-
-| Chemin | Rôle |
+| Path | Role |
 |---|---|
-| `balayage.sh`, `depouiller.py` | stress test synthétique (AIPerf) et dépouillement des stress tests AIPerf |
-| `agentx.sh`, `outils/telecharger_traces_agentx.sh` | stress test AgentX ; copie locale des traces |
-| `observation/interroger.py`, `analyse.py` | mode observation : interrogation de Prometheus, verdicts (fenêtres, périodes, agents) |
-| `outils/prometheus.yml.exemple`, `prometheus-factice.yml` | configuration de Prometheus (production, vérification sans GPU) |
-| `agents_test/agents.py` | les trois agents de test et leurs outils simulés |
-| `agents_test/lanceur.py`, `depouiller_agents.py` | lancement par paliers, dépouillement |
-| `agents_test/commun.py`, `metriques.py` | appel mesuré au modèle (streaming), relevé de `/metrics` |
-| `outils/config_serveur.py` | relevé de la configuration des serveurs vLLM |
-| `outils/telecharger_tokenizer.sh`, `cible.env.exemple` | tokenizer par défaut, modèle de réglages |
-| `outils/serveur_factice.py` | faux serveur pour vérifier la chaîne |
-| `interface/` | interface locale (React compilée + serveur Python) |
+| `sweep.sh` | synthetic stress test (AIPerf) |
+| `agentx.sh`, `tools/download_agentx_traces.sh` | AgentX stress test; local copy of the traces |
+| `observation/query.py`, `analysis.py` | observation mode: Prometheus queries (`python -m observation.query`), indicators and verdicts (windows, periods, agents) |
+| `tools/prometheus.yml.example`, `prometheus-fake.yml` | Prometheus configuration (production; check without a GPU) |
+| `agents_test/agents.py` | the three test agents and their simulated tools |
+| `agents_test/launcher.py` | launch by levels |
+| `agents_test/common.py`, `metrics.py` | measured model call (streaming), `/metrics` reading |
+| `tools/server_config.py` | reading of the vLLM servers' configuration; GPU count deduced from the fingerprint |
+| `tools/download_tokenizer.sh`, `target.env.example` | default tokenizer, settings template |
+| `tools/settings.py` | reads the `BENCH_*` variables |
+| `tools/fake_server.py` | fake server to check the pipeline (vLLM and LiteLLM metrics, `/admin?rate=…`) |
+| `report/` | reporting: `python -m report aiperf\|agents <root> --target N [--gpu N]` |
+| `interface/` | local interface (compiled React + Python server) |
+| `pyproject.toml` | dependency groups (`runtime`, `dev` with `pytest` and `ruff`, `tokenizer`), pytest and ruff configuration; the repository is run from its root, not pip-installed |
+| `tests/` | tests (`python -m pytest`): golden reference outputs of the two report kinds and of the observation views (`tests/golden/`), validators, round-trip tests; lint with `ruff check .` |
 
-Les agents de test n'utilisent aucune donnée interne. Les journaux contiennent des nombres (heures, jetons,
-durées), les étiquettes, les noms d'agents et les messages d'erreur ; aucun contenu d'invite ni de réponse.
+`.gitignore` also keeps out of the repository `target.env`, the AgentX traces folders (`traces-agentx*/`), `prometheus.yml`,
+`litellm.key`, `prometheus-data/`, `data/` and `/*.csv`.
 
-## Sources
+The test agents use no internal data. The logs contain numbers (times, tokens,
+durations), labels, agent names and error messages; no prompt or response content.
 
-- vLLM, code au commit `7f855f6` :
-  [empreinte `system_fingerprint`](https://github.com/vllm-project/vllm/blob/7f855f605892656ebf7265642e5d22a34a6ae731/vllm/entrypoints/serve/utils/fingerprint.py) ·
+### 11.3 Troubleshooting
+
+| Symptom | Likely cause | What to do |
+|---|---|---|
+| failure at concurrency N (`sweep.sh` / `agentx.sh` stop) | see `results/<label>/c<N>.log` | often tokenizer not found ([section 5.3](#53-copy-the-tokenizer)) or target unreachable ([section 5.4](#54-test-the-connection)) |
+| `HFValidationError` or tokenizer not found in the AIPerf log | AIPerf launched by hand with `HF_HUB_OFFLINE=1`, or `BENCH_TOKENIZER` = a Hugging Face name absent from the local cache | go through `sweep.sh` with the tokenizer in `tools/tokenizer/` ([section 5.3](#53-copy-the-tokenizer)) |
+| preempt / cache / MTP columns empty | `/metrics` not read, or not vLLM's | check `BENCH_METRICS`: vLLM's address, required through LiteLLM (launch warning, [section 5.4](#54-test-the-connection)) |
+| `err` > 0 | requests refused or timed out | key, model name, `--max-model-len`, `--max-num-seqs` |
+| agent throughput "—" | empty measurement window | `--warmup` shorter than `--duration`, levels long enough |
+| cache about 0 for the agents | prefix cache disabled | restart vLLM without `--no-enable-prefix-caching` |
+| TP/PP/DP "n/a" in the interface | no fingerprint | correct model and key; default `--fingerprint-mode`; target vLLM directly |
+| the interface says a run is in progress and so no one-token completion (no fingerprint) | connection test during a run | normal: a one-token completion would skew the measurement |
+| AgentX: "Scenario invariants violated" | `BENCH_DURATION` < 900 s, or AIPerf launched by hand on local traces | `BENCH_DURATION` ≥ 900 (or `BENCH_SHORT_RUN=1` for a simple check); go through `agentx.sh` |
+| AgentX: `err` > 0 in the report | requests longer than `--max-model-len` (AIPerf removes them from its metrics; the report counts them in `err`) | raise it; `BENCH_AGENTX_VARIANT=256k` for a model at about 256,000 tokens; or `BENCH_MAX_CONTEXT` about `--max-model-len` − 2,048 to discard traces that are too long ([section 7.5](#75-context-shorter-than-the-traces)) |
+| AgentX: no trace fits | `BENCH_MAX_CONTEXT` below the context of every trace | raise `BENCH_MAX_CONTEXT` and `--max-model-len`; on a small model AgentX is not feasible ([section 7.5](#75-context-shorter-than-the-traces)) |
+| AgentX: `timed out waiting for dataset configuration` | loading the traces takes longer than AIPerf's timeout | raise `AIPERF_DATASET_CONFIGURATION_TIMEOUT` ([section 7.3](#73-agentx-stress-test)) |
+| `ERROR: number of GPUs unknown` from a report | fingerprint missing, or `BENCH_METRICS` did not point to vLLM during the run | `--gpu N` ("GPU" field of the interface) |
+| LiteLLM in Docker: connection error to vLLM | `127.0.0.1` refers to the container, not the machine | `api_base: http://host.docker.internal:<vLLM port>/v1` ([Docker Desktop](https://docs.docker.com/desktop/features/networking/networking-how-tos/)) |
+| `api_base` on a port like 56964 | port read from vLLM's log: it is the caller's | vLLM's port is its `--port` (8000 by default) |
+| Observation: "interpolated share *" | no histogram bound at the target | `--custom-histogram-buckets` ([section 8.1](#81-tune-vllm-for-exact-interactivity)) |
+| Observation: "No vLLM target … in Prometheus" | wrong selector, or Prometheus does not scrape vLLM | page `http://<host>:9090/targets`: the target must be "UP"; `--vllm 'job="<job_name>"'` |
+| Observation: windows "discarded" | target unreachable, vLLM restart, or missing scrapes (WARNING message) | Targets page of Prometheus: the error is shown; firewall, address, vLLM stopped |
+| Observation: windows "discarded" in a row | `--scrape` shorter than the real `scrape_interval` | give the value of `prometheus.yml` |
+| Observation: "Range shorter than one window" | `--since` or `--start`/`--end` shorter than `--window` | lengthen the range or shorten the window |
+| Empty per-agent view | LiteLLM not scraped or label missing | `litellm` target "UP" in Prometheus; `callbacks: ["prometheus"]`, `prometheus_client` installed, `metrics_path: /metrics/`, key; `--by` ([section 8.5](#85-per-agent-view-through-litellm)) |
+| LiteLLM target "DOWN" in Prometheus, 401 error or key file not found | key missing or wrong, or `litellm.key` missing or unreadable | create `litellm.key` ([section 8.2](#82-install-and-start-prometheus-once)) with a valid key; `metrics_path: /metrics/` |
+| Docker: "not a directory: Are you trying to mount a directory onto a file" | `prometheus.yml` or `litellm.key` missing at the first `up`: Docker created a folder in its place | `rmdir prometheus.yml litellm.key`, create the files, start again ([section 8.2](#82-install-and-start-prometheus-once), B) |
+| LiteLLM does not start with `callbacks: ["prometheus"]` | `prometheus_client` module missing | `pip install prometheus_client` in LiteLLM's environment ([Appendix B](#appendix-b-litellm-per-key-setup-and-install-details)) |
+
+[↑ Back to top](#top)
+
+---
+
+## Appendix A. Security notes
+
+**`--api-key` is not enough to protect vLLM.** It only applies to the `/v1`, `/v2`, `/inference`
+and `/cohere` paths; the others stay open, including `/metrics` and `/invocations`, which gives the same inference
+as `/v1` ([vLLM, `cli_args.py`](https://github.com/vllm-project/vllm/blob/7f855f605892656ebf7265642e5d22a34a6ae731/vllm/entrypoints/common/cli_args.py#L337-L347);
+[vLLM security](https://docs.vllm.ai/en/latest/usage/security.html#api-key-authentication-limitations)).
+Open vLLM's port only to the test client (firewall, private network). On the server side, `DO_NOT_TRACK=1`
+turns off vLLM's usage-statistics reporting ([`envs.py`](https://github.com/vllm-project/vllm/blob/7f855f605892656ebf7265642e5d22a34a6ae731/vllm/envs.py), [`usage_lib.py`](https://github.com/vllm-project/vllm/blob/7f855f605892656ebf7265642e5d22a34a6ae731/vllm/usage/usage_lib.py)).
+
+**`VLLM_SERVER_DEV_MODE=1` is not recommended.** It lets `server_config.json` record the speculative decoding method
+and the scheduler, but it also opens
+control endpoints (including weight replacement) that answer without a key
+([registration](https://github.com/vllm-project/vllm/blob/7f855f605892656ebf7265642e5d22a34a6ae731/vllm/entrypoints/launchers/api_server/routers.py#L46-L53),
+[routes](https://github.com/vllm-project/vllm/blob/7f855f605892656ebf7265642e5d22a34a6ae731/vllm/entrypoints/rl/online/api_router.py)). vLLM's security page presents some of these
+routes as open even outside dev mode; when in doubt, treat any vLLM port as sensitive. If you use it: bench server only, port open only to the test
+client, never in production.
+
+**The API key on the AIPerf command line.** `sweep.sh` and `agentx.sh` give the key to AIPerf with `--api-key`, so
+it is visible in `ps` on the client machine while AIPerf runs (AIPerf masks it in its own logs). Use a dedicated
+bench key, and do not run the clients on a shared machine. The bench's own logs never contain it, and the interface
+masks it in the command it prints.
+
+**The interface only talks to local or private hosts, and only reads inside your own directories.** The target URL
+receives the API key, the Prometheus URL receives its key, and the metrics URLs are fetched by the interface machine, so the interface refuses a URL whose
+host is not loopback, private (10/8, 172.16/12, 192.168/16, `fd00::/8`), link-local or a name that resolves only to such
+addresses (a host name that does not resolve is refused too). Start the interface with `BENCH_ALLOW_PUBLIC_URLS=1`
+to allow public hosts, for example a hosted LiteLLM gateway. The traces folder of an AgentX run must lie, once `..` and
+symbolic links are resolved, under the repository, your home directory or a directory listed in `BENCH_ALLOWED_DIRS`
+(separated like `PATH`). The command-line scripts apply no such restriction.
+
+**Prometheus and the observation.** Prometheus asks for no key by default: publish its port to `127.0.0.1` or to the test
+network only ([section 8.2](#82-install-and-start-prometheus-once)); if you protect it, `BENCH_PROMETHEUS_KEY` carries the
+token. LiteLLM's key sits in `litellm.key` (read by Prometheus, ignored by git, mode 600 unless Docker needs 644): prefer a
+limited virtual key to the master key.
+
+**Test agents and observation.** The test agents' tools are simulated and act on no system. Observation only reads
+metrics, but if you raise the number of your real agents to find the limit, their tools act for real
+([section 8.3](#83-query-the-observation)).
+
+[↑ Back to top](#top)
+
+---
+
+## Appendix B. LiteLLM per-key setup and install details
+
+Details for the per-agent view ([section 8.5](#85-per-agent-view-through-litellm)). Everything here was observed during
+validation with LiteLLM 1.109.1.
+
+**Prometheus metrics.** `prometheus_client` is not installed by `pip install "litellm[proxy]"`, and LiteLLM then
+refuses to start with `callbacks: ["prometheus"]`. Fix: `pip install prometheus_client` in LiteLLM's environment.
+Prometheus then scrapes LiteLLM's **`/metrics/`** (trailing slash) with a key, as declared in the `litellm` job of
+`tools/prometheus.yml.example` ([section 8.2](#82-install-and-start-prometheus-once)). LiteLLM in Docker Compose: the service
+is reached by its Compose name (`litellm:4000`) from a Prometheus in the same Compose.
+
+**Virtual keys (way 1).** LiteLLM stores virtual keys in a PostgreSQL database: set `DATABASE_URL` before
+starting LiteLLM ([documentation](https://docs.litellm.ai/docs/proxy/virtual_keys)). It also needs Prisma, which
+`pip install "litellm[proxy]"` does not install: without it, LiteLLM refuses to start with `DATABASE_URL`, and without a
+database, `/key/generate` fails. With pip:
+
+```bash
+pip install "litellm[proxy,extra_proxy]"
+# then, in the same environment:
+prisma generate --schema "$(python -c 'import litellm_proxy_extras,os;print(os.path.join(os.path.dirname(litellm_proxy_extras.__file__),"schema.prisma"))')"
+```
+
+([LiteLLM documentation](https://docs.litellm.ai/docs/troubleshoot/pip_venv_upgrade)). The `prisma generate` command installs the
+Prisma CLI through npm (Node.js required) then downloads its engines from binaries.prisma.sh: without Internet, you need
+an npm mirror and a mirror of the engines (engine download was refused without Internet). The simplest is to use your team's LiteLLM installation if it already has
+a database.
+
+**Create one key per agent**, with the master key:
+
+```bash
+curl -s -X POST http://<vm>:4000/key/generate -H "Authorization: Bearer $LITELLM_MASTER_KEY" \
+  -H "Content-Type: application/json" -d '{"key_alias": "code-review"}'      # returns the agent's key
+```
+
+Each agent then uses its own key as the API key, and the metrics carry `api_key_alias="code-review"`.
+
+**LiteLLM in Docker.** If vLLM runs on the Docker host, `127.0.0.1` in `api_base` refers to the container: see the
+[troubleshooting table](#113-troubleshooting).
+
+[↑ Back to top](#top)
+
+---
+
+## Appendix C. Sources
+
+- vLLM, code at commit `7f855f6`:
+  [`system_fingerprint` fingerprint](https://github.com/vllm-project/vllm/blob/7f855f605892656ebf7265642e5d22a34a6ae731/vllm/entrypoints/serve/utils/fingerprint.py) ·
   [`--api-key`, `--fingerprint-mode`](https://github.com/vllm-project/vllm/blob/7f855f605892656ebf7265642e5d22a34a6ae731/vllm/entrypoints/common/cli_args.py) ·
-  [contrôle de la clé](https://github.com/vllm-project/vllm/blob/7f855f605892656ebf7265642e5d22a34a6ae731/vllm/entrypoints/serve/middleware/authenticate.py) ·
-  [routes de développement](https://github.com/vllm-project/vllm/blob/7f855f605892656ebf7265642e5d22a34a6ae731/vllm/entrypoints/launchers/api_server/routers.py) ·
+  [key check](https://github.com/vllm-project/vllm/blob/7f855f605892656ebf7265642e5d22a34a6ae731/vllm/entrypoints/serve/middleware/authenticate.py) ·
+  [development routes](https://github.com/vllm-project/vllm/blob/7f855f605892656ebf7265642e5d22a34a6ae731/vllm/entrypoints/launchers/api_server/routers.py) ·
   [`/server_info`](https://github.com/vllm-project/vllm/blob/7f855f605892656ebf7265642e5d22a34a6ae731/vllm/entrypoints/serve/dev/server_info/api_router.py) ·
-  [métriques du décodage spéculatif](https://github.com/vllm-project/vllm/blob/7f855f605892656ebf7265642e5d22a34a6ae731/vllm/v1/spec_decode/metrics.py) ·
+  [speculative decoding metrics](https://github.com/vllm-project/vllm/blob/7f855f605892656ebf7265642e5d22a34a6ae731/vllm/v1/spec_decode/metrics.py) ·
   [`VLLM_SERVER_DEV_MODE`, `DO_NOT_TRACK`](https://github.com/vllm-project/vllm/blob/7f855f605892656ebf7265642e5d22a34a6ae731/vllm/envs.py)
-- vLLM, documentation : [métriques](https://docs.vllm.ai/en/stable/usage/metrics/) ·
-  [sécurité](https://docs.vllm.ai/en/latest/usage/security.html) ·
-  [appel d'outils](https://docs.vllm.ai/en/stable/features/tool_calling.html)
-- vLLM, métriques d'observation au commit `7f855f6` : [`loggers.py`](https://github.com/vllm-project/vllm/blob/7f855f605892656ebf7265642e5d22a34a6ae731/vllm/v1/metrics/loggers.py) (dont [`vllm:num_requests_running`](https://github.com/vllm-project/vllm/blob/7f855f605892656ebf7265642e5d22a34a6ae731/vllm/v1/metrics/loggers.py#L534)) ·
+- vLLM, documentation: [metrics](https://docs.vllm.ai/en/stable/usage/metrics/) ·
+  [security](https://docs.vllm.ai/en/latest/usage/security.html) ·
+  [tool calling](https://docs.vllm.ai/en/stable/features/tool_calling.html)
+- vLLM, observation metrics at commit `7f855f6`: [`loggers.py`](https://github.com/vllm-project/vllm/blob/7f855f605892656ebf7265642e5d22a34a6ae731/vllm/v1/metrics/loggers.py) (including [`vllm:num_requests_running`](https://github.com/vllm-project/vllm/blob/7f855f605892656ebf7265642e5d22a34a6ae731/vllm/v1/metrics/loggers.py#L534)) ·
   [`stats.py`](https://github.com/vllm-project/vllm/blob/7f855f605892656ebf7265642e5d22a34a6ae731/vllm/v1/metrics/stats.py) · [`buckets.py`](https://github.com/vllm-project/vllm/blob/7f855f605892656ebf7265642e5d22a34a6ae731/vllm/v1/metrics/buckets.py) ·
   [`observability.py`](https://github.com/vllm-project/vllm/blob/7f855f605892656ebf7265642e5d22a34a6ae731/vllm/config/observability.py)
-- AgentX : [méthode InferenceX](https://inferencex.semianalysis.com/blog/agentic-benchmark-agent-benchmark-guide) ·
-  [jeu de traces `cc-traces-weka-062126`](https://huggingface.co/datasets/semianalysisai/cc-traces-weka-062126) ·
-  scénario AIPerf : `aiperf/common/scenario/inferencex_agentx_mvp.py` dans le paquet installé
-- Prometheus : [présentation](https://prometheus.io/docs/introduction/overview/) ·
+- AgentX: [InferenceX method](https://inferencex.semianalysis.com/blog/agentic-benchmark-agent-benchmark-guide) ·
+  [trace set `cc-traces-weka-062126`](https://huggingface.co/datasets/semianalysisai/cc-traces-weka-062126) ·
+  AIPerf scenario: `aiperf/common/scenario/inferencex_agentx_mvp.py` in the installed package
+- Prometheus: [overview](https://prometheus.io/docs/introduction/overview/) ·
   [configuration (`scrape_config`, `authorization`)](https://prometheus.io/docs/prometheus/latest/configuration/configuration/#scrape_config) ·
-  [fonctions PromQL (`resets`)](https://prometheus.io/docs/prometheus/latest/querying/functions/#resets) ·
-  [API HTTP (`query_range`)](https://prometheus.io/docs/prometheus/latest/querying/api/#range-queries) ·
-  [opérateurs (`and`, `unless`)](https://prometheus.io/docs/prometheus/latest/querying/operators/#logical-set-binary-operators) ·
+  [PromQL functions (`resets`)](https://prometheus.io/docs/prometheus/latest/querying/functions/#resets) ·
+  [HTTP API (`query_range`)](https://prometheus.io/docs/prometheus/latest/querying/api/#range-queries) ·
+  [operators (`and`, `unless`)](https://prometheus.io/docs/prometheus/latest/querying/operators/#logical-set-binary-operators) ·
   [`offset`](https://prometheus.io/docs/prometheus/latest/querying/basics/#offset-modifier) ·
-  [téléchargement](https://prometheus.io/download/) ; testé avec Prometheus 3.7.3
+  [download](https://prometheus.io/download/); tested with Prometheus 3.7.3
 - [AIPerf 0.12.0](https://pypi.org/project/aiperf/0.12.0/) ·
-  [balayage de concurrence (NVIDIA)](https://docs.nvidia.com/nim/benchmarking/llm/latest/step-by-step.html)
-- LiteLLM : [fournisseur vLLM](https://docs.litellm.ai/docs/providers/vllm) · [configuration du proxy](https://docs.litellm.ai/docs/proxy/configs) ·
-  [métriques Prometheus](https://docs.litellm.ai/docs/proxy/prometheus)
+  [concurrency sweep (NVIDIA)](https://docs.nvidia.com/nim/benchmarking/llm/latest/step-by-step.html)
+- LiteLLM: [vLLM provider](https://docs.litellm.ai/docs/providers/vllm) · [proxy configuration](https://docs.litellm.ai/docs/proxy/configs) ·
+  [Prometheus metrics](https://docs.litellm.ai/docs/proxy/prometheus)
+
+[↑ Back to top](#top)
+
+---
+
+## Appendix D. Tests
+
+```bash
+pip install --group dev       # the "dev" dependency group of pyproject.toml (pip 25.1+); the repository itself is not installed
+python -m pytest              # from the root
+ruff check .                  # lint; configured in pyproject.toml
+```
+
+`pyproject.toml` holds the dependency groups (`runtime`: `openai`, `httpx`, `aiohttp`; `dev`: the same plus `pytest` and
+`ruff`), the pytest configuration and the ruff configuration. The repository is run from its root and is not meant to be
+pip-installed. `tests/` covers the analysis functions, the two report kinds (`aiperf`, `agents`) and the observation views (windows, period, agents) against reference outputs (golden tests
+in `tests/golden/`), the settings reading and the module structure, and checks the validators and the file formats
+(round trips between what the tools write and what the reports read). Files in `tests/`: `test_analysis.py`, `test_analysis_more.py`, `test_imports.py`, `test_settings.py`, `test_report_common.py`, `test_report_agents.py`, `test_report_golden.py`, `test_interface_validators.py`, `test_scripts.py`, `test_server_config.py`, `test_agents_common.py`, `test_agents_metrics.py`, `test_fake_server.py`, `test_round_trip.py`, the shared `fixtures.py`, `helpers.py` and `conftest.py`, and the `golden/` folder.
+
+[↑ Back to top](#top)
+
+---
+
+## Appendix E. Glossary
+
+- **TTFT** (time to first token): the wait between sending a request and receiving its first token.
+- **ITL** (inter-token latency) and **interactivity**: the average time between two tokens of a request;
+  interactivity is its inverse, in tokens/s per request. **Inter P10** is the interactivity at the
+  10th percentile: 90% of requests wrote at least at this speed. The **target** is the interactivity you want to guarantee.
+- **MTP / speculative decoding**: the model proposes several tokens at once and the server verifies them; the
+  **acceptance rate** (MTP column) says how many are kept.
+- **KV cache**: the GPU memory that holds the attention state of the requests in progress; when it is full, requests wait or are preempted.
+- **Prefix caching**: vLLM reuses the already computed beginning of a prompt. It helps agents, which re-read their context, and would inflate synthetic loads that repeat the same prompts.
+- **Preemption**: vLLM suspends a request because it ran out of memory; it should stay at 0 in a measurement.
+- **AIPerf**: NVIDIA's load generator, used by `sweep.sh` and `agentx.sh`.
+- **AgentX / InferenceX**: SemiAnalysis' AgentX benchmark (public coding-agent sessions replayed against a server) published on the InferenceX site.
+- **LiteLLM**: an optional gateway in front of vLLM; it can also label requests per agent.
+- **Fingerprint**: the `system_fingerprint` field vLLM returns in its responses; the bench decodes the parallelism (TP, PP, DP, EP) from it.
+- **Prometheus**: a separate server that scrapes the `/metrics` of vLLM (and LiteLLM) at a fixed interval and keeps the history; `observation.query` asks it for the difference between the start and the end of each window.
+- **Scrape interval** (`scrape_interval`): how often Prometheus reads each `/metrics` (15 s by default); `--scrape` must carry the same value, and a window lasts at least 4 scrapes.
+- **Deduced GPUs**: without `--gpu`, the reports compute the GPU count as TP x PP x DP from the fingerprint, times the number of vLLM servers in `BENCH_METRICS`; the observation cannot (Prometheus does not see the fingerprint), so `--gpu` is required there.
+- **Replica**: one vLLM server serving the model; several replicas can sit behind one target.
+
+[↑ Back to top](#top)
