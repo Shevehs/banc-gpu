@@ -74,6 +74,8 @@ Two families of measurements:
 | **Test-agents stress test** | `agents_test/` | three simulated agent profiles | enabled | agent load close to your usage | [7.6](#76-test-agents-stress-test) |
 | **Observation** | `observation/query.py` + Prometheus | your agents, in real use | as configured | "does it hold?", per window, period, agent | [8](#8-observation-real-use) |
 
+The stress tests read vLLM's `/metrics` themselves while they run; only observation needs Prometheus, because it analyses past activity.
+
 **Start with the synthetic stress test**: it needs no trace download and is the quickest way to validate your setup.
 Use observation instead if you already have agents running in production (it needs a Prometheus, [section 8.2](#82-install-and-start-prometheus-once)). Changing the prefix cache
 requires restarting vLLM (see [section 4.2](#42-check-the-vllm-in-place)).
