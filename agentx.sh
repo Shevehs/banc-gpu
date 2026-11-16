@@ -4,7 +4,7 @@
 # (number of sessions replayed at the same time). Analysis: python -m report aiperf results-agentx ...
 # Usage: ./agentx.sh LABEL "1 2 4 8"
 # Settings via environment variables (README, section 6.3). Same connection fields as sweep.sh.
-# Written for bash 3.2 (macOS) and later; tested with bash 5.
+# Written for bash 3.2 and later; tested with bash 5.
 set -euo pipefail
 LABEL="${1:?give a label, e.g. agentx-r1}"
 if ! printf '%s' "$LABEL" | grep -Eq '^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$' || case "$LABEL" in *..*) true ;; *) false ;; esac; then
@@ -23,16 +23,16 @@ DURATION="${BENCH_DURATION:-1800}"                       # seconds per level; th
 ROOT_DIR="${BENCH_ROOT_DIR:-results-agentx}"
 OVERWRITE="${BENCH_OVERWRITE:-}"
 # Traces: by default, the dataset pinned by the scenario, downloaded from Hugging Face:
-#   AGENTX_VARIANT empty -> semianalysisai/cc-traces-weka-062126 (full contexts)
-#   AGENTX_VARIANT=256k  -> semianalysisai/cc-traces-weka-062126-256k (requests over 256,000 tokens removed
+#   BENCH_AGENTX_VARIANT empty -> semianalysisai/cc-traces-weka-062126 (full contexts)
+#   BENCH_AGENTX_VARIANT=256k  -> semianalysisai/cc-traces-weka-062126-256k (requests over 256,000 tokens removed
 #                            by SemiAnalysis; for a --max-model-len of about 256,000; also accepted by the scenario)
-# AGENTX_DIR = local traces folder (JSON files in Weka format): AIPerf then cannot verify the
+# BENCH_AGENTX_DIR = local traces folder (JSON files in Weka format): AIPerf then cannot verify the
 # dataset, and the trial is marked submission_valid=false (--unsafe-override).
 AGENTX_VARIANT="${BENCH_AGENTX_VARIANT:-}"
 AGENTX_DIR="${BENCH_AGENTX_DIR:-}"
 SHORT_RUN="${BENCH_SHORT_RUN:-}"               # 1 = levels shorter than 900 s (check only, not comparable)
 # Maximum context (tokens): AIPerf discards traces whose peak context exceeds this value
-# (--max-context-length). For a short-context model (e.g. Mac, 32,768): only the sessions that fit
+# (--max-context-length). For a short-context model (e.g. a small server, 32,768): only the sessions that fit
 # are replayed, a subset biased toward short sessions, hence not comparable to published results.
 MAX_CONTEXT="${BENCH_MAX_CONTEXT:-}"
 SEED="${BENCH_SEED:-$(printf '%s' "$LABEL" | cksum | cut -d' ' -f1)}"

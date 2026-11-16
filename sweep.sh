@@ -3,8 +3,8 @@
 # Usage: ./sweep.sh LABEL "1 2 4 8 16"
 # Settings via environment variables (see the README, section 6.1).
 # URL points at vLLM directly or at a gateway (LiteLLM). The vLLM metrics are read from URL/metrics;
-# with a gateway or several replicas, give the vLLM /metrics URLs in METRICS.
-# Written for bash 3.2 (macOS) and later; tested with bash 5.
+# with a gateway or several replicas, give the vLLM /metrics URLs in BENCH_METRICS.
+# Written for bash 3.2 and later; tested with bash 5.
 set -euo pipefail
 LABEL="${1:?give a label, e.g. trial-r1}"
 if ! printf '%s' "$LABEL" | grep -Eq '^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$' || case "$LABEL" in *..*) true ;; *) false ;; esac; then
@@ -27,7 +27,7 @@ TEMPERATURE="${BENCH_TEMPERATURE:-0.7}"            # fixed so that MTP acceptanc
 ROOT_DIR="${BENCH_ROOT_DIR:-results}"                # results directory
 OVERWRITE="${BENCH_OVERWRITE:-}"                       # 1 = replace existing results with the same label
 EXTRA="${BENCH_EXTRA:-}"                           # additional AIPerf options, e.g. "--use-server-token-count --api-key XXX"
-# A different seed for each label (hence for each repetition), unless SEED is set.
+# A different seed for each label (hence for each repetition), unless BENCH_SEED is set.
 SEED="${BENCH_SEED:-$(printf '%s' "$LABEL" | cksum | cut -d' ' -f1)}"
 if [ -d "$ROOT_DIR/$LABEL" ] && [ -n "$(ls -A "$ROOT_DIR/$LABEL" 2>/dev/null)" ]; then
   if [ "$OVERWRITE" = "1" ]; then rm -rf "${ROOT_DIR:?}/$LABEL"

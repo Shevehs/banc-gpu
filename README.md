@@ -17,7 +17,7 @@ Two families of measurements:
 
 > **Status.** Written from the code of **vLLM at commit [`7f855f6`](https://github.com/vllm-project/vllm/tree/7f855f605892656ebf7265642e5d22a34a6ae731)**
 > and tested with **AIPerf 0.12.0** against a fake server ([Appendix E](#appendix-e-try-the-bench-without-a-gpu)).
-> Against a real vLLM it has only been tried on a small local server (vllm-metal, vLLM 0.33.0), **not yet on a GPU server**.
+> Against a real vLLM it has only been tried on a small local server (vLLM 0.33.0), **not yet on a GPU server**.
 > On your first real run, compare your outputs with the example in [section 5.4](#54-test-the-connection).
 > Unfamiliar terms: see [Appendix G](#appendix-g-glossary). What is verified, documented or still unchecked is
 > listed in [Appendix F](#appendix-f-validation-status).
@@ -96,7 +96,7 @@ requires restarting vLLM (see [section 4.2](#42-check-the-vllm-in-place)).
 ## 2. Quick start
 
 A first synthetic measurement, on a vLLM that is already running. You need [uv](https://docs.astral.sh/uv/), which
-installs the right Python for the bench ([how to install it](#43-install-the-bench-dependencies), section 4.3).
+installs the right Python for the bench ([how to install it](#43-install-the-bench-dependencies)).
 
 ### 2.1 Get the code and install the dependencies
 
@@ -188,7 +188,7 @@ flowchart LR
     ui["interface.server<br/>127.0.0.1:8765<br/>(starts the scripts and the query)"]
     results[("results*/&lt;label&gt;/<br/>JSON, JSONL, server_config.json")]
     report["python -m report<br/>aiperf | agents"]
-    tables[/"table*.csv + printed<br/>selected operating point"/]
+    tables[/"table*.csv + printed<br/>selected point"/]
     windows[/"printed windows, periods, agents<br/>+ optional CSV (--output)"/]
   end
   prom[("Prometheus<br/>(scrapes every 15 s,<br/>keeps the history)")]
@@ -251,7 +251,7 @@ expose them. A launch warning says so if it points elsewhere.
 | **LiteLLM installed** (optional) | To measure through the gateway, or to follow the agents separately in observation ([section 7.5](#75-per-agent-view-through-litellm)): LiteLLM sees which agent sends each request, vLLM does not. Your vLLM declared as a model of LiteLLM, with its key if it has one ([LiteLLM, vLLM](https://docs.litellm.ai/docs/providers/vllm); [configuration](https://docs.litellm.ai/docs/proxy/configs)). | `curl -s -H "Authorization: Bearer <key>" http://<vm>:4000/v1/models` |
 | **Prometheus** (observation only) | A separate server that scrapes vLLM's `/metrics` (and LiteLLM's) and keeps the history; vLLM does not provide one. A single binary ([download](https://prometheus.io/download/)), or the `prom/prometheus` Docker image. Configuration provided: `tools/prometheus.yml.example` ([section 7.2](#72-install-and-start-prometheus-once)). | `curl -s http://<host>:9090/-/ready` |
 | **uv** on the client machine | Installs the Python that AIPerf 0.12 requires (3.11 to 3.13) for the bench's environment; see [section 4.3](#43-install-the-bench-dependencies). | `uv --version` |
-| **bash** | Tested with bash 5; written for bash 3.2 (macOS), verified only with a bash 3.2 built on Linux. | `bash --version` |
+| **bash** | Tested with bash 5; written to also run on the old bash 3.2, verified only with a bash 3.2 built on Linux. | `bash --version` |
 | **Network** | The client machine reaches vLLM (and LiteLLM). No Internet access is needed once the tokenizer is copied into `tools/tokenizer/` ([section 5.3](#53-copy-the-tokenizer)). | — |
 
 The **client machine** is the one that runs the measurements: the same machine as vLLM for a local trial, or
@@ -314,6 +314,7 @@ In practice:
 |---|---|---|
 | Synthetic | input + output + chat template (e.g. 2,048 + 256, plus a margin) | requests have a fixed length |
 | AgentX | the longest trace context, input **plus output**: up to about 990,000 input tokens (full set), 256,000 (`256k` variant), plus the output and a margin for the chat template; otherwise set `BENCH_MAX_CONTEXT` ([section 6.6](#66-context-shorter-than-the-traces)) | AIPerf does not truncate AgentX traces |
+| AgentX, your own traces | the longest call of your traces, input **plus output**, plus a margin for the chat template | you choose the sizes ([section 6.5](#65-agentx-with-your-own-traces)) |
 | Test agents | about 135,000 x `--scale`, plus the output | contexts reach about 135,000 tokens at scale 1 (estimated with the Qwen vocabulary) |
 | Observation | not applicable | the bench sends nothing |
 
@@ -467,7 +468,7 @@ Example for a TP 8 server with expert parallelism and 3 speculative tokens:
 ```
 [config] target fingerprint: vllm-<version>-tp8-ep-<hash> -> TP 8, PP 1, DP 1, EP yes
 [config] GPUs deduced: 8 (TP 8 × PP 1 × DP 1 × 1 vLLM server(s))
-[config] http://10.0.0.5:8000/metrics : vLLM <version>; prefix cache False; speculative tokens (metrics) 3; /server_info absent or unreadable (VLLM_SERVER_DEV_MODE not enabled?)
+[config] http://10.0.0.5:8000/metrics : vLLM <version>; prefix cache False; speculative tokens (metrics) 3; /server_info absent or not read (VLLM_SERVER_DEV_MODE not enabled?)
 ```
 
 Check that the **prefix cache** and the **parallelism** are those of the measurement you are about to make.
@@ -498,7 +499,8 @@ More cases are in the troubleshooting table ([section 10.3](#103-troubleshooting
 
 The bench generates the load, level by level, until the installation breaks. The prefix-cache setting
 required by each test is in [section 4.2](#42-check-the-vllm-in-place). A **label** names each run; the suffix `-r1`, `-r2`…
-marks repetitions of the same configuration, which the report groups together.
+marks repetitions of the same configuration, which the report groups together. A label has up to 80 characters: letters,
+digits, dots, hyphens and underscores, starting with a letter or a digit and without two dots in a row (`..`).
 
 ### 6.1 Synthetic stress test
 
@@ -521,6 +523,7 @@ vLLM must be launched **with** `--no-enable-prefix-caching`.
 | `BENCH_DURATION` | empty | seconds per level; empty = a fixed number of requests per level (next row) |
 | `BENCH_REQUESTS_PER_CONCURRENCY` | 8 | without `BENCH_DURATION`: requests per level = this value x the concurrency, at least 16 |
 | `BENCH_ROOT_DIR` | `results` | results folder |
+| `BENCH_SEED` | hash of the label | random seed; each label (so each repetition) gets a different one unless you set it |
 | `BENCH_TEMPERATURE` | 0.7 | fixed so that speculative decoding is comparable from one run to the next |
 | `BENCH_EXTRA` | empty | additional AIPerf options, e.g. `--use-server-token-count` |
 
@@ -543,6 +546,8 @@ for two reasons:
 The cost is that the duration of a level depends on the speed of the server, and a low level rests on few requests, so
 its percentiles are rough. To confirm a selected level, or for a reference measurement, set `BENCH_DURATION` instead:
 every level then lasts that many seconds, with many more requests per level.
+
+Each level starts with a warm-up of as many requests as its concurrency. They are not part of the results.
 
 Example for a reference measurement: `BENCH_ISL=32768 BENCH_OSL=512 BENCH_DURATION=900 ./sweep.sh conf-a-r1 "48 52 56 60 64"`.
 
@@ -591,14 +596,15 @@ The columns of the table:
 
 | Column | Meaning |
 |---|---|
-| throughput/GPU | output tokens per second, all requests combined, ÷ number of GPUs |
+| conc | the level: number of requests (sessions for AgentX) in flight at the same time |
+| tput/GPU | output tokens per second, all requests combined, ÷ number of GPUs |
 | inter P10 | interactivity at the 10th percentile: 90% of requests wrote at least at this speed |
 | TTFT P95 ms | wait before the first token, 95th percentile |
 | preempt | requests suspended for lack of memory; must be 0 |
 | err | failed requests; must be 0 |
 | cache | share of input tokens found in the prefix cache; "—" or about 0 for the synthetic load (cache disabled) |
 | MTP | speculative-decoding acceptance rate; "—" without speculative decoding |
-| mean output | average output tokens per request; must equal `BENCH_OSL` (varies from trace to trace for AgentX) |
+| output avg | average output tokens per request; must equal `BENCH_OSL` (varies from trace to trace for AgentX) |
 
 Then the **selected point**: the level with the highest throughput that meets the target, with no errors or
 preemptions (median of the repetitions), and an **estimate interpolated exactly at the target**.
@@ -618,8 +624,11 @@ and hardware.
 
 Contexts are long (a median of about 142,000 input tokens, according to
 [InferenceX](https://inferencex.semianalysis.com/blog/agentic-benchmark-agent-benchmark-guide)) and are not truncated.
-The full measurement is therefore done on GPU servers. On a small server whose context is limited to 32,768 tokens, no trace fits
-([section 6.6](#66-context-shorter-than-the-traces)).
+The full measurement is therefore done on GPU servers.
+
+On a small server whose context is limited to 32,768 tokens, no trace of the published set fits
+([section 6.6](#66-context-shorter-than-the-traces)). You can use shorter traces of your own
+([section 6.5](#65-agentx-with-your-own-traces)).
 
 **What the scenario enforces** (documented in the AIPerf 0.12.0 code,
 `aiperf/common/scenario/inferencex_agentx_mvp.py`, and in AIPerf's message at run time):
@@ -652,6 +661,8 @@ python -m report aiperf results-agentx --target 30
 | `BENCH_AGENTX_DIR` | empty | local traces folder, for use without Internet access ([section 6.4](#64-agentx-without-internet-access)) |
 | `BENCH_AGENTX_VARIANT` | empty | empty = the full set; `256k` = the set without the requests above 256,000 tokens |
 | `BENCH_ROOT_DIR` | `results-agentx` | results folder |
+| `BENCH_SEED` | hash of the label | random seed; each label (so each repetition) gets a different one unless you set it |
+| `BENCH_OVERWRITE` | empty | `1` = replace a run that has the same label |
 | `BENCH_SHORT_RUN` | empty | `1` = levels shorter than 900 s, to check the pipeline only (not comparable) |
 | `BENCH_MAX_CONTEXT` | empty | tokens; AIPerf discards traces whose peak context exceeds this value (`--max-context-length`) |
 | `AIPERF_DATASET_CONFIGURATION_TIMEOUT` | 1800 | seconds allowed for loading the traces |
@@ -695,9 +706,9 @@ AgentX replays recorded sessions, so you can replay the sessions of your own age
 `agentx.sh` takes a local folder of traces through `BENCH_AGENTX_DIR`, the same variable as for the offline copy
 ([section 6.4](#64-agentx-without-internet-access)).
 
-I tried it with a small folder of hand-made traces, replayed against the fake server: AIPerf accepted the folder, replayed
-the sessions and the report ran. The run was marked `submission_valid=false`, as expected. I have **not** tried traces
-captured from a real agent.
+It was tried with a small folder of hand-made traces, replayed against the fake server: AIPerf accepted the folder,
+replayed the sessions and the report ran. The run was marked `submission_valid=false`, as expected. Traces captured
+from a real agent have **not** been tried.
 
 **What a trace is.** One JSON file per session, in the "Weka" format of the kv-cache-tester project, which the
 SemiAnalysis traces also use. A trace holds no prompt or response text, only sizes, timings and cache block hashes;
@@ -734,8 +745,8 @@ A minimal example, with two calls:
 **Producing them is up to you.** No tool in this repository converts agent logs into this format. You have to write
 the conversion from your agent's request logs: timestamps, token counts per call, and whether the call used a tool. The
 hash IDs are the delicate part, because identical prefixes must get identical IDs for the cache reuse to be reproduced.
-AIPerf's loader points to the kv-cache-tester documentation (`trace_replay_tester.md`) for the exact definition; I have
-not read it.
+AIPerf's loader points to the kv-cache-tester documentation (`trace_replay_tester.md`) for the exact definition, which has
+not been checked here.
 
 **Run them:**
 
@@ -770,10 +781,12 @@ BENCH_MAX_CONTEXT=129024 BENCH_DURATION=1800 ./agentx.sh agentx-128k-r1 "1 2 4 8
 
 The filter applies to the **maximum** context of each session.
 
-**Not on a small server**: at 30,720 tokens (vLLM at 32,768), none of the 393 traces fits (observed during a trial on a
-small server: "No eligible traces … scanned 393"). AIPerf then stops before the first level, and the script says so. On a
-small server, measure agent load with the test agents ([section 6.7](#67-test-agents-stress-test)); AgentX is measured on
-GPU servers.
+**Not on a small server, with the published set**: at 30,720 tokens (vLLM at 32,768), none of the 393 traces fits
+(observed during a trial on a small server: "No eligible traces … scanned 393"). AIPerf then stops before the first
+level, and the script says so.
+
+On a small server, use shorter traces of your own ([section 6.5](#65-agentx-with-your-own-traces)) or the test agents
+([section 6.7](#67-test-agents-stress-test)). The published set is measured on GPU servers.
 
 **Leave a margin** below `--max-model-len` (here 2,048 tokens). The filter compares the lengths recorded in the traces,
 whereas the server also counts the chat template (roles, separators; inferred).
@@ -799,8 +812,8 @@ were used.
 The test agents are three profiles (`code_review` with sub-agents, step-by-step `pentest`, `report`).
 Their tools are simulated: they return fabricated text and act on no system.
 
-**Restart vLLM with the prefix cache enabled** (without `--no-enable-prefix-caching`,
-[section 4.2](#42-check-the-vllm-in-place)). Check that the `[config]` line says `prefix cache True`
+vLLM must run with the prefix cache enabled (without `--no-enable-prefix-caching`). If you have just run the synthetic
+test, restart vLLM ([section 4.2](#42-check-the-vllm-in-place)). Check that the `[config]` line says `prefix cache True`
 ([section 5.4](#54-test-the-connection)), then:
 
 ```bash
@@ -829,8 +842,8 @@ Other options:
 The key is read from `BENCH_API_KEY`. `BENCH_AGENT_KEYS` gives one key per profile
 ([section 7.5](#75-per-agent-view-through-litellm)).
 
-The report gives an "all" row per level, then one row per profile (throughput/GPU, inter P10, TTFT P95, cache share,
-task duration, preemptions, MTP, maximum KV cache), and the selected level. The full table is
+The report gives an "all" row per level, then one row per profile (tasks, err, tput/GPU, inter P10, TTFT P95 in
+seconds, cache share, task duration, preemptions, MTP, maximum KV cache), and the selected level. The full table is
 `results-agents/table_agents.csv`. The report accepts `--require-metrics` but not `--ttft-max`.
 
 **To check**: the cache column should be clearly above 0 for `pentest` and `report`.
@@ -847,7 +860,7 @@ BENCH_URL=http://<vm>:4000 BENCH_MODEL=<alias> BENCH_API_KEY=<LiteLLM key> BENCH
 ```
 
 Compare with the same sweep made directly on vLLM: the TTFT gap is the latency added by the gateway.
-**Check** that the report's "mean output" column equals `BENCH_OSL`: otherwise LiteLLM does not forward `min_tokens` /
+**Check** that the report's "output avg" column equals `BENCH_OSL`: otherwise LiteLLM does not forward `min_tokens` /
 `ignore_eos` and the two measurements are not comparable (not verified).
 
 Several replicas behind LiteLLM: `BENCH_METRICS` takes one URL per replica; the deduced GPU count adds them all
@@ -963,13 +976,13 @@ prometheus --config.file=prometheus.yml --storage.tsdb.path=prometheus-data --st
 ```
 
 `prometheus.yml`, `litellm.key` and `prometheus-data/` are ignored by git. The path of `credentials_file` is relative to
-the folder of `prometheus.yml` (observed during validation, Prometheus 3.7.3). `tools/prometheus.yml.example` declares
+the folder of `prometheus.yml` (observed with Prometheus 3.7.3). `tools/prometheus.yml.example` declares
 two jobs, `vllm` (the default selector of `--vllm`) and `litellm` (`metrics_path: /metrics/`, key in `litellm.key`).
 
 **B. Docker Compose** (handy if LiteLLM already runs under Compose).
 
 The `docker-compose.yml` published by LiteLLM may **already** contain a `prometheus` service, open to the network on
-port 9090 (observed by the validator on a mirror of the file, not on the repository itself). In that case **edit it**
+port 9090 (seen on a copy of the file, not checked against LiteLLM's repository itself). In that case **edit it**
 to look like what follows instead of adding a second one, because Compose refuses two services or two `volumes:`
 blocks with the same name. Otherwise, add it:
 
@@ -1023,7 +1036,6 @@ In every case:
     is more storage in Prometheus and more load on vLLM and LiteLLM, because every scrape renders the whole `/metrics`
     page. Use whole seconds: `--scrape` does not support less than 1 s.
 - **Check**: page `http://<host>:9090/targets`, every target must be "UP" (otherwise the error is shown next to it).
-  Then `curl -s 'http://<host>:9090/api/v1/query?query=up'`.
 - **History**: it starts when Prometheus starts. Leave it running as a service; the default retention is 15 days,
   30 with the option above.
 - **Existing Prometheus**: if your operations team already has a Prometheus that scrapes vLLM, use it: give its URL,
@@ -1084,7 +1096,7 @@ tools.
 
 - **Window edges**: a window covers the period from the last scrape before its start to the last scrape before its end.
   Its edges are shifted by at most one and a half scrapes (a window with no recent scrape at one of its edges is
-  discarded). Successive windows still add up with no loss and no double counting (checked during validation: errors
+  discarded). Successive windows still add up with no loss and no double counting (checked on a test range: errors
   and requests per agent equal to the servers' counters).
 - **Restarts**: a restart is spotted by a counter dropping between two scrapes (`resets()`) or by a change of
   `process_start_time_seconds`.
@@ -1093,7 +1105,7 @@ tools.
     [`cli/serve.py`](https://github.com/vllm-project/vllm/blob/7f855f605892656ebf7265642e5d22a34a6ae731/vllm/entrypoints/cli/serve.py#L107-L130),
     [`v1/metrics/prometheus.py`](https://github.com/vllm-project/vllm/blob/7f855f605892656ebf7265642e5d22a34a6ae731/vllm/v1/metrics/prometheus.py#L39-L53)).
   - Without it, a restart shorter than one scrape, whose counters already exceed their earlier value, goes unnoticed:
-    the window undercounts, and if its buckets stay increasing the verdict can be wrong (seen during validation:
+    the window undercounts, and if its buckets stay increasing the verdict can be wrong (seen in a test:
     otherwise "undetermined").
 - **A series that disappears** while its target answers loses its last increments (rare: vLLM's and LiteLLM's
   counters do not disappear without a restart).
@@ -1163,8 +1175,8 @@ level only; documented in
 **Test agents** support both ([section 6.7](#67-test-agents-stress-test)):
 
 - Way 1: `BENCH_AGENT_KEYS="code_review=<key>,pentest=<key>,report=<key>"` (environment variable, or the
-  "Keys per agent" field of the interface); a profile without a key keeps the common key.
-- Way 2: `agents_test.launcher --label-agents` (or the "Label agents" checkbox): `metadata.agent` = profile name.
+  "Per-agent keys (LiteLLM)" field of the interface); a profile without a key keeps the common key.
+- Way 2: `agents_test.launcher --label-agents` (or the "Label the agents (LiteLLM)" checkbox): `metadata.agent` = profile name.
 
 **Collect, then query**: declare LiteLLM in `prometheus.yml`, using the `litellm` block of the example:
 
@@ -1190,7 +1202,7 @@ Per agent, the query gives:
 
 Requests without an identity appear under "(no identity)" (LiteLLM labels them `None`).
 
-Names, types and labels of LiteLLM's metrics were checked with LiteLLM 1.109.1 during validation. Check them on your
+Names, types and labels of LiteLLM's metrics were checked with LiteLLM 1.109.1. Check them on your
 version on the first try:
 
 ```bash
@@ -1236,7 +1248,7 @@ Order of magnitude, per configuration and per context:
 
 - coarse and fine passes: about 4 h (5 levels x 15 min x 3);
 - AgentX: about 7 h 30 (5 x 30 min x 3);
-- test agents with 7 levels: about 5 h 30 (7 x 15 min x 3).
+- test agents with 7 levels: about 5 h 15 (7 x 15 min x 3).
 
 [↑ Back to top](#top)
 
@@ -1296,9 +1308,12 @@ Details: [`interface/README.md`](interface/README.md).
 ```
 results/<label>/server_config.json            # server configuration at the start of the run
 results/<label>/c<N>/                          # AIPerf outputs for concurrency level N (+ c<N>.log)
-results-agentx/<label>/c<N>/                   # same for AgentX, plus agentx.txt (trace set, duration)
+results-agentx/<label>/c<N>/                   # same for AgentX
+results-agentx/<label>/agentx.txt              # trace set, duration, maximum context, submission_valid
 results-agents/<label>/server_config.json     # launcher (default output relative to the current folder)
 results-agents/<label>/n<N>/                   # calls.jsonl, tasks.jsonl, level.json (including vLLM metrics)
+results/table.csv                              # report aiperf (results-agentx/table.csv for AgentX)
+results-agents/table_agents.csv                # report agents
 ```
 
 Runs started from the interface put the test-agents results in `agents_test/results-agents/` instead.
@@ -1329,16 +1344,18 @@ yourself); `observation.query --output f.csv` writes the windows of a query.
 | `agents_test/launcher.py` | launch by levels |
 | `agents_test/common.py`, `metrics.py` | measured model call (streaming), `/metrics` reading |
 | `tools/server_config.py` | reading of the vLLM servers' configuration; GPU count deduced from the fingerprint |
-| `tools/download_tokenizer.sh`, `target.env.example` | default tokenizer, settings template |
+| `tools/download_tokenizer.sh`, `tools/target.env.example` | download of the default tokenizer, settings template |
+| `tools/tokenizer/` | the tokenizer files, copied by `download_tokenizer.sh` ([section 5.3](#53-copy-the-tokenizer)); not in the repository until you add them |
 | `tools/settings.py` | reads the `BENCH_*` variables |
 | `tools/fake_server.py` | fake server to check the pipeline (vLLM and LiteLLM metrics, `/admin?rate=…`) |
 | `report/` | reporting: `python -m report aiperf\|agents <root> --target N [--gpu N]` |
 | `interface/` | local interface (compiled React + Python server) |
-| `pyproject.toml` | dependency groups (`runtime`, `dev` with `pytest` and `ruff`, `tokenizer`), pytest and ruff configuration; the repository is run from its root, not pip-installed |
+| `.github/workflows/ci.yml` | continuous integration: `ruff check .` and `python -m pytest` on every push to `main` and on every pull request against `main` |
+| `pyproject.toml` | dependency groups (`runtime`, `dev` with `pytest` and `ruff`, `tokenizer` with the `tokenizers` library), pytest and ruff configuration; the repository is run from its root, not pip-installed |
 | `tests/` | tests (`python -m pytest`): golden reference outputs of the two report kinds and of the observation views (`tests/golden/`), validators, round-trip tests; lint with `ruff check .` |
 
 `.gitignore` also keeps out of the repository `target.env`, the AgentX traces folders (`traces-agentx*/`), `prometheus.yml`,
-`litellm.key`, `prometheus-data/`, `data/` and `/*.csv`.
+`litellm.key`, `prometheus-data/`, `data/`, `/*.csv` and the results folders (`results*/`, `agents_test/results*/`).
 
 The test agents use no internal data. The logs contain numbers (times, tokens,
 durations), labels, agent names and error messages; no prompt or response content.
@@ -1357,7 +1374,7 @@ durations), labels, agent names and error messages; no prompt or response conten
 | the interface says a run is in progress and so no one-token completion (no fingerprint) | connection test during a run | normal: a one-token completion would skew the measurement |
 | AgentX: "Scenario invariants violated" | `BENCH_DURATION` < 900 s, or AIPerf launched by hand on local traces | `BENCH_DURATION` ≥ 900 (or `BENCH_SHORT_RUN=1` for a simple check); go through `agentx.sh` |
 | AgentX: `err` > 0 in the report | requests longer than `--max-model-len` (AIPerf removes them from its metrics; the report counts them in `err`) | raise it; `BENCH_AGENTX_VARIANT=256k` for a model at about 256,000 tokens; or `BENCH_MAX_CONTEXT` about `--max-model-len` − 2,048 to discard traces that are too long ([section 6.6](#66-context-shorter-than-the-traces)) |
-| AgentX: no trace fits | `BENCH_MAX_CONTEXT` below the context of every trace | raise `BENCH_MAX_CONTEXT` and `--max-model-len`; on a small server AgentX is not feasible ([section 6.6](#66-context-shorter-than-the-traces)) |
+| AgentX: no trace fits | `BENCH_MAX_CONTEXT` below the context of every trace | raise `BENCH_MAX_CONTEXT` and `--max-model-len`; with the published traces, AgentX is not feasible on a small server ([section 6.6](#66-context-shorter-than-the-traces)) |
 | AgentX: `timed out waiting for dataset configuration` | loading the traces takes longer than AIPerf's timeout | raise `AIPERF_DATASET_CONFIGURATION_TIMEOUT` ([section 6.3](#63-agentx-stress-test)) |
 | `ERROR: number of GPUs unknown` from a report | fingerprint missing, or `BENCH_METRICS` did not point to vLLM during the run | `--gpu N` ("GPU" field of the interface) |
 | LiteLLM in Docker: connection error to vLLM | `127.0.0.1` refers to the container, not the machine | `api_base: http://host.docker.internal:<vLLM port>/v1` ([Docker Desktop](https://docs.docker.com/desktop/features/networking/networking-how-tos/)) |
@@ -1438,8 +1455,8 @@ metrics, but if you raise the number of your real agents to find the limit, thei
 
 ## Appendix B. LiteLLM per-key setup and install details
 
-Details for the per-agent view ([section 7.5](#75-per-agent-view-through-litellm)). Everything here was observed during
-validation with LiteLLM 1.109.1.
+Details for the per-agent view ([section 7.5](#75-per-agent-view-through-litellm)). Everything here was observed with
+LiteLLM 1.109.1.
 
 **Prometheus metrics.** `prometheus_client` is not installed by `pip install "litellm[proxy]"`, and LiteLLM then
 refuses to start with `callbacks: ["prometheus"]`. Fix: `pip install prometheus_client` in LiteLLM's environment.
@@ -1562,7 +1579,8 @@ The tests in `tests/` cover:
 - the two report kinds (`aiperf`, `agents`) and the observation views (windows, period, agents), against reference
   outputs (golden tests in `tests/golden/`);
 - the settings reading and the module structure;
-- the validators and the file formats (round trips between what the tools write and what the reports read).
+- the input checks of the interface and the file formats (round trips between what the tools write and what the reports read);
+- the shell scripts, the server configuration reading and the fake server.
 
 [↑ Back to top](#top)
 
@@ -1650,9 +1668,10 @@ When you are done, stop the two background processes (`jobs` lists them, then `k
 
 - The test agents, the two kinds of report and the test suite, against the fake server
   ([Appendix E](#appendix-e-try-the-bench-without-a-gpu)).
-- `sweep.sh` with AIPerf 0.12.0 and the AIPerf report, against a real vLLM 0.33.0 on a small local server (levels 1, 4 and 16, with
-  the preemption counter read from `/metrics`). `agentx.sh` has not been run end to end with AIPerf since the latest
-  changes to the scripts.
+- `sweep.sh` with AIPerf 0.12.0 and the AIPerf report, against a real vLLM 0.33.0 on a small local server (levels 1, 4
+  and 16, with the preemption counter read from `/metrics`).
+- `agentx.sh` with a small hand-made folder of traces ([section 6.5](#65-agentx-with-your-own-traces)), against the fake
+  server: AIPerf accepted the folder, replayed the sessions and the report ran.
 - The observation against the fake server, with Prometheus 3.7.3 ([section 7.3](#73-query-the-observation)).
 - The per-agent view with a real LiteLLM 1.109.1: metric names, types and labels, and the Prisma and
   `prometheus_client` requirements ([section 7.5](#75-per-agent-view-through-litellm),
@@ -1693,8 +1712,12 @@ See [section 4.2](#42-check-the-vllm-in-place), [section 6.6](#66-context-shorte
   counts the files and tells you).
 - That LiteLLM forwards `min_tokens` and `ignore_eos`.
 - Prometheus versions newer than 3.7.3.
+- `agentx.sh` with AIPerf on the published trace set, since the latest changes to the scripts.
+- `agentx.sh` with traces captured from a real agent, and the exact definition of the hash IDs
+  ([section 6.5](#65-agentx-with-your-own-traces)).
 
-See [section 6.4](#64-agentx-without-internet-access) and [section 6.8](#68-stress-test-through-litellm).
+See [section 6.4](#64-agentx-without-internet-access), [section 6.5](#65-agentx-with-your-own-traces) and
+[section 6.8](#68-stress-test-through-litellm).
 
 [↑ Back to top](#top)
 
