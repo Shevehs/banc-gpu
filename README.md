@@ -778,56 +778,76 @@ Measure the replicas **together**, as they will serve.
 
 ## 7. Observation (real use)
 
-Your agents call vLLM, directly or through LiteLLM; the bench generates **no** request and has **nothing to
-start**. The work is split as follows:
+Your agents call vLLM, directly or through LiteLLM. The bench generates **no** request and has **nothing to start**.
+The work is split as follows:
 
-- **vLLM** exposes its counters on `/metrics`, cumulated since its start; it keeps no history
-  ([vLLM metrics](https://docs.vllm.ai/en/latest/design/metrics.html));
+- **vLLM** exposes its counters on `/metrics`, cumulated since its start. It keeps no history
+  ([vLLM metrics](https://docs.vllm.ai/en/latest/design/metrics.html)).
 - **Prometheus**, a separate server, reads `/metrics` every 15 s and keeps the history
-  ([overview](https://prometheus.io/docs/introduction/overview/)); it also reads LiteLLM's metrics for the
-  per-agent view;
+  ([overview](https://prometheus.io/docs/introduction/overview/)). It also reads LiteLLM's metrics for the per-agent
+  view.
 - **`observation/query.py`** (`python -m observation.query`, or the Observation tab of the [interface](#9-interface))
-  queries Prometheus over a past range, cuts it into windows and computes, per window: completed requests, mean
-  concurrency (requests in flight), output throughput per GPU, **share of requests that sustain the target
-  interactivity**, TTFT, preemptions, failed requests, prefix cache, MTP acceptance, KV cache and queue; then a verdict.
+  queries Prometheus over a past range and cuts it into windows. Per window, it computes:
+  - completed requests;
+  - mean concurrency (requests in flight);
+  - output throughput per GPU;
+  - the **share of requests that sustain the target interactivity**;
+  - TTFT, preemptions and failed requests;
+  - prefix cache, MTP acceptance, KV cache and queue.
+
+  It then gives a verdict.
 
 A single read of `/metrics` would not be enough: its counters mix everything since the start. What is needed is the
-difference between the start and the end of each window: `observation.query` asks Prometheus for it (value at the end
+difference between the start and the end of each window. `observation.query` asks Prometheus for it (value at the end
 minus value at the start, [`offset`](https://prometheus.io/docs/prometheus/latest/querying/basics/#offset-modifier)).
-A window in which the server restarted is discarded: its counters start again from zero and the difference no longer
-means anything (detected with [`resets()`](https://prometheus.io/docs/prometheus/latest/querying/functions/#resets)
-and, when vLLM exposes it, with `process_start_time_seconds`). A window with no scrape just before its start
-(Prometheus stopped) is discarded too: `offset` would fetch a value up to 5 min earlier
-([lookback](https://prometheus.io/docs/prometheus/latest/querying/basics/#staleness)) and the window would count the gap.
+
+Two kinds of window are discarded:
+
+- A window in which the server restarted: its counters start again from zero, so the difference no longer means
+  anything. A restart is detected with
+  [`resets()`](https://prometheus.io/docs/prometheus/latest/querying/functions/#resets) and, when vLLM exposes it, with
+  `process_start_time_seconds`.
+- A window with no scrape just before its start (Prometheus stopped): `offset` would fetch a value up to 5 min earlier
+  ([lookback](https://prometheus.io/docs/prometheus/latest/querying/basics/#staleness)) and the window would count the
+  gap.
 
 ### 7.1 Tune vLLM for exact interactivity
 
 Optional: nothing has to change on vLLM for observation, and a restart is not needed just for this. Add the option
 below at the next planned restart; it only makes the share at the exact target available (otherwise interpolated).
 
-Interactivity comes from the histogram `vllm:request_time_per_output_token_seconds`: average time between two
-tokens of each request, first token excluded ([`stats.py`](https://github.com/vllm-project/vllm/blob/7f855f605892656ebf7265642e5d22a34a6ae731/vllm/v1/metrics/stats.py),
-[`loggers.py`](https://github.com/vllm-project/vllm/blob/7f855f605892656ebf7265642e5d22a34a6ae731/vllm/v1/metrics/loggers.py#L957-L963)), the same definition as the stress-test
-interactivity (see the differences below). Its default bounds (10, 25, 50, 75 ms…) do not fall on 33 ms (30 tokens/s): the share at the target
-would be interpolated ([`buckets.py`](https://github.com/vllm-project/vllm/blob/7f855f605892656ebf7265642e5d22a34a6ae731/vllm/v1/metrics/buckets.py#L84-L92)). Add bounds at
-1/30, 1/50, 1/75 and 1/100 s when launching vLLM
+Interactivity comes from the histogram `vllm:request_time_per_output_token_seconds`: the average time between two
+tokens of each request, first token excluded
+([`stats.py`](https://github.com/vllm-project/vllm/blob/7f855f605892656ebf7265642e5d22a34a6ae731/vllm/v1/metrics/stats.py),
+[`loggers.py`](https://github.com/vllm-project/vllm/blob/7f855f605892656ebf7265642e5d22a34a6ae731/vllm/v1/metrics/loggers.py#L957-L963)).
+It is the same definition as the stress-test interactivity (see the differences below).
+
+Its default bounds (10, 25, 50, 75 ms…) do not fall on 33 ms (30 tokens/s), so the share at the target would be
+interpolated
+([`buckets.py`](https://github.com/vllm-project/vllm/blob/7f855f605892656ebf7265642e5d22a34a6ae731/vllm/v1/metrics/buckets.py#L84-L92)).
+Add bounds at 1/30, 1/50, 1/75 and 1/100 s when launching vLLM
 ([`--custom-histogram-buckets`](https://github.com/vllm-project/vllm/blob/7f855f605892656ebf7265642e5d22a34a6ae731/vllm/config/observability.py#L72-L80)):
 
 ```bash
 vllm serve … --custom-histogram-buckets '{"inter_token_latency": [0.005, 0.01, 0.0133, 0.02, 0.025, 0.0333, 0.05, 0.075, 0.1, 0.2, 0.5, 1.0, 2.5, 5.0]}'
 ```
 
-The `inter_token_latency` family also sets this per-request histogram (same family of bounds in
-`loggers.py`). The query marks an interpolated share with a `*`, and says "undetermined" when the target falls
-in a bucket that straddles 90%.
+The `inter_token_latency` family also sets this per-request histogram (same family of bounds in `loggers.py`).
 
-**Differences from the stress-test measurement** (documented in `stats.py`, unless noted): vLLM timestamps inside the
-engine, AIPerf at the client (network and proxy included); a request with 0 or 1 output token counts for vLLM
-as a zero time per token, hence "at the target", whereas AIPerf excludes it; a request aborted by the client
-does not enter the histogram. Failed requests come from the `http_requests_total` counter (`/v1/…` handlers,
-4xx and 5xx statuses), added by the prometheus_fastapi_instrumentator library that vLLM installs
-([`metrics.py`](https://github.com/vllm-project/vllm/blob/7f855f605892656ebf7265642e5d22a34a6ae731/vllm/entrypoints/serve/instrumentator/metrics.py#L64-L74));
-name and labels inferred from the library, to be checked on the first try (the "err" column shows "—" otherwise).
+The query marks an interpolated share with a `*`, and says "undetermined" when the target falls in a bucket that
+straddles 90%.
+
+**Differences from the stress-test measurement** (documented in `stats.py`, unless noted):
+
+- vLLM timestamps inside the engine, AIPerf at the client (network and proxy included);
+- a request with 0 or 1 output token counts for vLLM as a zero time per token, hence "at the target", whereas AIPerf
+  excludes it;
+- a request aborted by the client does not enter the histogram;
+- failed requests come from the `http_requests_total` counter (`/v1/…` handlers, 4xx and 5xx statuses), added by the
+  prometheus_fastapi_instrumentator library that vLLM installs
+  ([`metrics.py`](https://github.com/vllm-project/vllm/blob/7f855f605892656ebf7265642e5d22a34a6ae731/vllm/entrypoints/serve/instrumentator/metrics.py#L64-L74)).
+  Its name and labels are inferred from the library, to be checked on the first try (the "err" column shows "—"
+  otherwise).
 
 ### 7.2 Install and start Prometheus (once)
 
@@ -864,10 +884,12 @@ prometheus --config.file=prometheus.yml --storage.tsdb.path=prometheus-data --st
 the folder of `prometheus.yml` (observed during validation, Prometheus 3.7.3). `tools/prometheus.yml.example` declares
 two jobs, `vllm` (the default selector of `--vllm`) and `litellm` (`metrics_path: /metrics/`, key in `litellm.key`).
 
-**B. Docker Compose** (handy if LiteLLM already runs under Compose). The `docker-compose.yml` published by LiteLLM
-may **already** contain a `prometheus` service, open to the network on port 9090 (observed by the validator on a
-mirror of the file, not on the repository itself): in that case **edit it** to look like what follows instead of
-adding a second one (Compose refuses two services or two `volumes:` blocks with the same name). Otherwise, add it:
+**B. Docker Compose** (handy if LiteLLM already runs under Compose).
+
+The `docker-compose.yml` published by LiteLLM may **already** contain a `prometheus` service, open to the network on
+port 9090 (observed by the validator on a mirror of the file, not on the repository itself). In that case **edit it**
+to look like what follows instead of adding a second one, because Compose refuses two services or two `volumes:`
+blocks with the same name. Otherwise, add it:
 
 ```yaml
 services:
@@ -883,13 +905,25 @@ volumes:
   prometheus-data:
 ```
 
-Create `prometheus.yml` and `litellm.key` **before** `docker compose up -d prometheus` (otherwise Docker creates empty
-folders in their place and refuses to start). In `prometheus.yml`, a vLLM running on the host machine is reached at
-`host.docker.internal:8000` (Docker Desktop), LiteLLM by the name of its Compose service (`litellm:4000`), and
-`credentials_file: /etc/prometheus/litellm.key`. The container reads as `nobody`: the key file must be readable by it
-(`printf '%s' "<key>" > litellm.key && chmod 644 litellm.key`; it then becomes readable by every account of the
-machine, hence the interest of a limited virtual key rather than the master key). If LiteLLM is not in the same Compose
-(installed with pip on the host), target `host.docker.internal:4000` like vLLM.
+Create `prometheus.yml` and `litellm.key` **before** `docker compose up -d prometheus`. Otherwise Docker creates empty
+folders in their place and refuses to start.
+
+In `prometheus.yml`:
+
+- a vLLM running on the host machine is reached at `host.docker.internal:8000` (Docker Desktop);
+- LiteLLM is reached by the name of its Compose service (`litellm:4000`), with
+  `credentials_file: /etc/prometheus/litellm.key`;
+- if LiteLLM is not in the same Compose (installed with pip on the host), target `host.docker.internal:4000`, like
+  vLLM.
+
+The container reads as `nobody`, so the key file must be readable by it:
+
+```bash
+printf '%s' "<key>" > litellm.key && chmod 644 litellm.key
+```
+
+The file then becomes readable by every account of the machine, hence the interest of a limited virtual key rather than
+the master key.
 
 In every case:
 
@@ -898,12 +932,14 @@ In every case:
 - **Scrape every 15 s** (`scrape_interval`): windows must last at least 4 scrapes (1 min); if you change this
   setting, give the same value to `--scrape`.
 - **Peaks are coarser than in the stress tests**: AIPerf reads vLLM's `/metrics` about every 0.33 s and the test
-  agents every 2 s, whereas Prometheus reads it every 15 s. A short spike of KV cache usage or of waiting requests can
-  fall between two scrapes and go unseen, so the maxima of the observation are lower bounds. The counters (requests,
-  preemptions, cache hits) are not affected, since the bench subtracts the start of a window from its end. For finer
-  peaks, lower `scrape_interval` (5 s is a reasonable value) and give the same value to `--scrape`; the cost is more
-  storage in Prometheus and more load on vLLM and LiteLLM, because every scrape renders the whole `/metrics` page.
-  Use whole seconds: `--scrape` does not support less than 1 s.
+  agents every 2 s, whereas Prometheus reads it every 15 s.
+  - A short spike of KV cache usage or of waiting requests can fall between two scrapes and go unseen, so the maxima of
+    the observation are lower bounds.
+  - The counters (requests, preemptions, cache hits) are not affected, since the bench subtracts the start of a window
+    from its end.
+  - For finer peaks, lower `scrape_interval` (5 s is a reasonable value) and give the same value to `--scrape`. The cost
+    is more storage in Prometheus and more load on vLLM and LiteLLM, because every scrape renders the whole `/metrics`
+    page. Use whole seconds: `--scrape` does not support less than 1 s.
 - **Check**: page `http://<host>:9090/targets`, every target must be "UP" (otherwise the error is shown next to it).
   Then `curl -s 'http://<host>:9090/api/v1/query?query=up'`.
 - **History**: it starts when Prometheus starts. Leave it running as a service; the default retention is 15 days,
@@ -934,42 +970,57 @@ python -m observation.query --prometheus http://127.0.0.1:9090 --since 2h --wind
 | `--exclude "start/end"` | range to discard, repeatable: a stress test on the same server would mix its load with the real usage |
 | `--output` | writes the windows to a CSV file |
 
-A window **holds** if at least 90% of completed requests reach `--target` (same threshold as the
-P10 interactivity of the stress tests, [section 7.1](#71-tune-vllm-for-exact-interactivity)), with no preemption or failed request, and, with `--ttft-max`, if the
-P95 TTFT stays under the threshold; "undetermined" if the share at the target cannot be decided ([section 7.1](#71-tune-vllm-for-exact-interactivity));
-"no requests" if nothing was served. A window is **discarded** if a vLLM target was unreachable at the start or during the
-window, if vLLM restarted, or if the scrape before the window or scrapes within it are missing (Prometheus stopped, or
-`--scrape` shorter than its `scrape_interval`); it is shown as "run in progress" if it overlaps an `--exclude` range.
+A window **holds** when all of these are true:
+
+- at least 90% of completed requests reach `--target` (same threshold as the P10 interactivity of the stress tests,
+  [section 7.1](#71-tune-vllm-for-exact-interactivity));
+- there is no preemption and no failed request;
+- with `--ttft-max`, the P95 TTFT stays under the threshold.
+
+The other verdicts:
+
+- **undetermined**: the share at the target cannot be decided
+  ([section 7.1](#71-tune-vllm-for-exact-interactivity));
+- **no requests**: nothing was served;
+- **discarded**: a vLLM target was unreachable at the start or during the window, vLLM restarted, or the scrape before
+  the window or scrapes within it are missing (Prometheus stopped, or `--scrape` shorter than its `scrape_interval`);
+- **run in progress**: the window overlaps an `--exclude` range.
+
 TTFT and P10 interactivity are bounds read from the histogram buckets (`≤`, `≥`).
 
 **Looking for the limit with your real agents**: the `avg conc` column gives the real concurrency of each window
-(requests in flight, mean of `vllm:num_requests_running`). The command prints the **highest mean concurrency that
-holds** in the range (among windows of at least 50 completed requests), and warns if no busier window fails (limit not
-reached yet). To look for it, raise the number of agents in steps of a few windows each. Observation changes nothing
-about your agents, but raising their number makes their tools act for real each time: use an isolated test range or
-simulated tools.
+(requests in flight, mean of `vllm:num_requests_running`).
+
+The command prints the **highest mean concurrency that holds** in the range (among windows of at least 50 completed
+requests), and warns if no busier window fails (limit not reached yet).
+
+To look for it, raise the number of agents in steps of a few windows each. Observation changes nothing about your
+agents, but raising their number makes their tools act for real each time: use an isolated test range or simulated
+tools.
 
 **Limits** (inferred unless stated otherwise):
 
-- a window covers the period from the last scrape before its start to the last scrape before its end: its edges are
-  shifted by at most one and a half scrapes (a window with no recent scrape at one of its edges is discarded), but
-  successive windows add up with no loss and no double counting (checked during validation: errors and requests per
-  agent equal to the servers' counters);
-- a restart is spotted by a counter dropping between two scrapes (`resets()`) or by a change of
-  `process_start_time_seconds`. vLLM exposes the latter only on Linux, and not when it starts several API processes
-  (`--api-server-count` > 1, the default with `--data-parallel-size` > 1; documented,
-  [`cli/serve.py`](https://github.com/vllm-project/vllm/blob/7f855f605892656ebf7265642e5d22a34a6ae731/vllm/entrypoints/cli/serve.py#L107-L130),
-  [`v1/metrics/prometheus.py`](https://github.com/vllm-project/vllm/blob/7f855f605892656ebf7265642e5d22a34a6ae731/vllm/v1/metrics/prometheus.py#L39-L53)).
-  Without it, a restart shorter than one scrape, whose counters already exceed their earlier value, goes unnoticed: the
-  window undercounts, and if its buckets stay increasing the verdict can be wrong (seen during validation: otherwise
-  "undetermined");
-- a series that disappears while its target answers loses its last increments (rare: vLLM's and LiteLLM's counters do not
-  disappear without a restart);
-- a series that appears during the window (first 5xx status code since the start, first call of an agent in LiteLLM)
-  is counted for its whole value, provided its target was already scraped at the start of the window; the window in
-  which scraping starts is discarded;
-- failed requests come from `http_requests_total` (`/v1/…` handlers, 4xx and 5xx statuses; [section 7.1](#71-tune-vllm-for-exact-interactivity));
-- gauges (KV cache, queue, concurrency) are read at each scrape (15 s): a shorter peak can be missed.
+- **Window edges**: a window covers the period from the last scrape before its start to the last scrape before its end.
+  Its edges are shifted by at most one and a half scrapes (a window with no recent scrape at one of its edges is
+  discarded). Successive windows still add up with no loss and no double counting (checked during validation: errors
+  and requests per agent equal to the servers' counters).
+- **Restarts**: a restart is spotted by a counter dropping between two scrapes (`resets()`) or by a change of
+  `process_start_time_seconds`.
+  - vLLM exposes the latter only on Linux, and not when it starts several API processes (`--api-server-count` > 1, the
+    default with `--data-parallel-size` > 1; documented,
+    [`cli/serve.py`](https://github.com/vllm-project/vllm/blob/7f855f605892656ebf7265642e5d22a34a6ae731/vllm/entrypoints/cli/serve.py#L107-L130),
+    [`v1/metrics/prometheus.py`](https://github.com/vllm-project/vllm/blob/7f855f605892656ebf7265642e5d22a34a6ae731/vllm/v1/metrics/prometheus.py#L39-L53)).
+  - Without it, a restart shorter than one scrape, whose counters already exceed their earlier value, goes unnoticed:
+    the window undercounts, and if its buckets stay increasing the verdict can be wrong (seen during validation:
+    otherwise "undetermined").
+- **A series that disappears** while its target answers loses its last increments (rare: vLLM's and LiteLLM's
+  counters do not disappear without a restart).
+- **A series that appears** during the window (first 5xx status code since the start, first call of an agent in
+  LiteLLM) is counted for its whole value, provided its target was already scraped at the start of the window. The
+  window in which scraping starts is discarded.
+- **Failed requests** come from `http_requests_total` (`/v1/…` handlers, 4xx and 5xx statuses;
+  [section 7.1](#71-tune-vllm-for-exact-interactivity)).
+- **Gauges** (KV cache, queue, concurrency) are read at each scrape (15 s): a shorter peak can be missed.
 
 ### 7.4 Per-period view
 
