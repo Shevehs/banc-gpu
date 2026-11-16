@@ -108,10 +108,10 @@ Options:
 - `--preset`: `tiny`, `small`, `medium` or `large` (default `small`);
 - `--sessions`: the number of sessions (default 30);
 - `--seed`: the same seed gives the same set (default 1);
-- `--max-context`: replaces the preset's longest call, 4,096 tokens at least;
+- `--max-context`: replaces the preset's longest call, between 4,096 and 1,000,000 tokens;
 - `--no-subagents`: sessions without sub-agents;
-- `--validate`: checks the traces with AIPerf's model before writing (needs AIPerf in the environment);
-- `--overwrite`: writes into a folder that already holds traces.
+- `--validate`: checks the traces with AIPerf's model before writing; it stops with an error, and writes nothing, if AIPerf is not installed in the environment;
+- `--overwrite`: replaces the `trace-*.json` files of a folder that already holds traces (other `.json` files are kept, with a warning, because `agentx.sh` replays every `.json` file of the folder).
 
 The shape follows the published set: a very small first call, a jump to the working context, then calls that extend the
 previous context, with think times that have a long tail and sub-agents that start from a shared prefix. The sizes of
