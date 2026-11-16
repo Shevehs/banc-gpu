@@ -1296,37 +1296,51 @@ durations), labels, agent names and error messages; no prompt or response conten
 
 ## Appendix A. Security notes
 
-**`--api-key` is not enough to protect vLLM.** It only applies to the `/v1`, `/v2`, `/inference`
-and `/cohere` paths; the others stay open, including `/metrics` and `/invocations`, which gives the same inference
-as `/v1` ([vLLM, `cli_args.py`](https://github.com/vllm-project/vllm/blob/7f855f605892656ebf7265642e5d22a34a6ae731/vllm/entrypoints/common/cli_args.py#L337-L347);
+**`--api-key` is not enough to protect vLLM.**
+
+It only applies to the `/v1`, `/v2`, `/inference` and `/cohere` paths. The others stay open, including `/metrics` and
+`/invocations`, which gives the same inference as `/v1`
+([vLLM, `cli_args.py`](https://github.com/vllm-project/vllm/blob/7f855f605892656ebf7265642e5d22a34a6ae731/vllm/entrypoints/common/cli_args.py#L337-L347);
 [vLLM security](https://docs.vllm.ai/en/latest/usage/security.html#api-key-authentication-limitations)).
-Open vLLM's port only to the test client (firewall, private network). On the server side, `DO_NOT_TRACK=1`
-turns off vLLM's usage-statistics reporting ([`envs.py`](https://github.com/vllm-project/vllm/blob/7f855f605892656ebf7265642e5d22a34a6ae731/vllm/envs.py), [`usage_lib.py`](https://github.com/vllm-project/vllm/blob/7f855f605892656ebf7265642e5d22a34a6ae731/vllm/usage/usage_lib.py)).
+
+- Open vLLM's port only to the test client (firewall, private network).
+- On the server side, `DO_NOT_TRACK=1` turns off vLLM's usage-statistics reporting
+  ([`envs.py`](https://github.com/vllm-project/vllm/blob/7f855f605892656ebf7265642e5d22a34a6ae731/vllm/envs.py),
+  [`usage_lib.py`](https://github.com/vllm-project/vllm/blob/7f855f605892656ebf7265642e5d22a34a6ae731/vllm/usage/usage_lib.py)).
 
 **`VLLM_SERVER_DEV_MODE=1` is not recommended.** It lets `server_config.json` record the speculative decoding method
-and the scheduler, but it also opens
-control endpoints (including weight replacement) that answer without a key
+and the scheduler, but it also opens control endpoints (including weight replacement) that answer without a key
 ([registration](https://github.com/vllm-project/vllm/blob/7f855f605892656ebf7265642e5d22a34a6ae731/vllm/entrypoints/launchers/api_server/routers.py#L46-L53),
-[routes](https://github.com/vllm-project/vllm/blob/7f855f605892656ebf7265642e5d22a34a6ae731/vllm/entrypoints/rl/online/api_router.py)). vLLM's security page presents some of these
-routes as open even outside dev mode; when in doubt, treat any vLLM port as sensitive. If you use it: bench server only, port open only to the test
-client, never in production.
+[routes](https://github.com/vllm-project/vllm/blob/7f855f605892656ebf7265642e5d22a34a6ae731/vllm/entrypoints/rl/online/api_router.py)).
 
-**The API key on the AIPerf command line.** `sweep.sh` and `agentx.sh` give the key to AIPerf with `--api-key`, so
-it is visible in `ps` on the client machine while AIPerf runs (AIPerf masks it in its own logs). Use a dedicated
-bench key, and do not run the clients on a shared machine. The bench's own logs never contain it, and the interface
-masks it in the command it prints.
+vLLM's security page presents some of these routes as open even outside dev mode. When in doubt, treat any vLLM port as
+sensitive.
 
-**The interface only talks to local or private hosts, and only reads inside your own directories.** The target URL
-receives the API key, the Prometheus URL receives its key, and the metrics URLs are fetched by the interface machine, so the interface refuses a URL whose
-host is not loopback, private (10/8, 172.16/12, 192.168/16, `fd00::/8`), link-local or a name that resolves only to such
-addresses (a host name that does not resolve is refused too). Start the interface with `BENCH_ALLOW_PUBLIC_URLS=1`
-to allow public hosts, for example a hosted LiteLLM gateway. The traces folder of an AgentX run must lie, once `..` and
-symbolic links are resolved, under the repository, your home directory or a directory listed in `BENCH_ALLOWED_DIRS`
-(separated like `PATH`). The command-line scripts apply no such restriction.
+If you use it: bench server only, port open only to the test client, never in production.
 
-**Prometheus and the observation.** Prometheus asks for no key by default: publish its port to `127.0.0.1` or to the test
-network only ([section 7.2](#72-install-and-start-prometheus-once)); if you protect it, `BENCH_PROMETHEUS_KEY` carries the
-token. LiteLLM's key sits in `litellm.key` (read by Prometheus, ignored by git, mode 600 unless Docker needs 644): prefer a
+**The API key on the AIPerf command line.** `sweep.sh` and `agentx.sh` give the key to AIPerf with `--api-key`, so it is
+visible in `ps` on the client machine while AIPerf runs (AIPerf masks it in its own logs).
+
+- Use a dedicated bench key, and do not run the clients on a shared machine.
+- The bench's own logs never contain it, and the interface masks it in the command it prints.
+
+**The interface only talks to local or private hosts, and only reads inside your own directories.**
+
+The target URL receives the API key, the Prometheus URL receives its key, and the metrics URLs are fetched by the
+interface machine. So the interface refuses a URL whose host is not loopback, private (10/8, 172.16/12, 192.168/16,
+`fd00::/8`), link-local or a name that resolves only to such addresses (a host name that does not resolve is refused
+too). Start the interface with `BENCH_ALLOW_PUBLIC_URLS=1` to allow public hosts, for example a hosted LiteLLM gateway.
+
+The traces folder of an AgentX run must lie, once `..` and symbolic links are resolved, under the repository, your home
+directory or a directory listed in `BENCH_ALLOWED_DIRS` (separated like `PATH`).
+
+The command-line scripts apply no such restriction.
+
+**Prometheus and the observation.** Prometheus asks for no key by default: publish its port to `127.0.0.1` or to the
+test network only ([section 7.2](#72-install-and-start-prometheus-once)). If you protect it, `BENCH_PROMETHEUS_KEY`
+carries the token.
+
+LiteLLM's key sits in `litellm.key` (read by Prometheus, ignored by git, mode 600 unless Docker needs 644). Prefer a
 limited virtual key to the master key.
 
 **Test agents and observation.** The test agents' tools are simulated and act on no system. Observation only reads
@@ -1344,14 +1358,19 @@ validation with LiteLLM 1.109.1.
 
 **Prometheus metrics.** `prometheus_client` is not installed by `pip install "litellm[proxy]"`, and LiteLLM then
 refuses to start with `callbacks: ["prometheus"]`. Fix: `pip install prometheus_client` in LiteLLM's environment.
-Prometheus then scrapes LiteLLM's **`/metrics/`** (trailing slash) with a key, as declared in the `litellm` job of
-`tools/prometheus.yml.example` ([section 7.2](#72-install-and-start-prometheus-once)). LiteLLM in Docker Compose: the service
-is reached by its Compose name (`litellm:4000`) from a Prometheus in the same Compose.
 
-**Virtual keys (way 1).** LiteLLM stores virtual keys in a PostgreSQL database: set `DATABASE_URL` before
-starting LiteLLM ([documentation](https://docs.litellm.ai/docs/proxy/virtual_keys)). It also needs Prisma, which
+Prometheus then scrapes LiteLLM's **`/metrics/`** (trailing slash) with a key, as declared in the `litellm` job of
+`tools/prometheus.yml.example` ([section 7.2](#72-install-and-start-prometheus-once)).
+
+LiteLLM in Docker Compose: the service is reached by its Compose name (`litellm:4000`) from a Prometheus in the same
+Compose.
+
+**Virtual keys (way 1).** LiteLLM stores virtual keys in a PostgreSQL database: set `DATABASE_URL` before starting
+LiteLLM ([documentation](https://docs.litellm.ai/docs/proxy/virtual_keys)). It also needs Prisma, which
 `pip install "litellm[proxy]"` does not install: without it, LiteLLM refuses to start with `DATABASE_URL`, and without a
-database, `/key/generate` fails. With pip:
+database, `/key/generate` fails.
+
+With pip:
 
 ```bash
 pip install "litellm[proxy,extra_proxy]"
@@ -1363,10 +1382,11 @@ Then, in the same environment:
 prisma generate --schema "$(python -c 'import litellm_proxy_extras,os;print(os.path.join(os.path.dirname(litellm_proxy_extras.__file__),"schema.prisma"))')"
 ```
 
-([LiteLLM documentation](https://docs.litellm.ai/docs/troubleshoot/pip_venv_upgrade)). The `prisma generate` command installs the
-Prisma CLI through npm (Node.js required) then downloads its engines from binaries.prisma.sh: without Internet, you need
-an npm mirror and a mirror of the engines (engine download was refused without Internet). The simplest is to use your team's LiteLLM installation if it already has
-a database.
+The `prisma generate` command ([LiteLLM documentation](https://docs.litellm.ai/docs/troubleshoot/pip_venv_upgrade))
+installs the Prisma CLI through npm (Node.js required), then downloads its engines from binaries.prisma.sh.
+
+Without Internet, you need an npm mirror and a mirror of the engines (the engine download was refused without
+Internet). The simplest is to use your team's LiteLLM installation if it already has a database.
 
 **Create one key per agent**, with the master key:
 
@@ -1387,33 +1407,41 @@ Each agent then uses its own key as the API key, and the metrics carry `api_key_
 ## Appendix C. Sources
 
 - vLLM, code at commit `7f855f6`:
-  [`system_fingerprint` fingerprint](https://github.com/vllm-project/vllm/blob/7f855f605892656ebf7265642e5d22a34a6ae731/vllm/entrypoints/serve/utils/fingerprint.py) ·
-  [`--api-key`, `--fingerprint-mode`](https://github.com/vllm-project/vllm/blob/7f855f605892656ebf7265642e5d22a34a6ae731/vllm/entrypoints/common/cli_args.py) ·
-  [key check](https://github.com/vllm-project/vllm/blob/7f855f605892656ebf7265642e5d22a34a6ae731/vllm/entrypoints/serve/middleware/authenticate.py) ·
-  [development routes](https://github.com/vllm-project/vllm/blob/7f855f605892656ebf7265642e5d22a34a6ae731/vllm/entrypoints/launchers/api_server/routers.py) ·
-  [`/server_info`](https://github.com/vllm-project/vllm/blob/7f855f605892656ebf7265642e5d22a34a6ae731/vllm/entrypoints/serve/dev/server_info/api_router.py) ·
-  [speculative decoding metrics](https://github.com/vllm-project/vllm/blob/7f855f605892656ebf7265642e5d22a34a6ae731/vllm/v1/spec_decode/metrics.py) ·
-  [`VLLM_SERVER_DEV_MODE`, `DO_NOT_TRACK`](https://github.com/vllm-project/vllm/blob/7f855f605892656ebf7265642e5d22a34a6ae731/vllm/envs.py)
-- vLLM, documentation: [metrics](https://docs.vllm.ai/en/stable/usage/metrics/) ·
-  [security](https://docs.vllm.ai/en/latest/usage/security.html) ·
-  [tool calling](https://docs.vllm.ai/en/stable/features/tool_calling.html)
-- vLLM, observation metrics at commit `7f855f6`: [`loggers.py`](https://github.com/vllm-project/vllm/blob/7f855f605892656ebf7265642e5d22a34a6ae731/vllm/v1/metrics/loggers.py) (including [`vllm:num_requests_running`](https://github.com/vllm-project/vllm/blob/7f855f605892656ebf7265642e5d22a34a6ae731/vllm/v1/metrics/loggers.py#L534)) ·
-  [`stats.py`](https://github.com/vllm-project/vllm/blob/7f855f605892656ebf7265642e5d22a34a6ae731/vllm/v1/metrics/stats.py) · [`buckets.py`](https://github.com/vllm-project/vllm/blob/7f855f605892656ebf7265642e5d22a34a6ae731/vllm/v1/metrics/buckets.py) ·
-  [`observability.py`](https://github.com/vllm-project/vllm/blob/7f855f605892656ebf7265642e5d22a34a6ae731/vllm/config/observability.py)
-- AgentX: [InferenceX method](https://inferencex.semianalysis.com/blog/agentic-benchmark-agent-benchmark-guide) ·
-  [trace set `cc-traces-weka-062126`](https://huggingface.co/datasets/semianalysisai/cc-traces-weka-062126) ·
-  AIPerf scenario: `aiperf/common/scenario/inferencex_agentx_mvp.py` in the installed package
-- Prometheus: [overview](https://prometheus.io/docs/introduction/overview/) ·
-  [configuration (`scrape_config`, `authorization`)](https://prometheus.io/docs/prometheus/latest/configuration/configuration/#scrape_config) ·
-  [PromQL functions (`resets`)](https://prometheus.io/docs/prometheus/latest/querying/functions/#resets) ·
-  [HTTP API (`query_range`)](https://prometheus.io/docs/prometheus/latest/querying/api/#range-queries) ·
-  [operators (`and`, `unless`)](https://prometheus.io/docs/prometheus/latest/querying/operators/#logical-set-binary-operators) ·
-  [`offset`](https://prometheus.io/docs/prometheus/latest/querying/basics/#offset-modifier) ·
-  [download](https://prometheus.io/download/); tested with Prometheus 3.7.3
-- [AIPerf 0.12.0](https://pypi.org/project/aiperf/0.12.0/) ·
-  [concurrency sweep (NVIDIA)](https://docs.nvidia.com/nim/benchmarking/llm/latest/step-by-step.html)
-- LiteLLM: [vLLM provider](https://docs.litellm.ai/docs/providers/vllm) · [proxy configuration](https://docs.litellm.ai/docs/proxy/configs) ·
-  [Prometheus metrics](https://docs.litellm.ai/docs/proxy/prometheus)
+  - [`system_fingerprint` fingerprint](https://github.com/vllm-project/vllm/blob/7f855f605892656ebf7265642e5d22a34a6ae731/vllm/entrypoints/serve/utils/fingerprint.py)
+  - [`--api-key`, `--fingerprint-mode`](https://github.com/vllm-project/vllm/blob/7f855f605892656ebf7265642e5d22a34a6ae731/vllm/entrypoints/common/cli_args.py)
+  - [key check](https://github.com/vllm-project/vllm/blob/7f855f605892656ebf7265642e5d22a34a6ae731/vllm/entrypoints/serve/middleware/authenticate.py)
+  - [development routes](https://github.com/vllm-project/vllm/blob/7f855f605892656ebf7265642e5d22a34a6ae731/vllm/entrypoints/launchers/api_server/routers.py)
+  - [`/server_info`](https://github.com/vllm-project/vllm/blob/7f855f605892656ebf7265642e5d22a34a6ae731/vllm/entrypoints/serve/dev/server_info/api_router.py)
+  - [speculative decoding metrics](https://github.com/vllm-project/vllm/blob/7f855f605892656ebf7265642e5d22a34a6ae731/vllm/v1/spec_decode/metrics.py)
+  - [`VLLM_SERVER_DEV_MODE`, `DO_NOT_TRACK`](https://github.com/vllm-project/vllm/blob/7f855f605892656ebf7265642e5d22a34a6ae731/vllm/envs.py)
+- vLLM, documentation:
+  - [metrics](https://docs.vllm.ai/en/stable/usage/metrics/)
+  - [security](https://docs.vllm.ai/en/latest/usage/security.html)
+  - [tool calling](https://docs.vllm.ai/en/stable/features/tool_calling.html)
+- vLLM, observation metrics at commit `7f855f6`:
+  - [`loggers.py`](https://github.com/vllm-project/vllm/blob/7f855f605892656ebf7265642e5d22a34a6ae731/vllm/v1/metrics/loggers.py) (including [`vllm:num_requests_running`](https://github.com/vllm-project/vllm/blob/7f855f605892656ebf7265642e5d22a34a6ae731/vllm/v1/metrics/loggers.py#L534))
+  - [`stats.py`](https://github.com/vllm-project/vllm/blob/7f855f605892656ebf7265642e5d22a34a6ae731/vllm/v1/metrics/stats.py)
+  - [`buckets.py`](https://github.com/vllm-project/vllm/blob/7f855f605892656ebf7265642e5d22a34a6ae731/vllm/v1/metrics/buckets.py)
+  - [`observability.py`](https://github.com/vllm-project/vllm/blob/7f855f605892656ebf7265642e5d22a34a6ae731/vllm/config/observability.py)
+- AgentX:
+  - [InferenceX method](https://inferencex.semianalysis.com/blog/agentic-benchmark-agent-benchmark-guide)
+  - [trace set `cc-traces-weka-062126`](https://huggingface.co/datasets/semianalysisai/cc-traces-weka-062126)
+  - AIPerf scenario: `aiperf/common/scenario/inferencex_agentx_mvp.py` in the installed package
+- Prometheus:
+  - [overview](https://prometheus.io/docs/introduction/overview/)
+  - [configuration (`scrape_config`, `authorization`)](https://prometheus.io/docs/prometheus/latest/configuration/configuration/#scrape_config)
+  - [PromQL functions (`resets`)](https://prometheus.io/docs/prometheus/latest/querying/functions/#resets)
+  - [HTTP API (`query_range`)](https://prometheus.io/docs/prometheus/latest/querying/api/#range-queries)
+  - [operators (`and`, `unless`)](https://prometheus.io/docs/prometheus/latest/querying/operators/#logical-set-binary-operators)
+  - [`offset`](https://prometheus.io/docs/prometheus/latest/querying/basics/#offset-modifier)
+  - [download](https://prometheus.io/download/); tested with Prometheus 3.7.3
+- AIPerf:
+  - [AIPerf 0.12.0](https://pypi.org/project/aiperf/0.12.0/)
+  - [concurrency sweep (NVIDIA)](https://docs.nvidia.com/nim/benchmarking/llm/latest/step-by-step.html)
+- LiteLLM:
+  - [vLLM provider](https://docs.litellm.ai/docs/providers/vllm)
+  - [proxy configuration](https://docs.litellm.ai/docs/proxy/configs)
+  - [Prometheus metrics](https://docs.litellm.ai/docs/proxy/prometheus)
 
 [↑ Back to top](#top)
 
@@ -1441,9 +1469,15 @@ ruff check .
 
 `pyproject.toml` holds the dependency groups (`runtime`: `openai`, `httpx`, `aiohttp`; `dev`: the same plus `pytest` and
 `ruff`), the pytest configuration and the ruff configuration. The repository is run from its root and is not meant to be
-pip-installed. `tests/` covers the analysis functions, the two report kinds (`aiperf`, `agents`) and the observation views (windows, period, agents) against reference outputs (golden tests
-in `tests/golden/`), the settings reading and the module structure, and checks the validators and the file formats
-(round trips between what the tools write and what the reports read). Files in `tests/`: `test_analysis.py`, `test_analysis_more.py`, `test_imports.py`, `test_settings.py`, `test_report_common.py`, `test_report_agents.py`, `test_report_golden.py`, `test_interface_validators.py`, `test_scripts.py`, `test_server_config.py`, `test_agents_common.py`, `test_agents_metrics.py`, `test_fake_server.py`, `test_round_trip.py`, the shared `fixtures.py`, `helpers.py` and `conftest.py`, and the `golden/` folder.
+pip-installed.
+
+The tests in `tests/` cover:
+
+- the analysis functions;
+- the two report kinds (`aiperf`, `agents`) and the observation views (windows, period, agents), against reference
+  outputs (golden tests in `tests/golden/`);
+- the settings reading and the module structure;
+- the validators and the file formats (round trips between what the tools write and what the reports read).
 
 [↑ Back to top](#top)
 
@@ -1451,12 +1485,19 @@ in `tests/golden/`), the settings reading and the module structure, and checks t
 
 ## Appendix E. Try the bench without a GPU
 
-A fake OpenAI-compatible server lets you test the scripts without a model (the figures measure nothing).
-It also imitates vLLM's histograms and gauges (including `vllm:num_requests_running`) and, on `/litellm/metrics/`,
-LiteLLM's per-key and per-`metadata_agent` metrics. For testing, `GET /admin?rate=<x>` changes its simulated error
-rate while it runs. The observation is checked with a Prometheus that scrapes the fake server
-(`tools/prometheus-fake.yml`: scrape every 5 s, jobs `vllm` and `litellm` on port 8001; the fake server does not
-expose `process_start_time_seconds`):
+A fake OpenAI-compatible server lets you test the scripts without a model. The figures measure nothing: it only checks
+that the pipeline runs.
+
+The fake server imitates:
+
+- the OpenAI API (`/v1/models`, streaming `/v1/chat/completions`);
+- vLLM's histograms and gauges (including `vllm:num_requests_running`);
+- on `/litellm/metrics/`, LiteLLM's per-key and per-`metadata_agent` metrics.
+
+For testing, `GET /admin?rate=<x>` changes its simulated error rate while it runs.
+
+The observation is checked with a Prometheus that scrapes the fake server (`tools/prometheus-fake.yml`): scrape every
+5 s, jobs `vllm` and `litellm` on port 8001. The fake server does not expose `process_start_time_seconds`.
 
 ### E.1 Start the fake server
 
