@@ -370,7 +370,7 @@ function Observation({ o, setO }) {
     <section>
       <p className="note">Prometheus scrapes vLLM's /metrics (and LiteLLM's for the per-agent view) continuously; this tab queries it
         over the chosen range and gives a verdict per window. No load is generated. The ranges of the runs started from this interface
-        since it was launched are discarded ("run in progress"). Setup: README, section 8.</p>
+        since it was launched are discarded ("run in progress"). Setup: README, section 7.</p>
       <div className="grid">
         <Field label="Prometheus URL"><input value={o.prometheus} onChange={set("prometheus")} /></Field>
         <Field label="Prometheus key" help="optional; empty if Prometheus does not require a token">
@@ -437,7 +437,7 @@ function Observation({ o, setO }) {
                   ))}
                 </tbody>
               </table>
-              <p className="note">{rows.some((l) => l.share_exact === "False") && "* interpolated share: no histogram bound at the target; start vLLM with --custom-histogram-buckets (README, section 8.1); \"undetermined\": the target falls in a bucket that straddles 90%. "}≥ and ≤: bounds read from the vLLM histogram buckets. avg conc: requests in flight, averaged over the window.</p>
+              <p className="note">{rows.some((l) => l.share_exact === "False") && "* interpolated share: no histogram bound at the target; start vLLM with --custom-histogram-buckets (README, section 7.1); \"undetermined\": the target falls in a bucket that straddles 90%. "}≥ and ≤: bounds read from the vLLM histogram buckets. avg conc: requests in flight, averaged over the window.</p>
             </div>
           ) : <pre className="output">{res.output}</pre>}
           <p className="note">Command run: <code>{res.command}</code></p>
