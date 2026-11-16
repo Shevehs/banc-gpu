@@ -23,10 +23,10 @@ DURATION="${BENCH_DURATION:-1800}"                       # seconds per level; th
 ROOT_DIR="${BENCH_ROOT_DIR:-results-agentx}"
 OVERWRITE="${BENCH_OVERWRITE:-}"
 # Traces: by default, the dataset pinned by the scenario, downloaded from Hugging Face:
-#   AGENTX_VARIANT empty -> semianalysisai/cc-traces-weka-062126 (full contexts)
-#   AGENTX_VARIANT=256k  -> semianalysisai/cc-traces-weka-062126-256k (requests over 256,000 tokens removed
+#   BENCH_AGENTX_VARIANT empty -> semianalysisai/cc-traces-weka-062126 (full contexts)
+#   BENCH_AGENTX_VARIANT=256k  -> semianalysisai/cc-traces-weka-062126-256k (requests over 256,000 tokens removed
 #                            by SemiAnalysis; for a --max-model-len of about 256,000; also accepted by the scenario)
-# AGENTX_DIR = local traces folder (JSON files in Weka format): AIPerf then cannot verify the
+# BENCH_AGENTX_DIR = local traces folder (JSON files in Weka format): AIPerf then cannot verify the
 # dataset, and the trial is marked submission_valid=false (--unsafe-override).
 AGENTX_VARIANT="${BENCH_AGENTX_VARIANT:-}"
 AGENTX_DIR="${BENCH_AGENTX_DIR:-}"

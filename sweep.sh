@@ -27,7 +27,7 @@ TEMPERATURE="${BENCH_TEMPERATURE:-0.7}"            # fixed so that MTP acceptanc
 ROOT_DIR="${BENCH_ROOT_DIR:-results}"                # results directory
 OVERWRITE="${BENCH_OVERWRITE:-}"                       # 1 = replace existing results with the same label
 EXTRA="${BENCH_EXTRA:-}"                           # additional AIPerf options, e.g. "--use-server-token-count --api-key XXX"
-# A different seed for each label (hence for each repetition), unless SEED is set.
+# A different seed for each label (hence for each repetition), unless BENCH_SEED is set.
 SEED="${BENCH_SEED:-$(printf '%s' "$LABEL" | cksum | cut -d' ' -f1)}"
 if [ -d "$ROOT_DIR/$LABEL" ] && [ -n "$(ls -A "$ROOT_DIR/$LABEL" 2>/dev/null)" ]; then
   if [ "$OVERWRITE" = "1" ]; then rm -rf "${ROOT_DIR:?}/$LABEL"

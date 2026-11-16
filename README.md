@@ -313,7 +313,8 @@ In practice:
 | Mode | `--max-model-len` at least | Why |
 |---|---|---|
 | Synthetic | input + output + chat template (e.g. 2,048 + 256, plus a margin) | requests have a fixed length |
-| AgentX | the longest trace context, input **plus output**: up to about 990,000 input tokens (full set), 256,000 (`256k` variant), plus the output and a margin for the chat template; otherwise set `BENCH_MAX_CONTEXT` ([section 6.6](#66-context-shorter-than-the-traces)) | AIPerf does not truncate AgentX traces; for your own traces, the longest session you recorded |
+| AgentX | the longest trace context, input **plus output**: up to about 990,000 input tokens (full set), 256,000 (`256k` variant), plus the output and a margin for the chat template; otherwise set `BENCH_MAX_CONTEXT` ([section 6.6](#66-context-shorter-than-the-traces)) | AIPerf does not truncate AgentX traces |
+| AgentX, your own traces | the longest call of your traces, input **plus output**, plus a margin for the chat template | you choose the sizes ([section 6.5](#65-agentx-with-your-own-traces)) |
 | Test agents | about 135,000 x `--scale`, plus the output | contexts reach about 135,000 tokens at scale 1 (estimated with the Qwen vocabulary) |
 | Observation | not applicable | the bench sends nothing |
 
@@ -499,7 +500,7 @@ More cases are in the troubleshooting table ([section 10.3](#103-troubleshooting
 The bench generates the load, level by level, until the installation breaks. The prefix-cache setting
 required by each test is in [section 4.2](#42-check-the-vllm-in-place). A **label** names each run; the suffix `-r1`, `-r2`…
 marks repetitions of the same configuration, which the report groups together. A label has up to 80 characters: letters,
-digits, dots, hyphens and underscores, starting with a letter or a digit.
+digits, dots, hyphens and underscores, starting with a letter or a digit and without two dots in a row (`..`).
 
 ### 6.1 Synthetic stress test
 
@@ -623,8 +624,11 @@ and hardware.
 
 Contexts are long (a median of about 142,000 input tokens, according to
 [InferenceX](https://inferencex.semianalysis.com/blog/agentic-benchmark-agent-benchmark-guide)) and are not truncated.
-The full measurement is therefore done on GPU servers. On a small server whose context is limited to 32,768 tokens, no trace of the published set fits
-([section 6.6](#66-context-shorter-than-the-traces)).
+The full measurement is therefore done on GPU servers.
+
+On a small server whose context is limited to 32,768 tokens, no trace of the published set fits
+([section 6.6](#66-context-shorter-than-the-traces)). You can use shorter traces of your own
+([section 6.5](#65-agentx-with-your-own-traces)).
 
 **What the scenario enforces** (documented in the AIPerf 0.12.0 code,
 `aiperf/common/scenario/inferencex_agentx_mvp.py`, and in AIPerf's message at run time):
@@ -808,8 +812,8 @@ were used.
 The test agents are three profiles (`code_review` with sub-agents, step-by-step `pentest`, `report`).
 Their tools are simulated: they return fabricated text and act on no system.
 
-vLLM must run with the prefix cache enabled (without `--no-enable-prefix-caching`); restart it if you have just run the
-synthetic test ([section 4.2](#42-check-the-vllm-in-place)). Check that the `[config]` line says `prefix cache True`
+vLLM must run with the prefix cache enabled (without `--no-enable-prefix-caching`). If you have just run the synthetic
+test, restart vLLM ([section 4.2](#42-check-the-vllm-in-place)). Check that the `[config]` line says `prefix cache True`
 ([section 5.4](#54-test-the-connection)), then:
 
 ```bash
@@ -1346,7 +1350,7 @@ yourself); `observation.query --output f.csv` writes the windows of a query.
 | `tools/fake_server.py` | fake server to check the pipeline (vLLM and LiteLLM metrics, `/admin?rate=…`) |
 | `report/` | reporting: `python -m report aiperf\|agents <root> --target N [--gpu N]` |
 | `interface/` | local interface (compiled React + Python server) |
-| `.github/workflows/ci.yml` | continuous integration: `ruff check .` and `python -m pytest` on every push and pull request to `main` |
+| `.github/workflows/ci.yml` | continuous integration: `ruff check .` and `python -m pytest` on every push to `main` and on every pull request against `main` |
 | `pyproject.toml` | dependency groups (`runtime`, `dev` with `pytest` and `ruff`, `tokenizer` with the `tokenizers` library), pytest and ruff configuration; the repository is run from its root, not pip-installed |
 | `tests/` | tests (`python -m pytest`): golden reference outputs of the two report kinds and of the observation views (`tests/golden/`), validators, round-trip tests; lint with `ruff check .` |
 
@@ -1575,7 +1579,7 @@ The tests in `tests/` cover:
 - the two report kinds (`aiperf`, `agents`) and the observation views (windows, period, agents), against reference
   outputs (golden tests in `tests/golden/`);
 - the settings reading and the module structure;
-- the validators and the file formats (round trips between what the tools write and what the reports read);
+- the input checks of the interface and the file formats (round trips between what the tools write and what the reports read);
 - the shell scripts, the server configuration reading and the fake server.
 
 [↑ Back to top](#top)
