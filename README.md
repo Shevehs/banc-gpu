@@ -93,14 +93,14 @@ requires restarting vLLM (see [section 4.2](#42-check-the-vllm-in-place)).
 
 ## 2. Quick start
 
-A first synthetic measurement, on a vLLM that is already running. You need Python 3.11 to 3.13 (an older Python: see
-[uv](#43-install-the-bench), section 4.3).
+A first synthetic measurement, on a vLLM that is already running. You need [uv](https://docs.astral.sh/uv/), which
+installs the right Python for the bench ([how to install it](#43-install-the-bench), section 4.3).
 
 ### 2.1 Get the code and install the bench
 
 ```bash
 git clone https://github.com/Shevehs/banc-gpu.git ~/banc-gpu && cd ~/banc-gpu
-python3 -m venv .venv-aiperf && source .venv-aiperf/bin/activate
+uv venv --seed --python 3.12 .venv-aiperf && source .venv-aiperf/bin/activate
 pip install aiperf==0.12.0 "openai>=1.40" httpx
 ```
 
@@ -245,7 +245,7 @@ vLLM's `/metrics` URLs, because the gateway does not expose them (a launch warni
 | **vLLM's `/metrics` reachable** from the client machine | Enabled by default; it provides preemptions, cache, speculative decoding, KV cache occupancy. It does **not** require the API key (see [Appendix A](#appendix-a-security-notes)). | `curl -s http://<host>:8000/metrics \| grep -c '^vllm:'` prints a number greater than 0 |
 | **LiteLLM installed** (optional) | To measure through the gateway, or to follow the agents separately in observation ([section 8.5](#85-per-agent-view-through-litellm)): LiteLLM sees which agent sends each request, vLLM does not. Your vLLM declared as a model of LiteLLM, with its key if it has one ([LiteLLM, vLLM](https://docs.litellm.ai/docs/providers/vllm); [configuration](https://docs.litellm.ai/docs/proxy/configs)). | `curl -s -H "Authorization: Bearer <key>" http://<vm>:4000/v1/models` |
 | **Prometheus** (observation only) | A separate server that scrapes vLLM's `/metrics` (and LiteLLM's) and keeps the history; vLLM does not provide one. A single binary ([download](https://prometheus.io/download/)), or the `prom/prometheus` Docker image. Configuration provided: `tools/prometheus.yml.example` ([section 8.2](#82-install-and-start-prometheus-once)). | `curl -s http://<host>:9090/-/ready` |
-| **Python 3.11 to 3.13** on the client machine | Required by AIPerf 0.12. | `python3 --version` |
+| **uv** on the client machine | Installs the Python that AIPerf 0.12 requires (3.11 to 3.13) for the bench's environment; see [section 4.3](#43-install-the-bench). | `uv --version` |
 | **bash** | Tested with bash 5; written for bash 3.2 (macOS), verified only with a bash 3.2 built on Linux. | `bash --version` |
 | **Network** | The client machine reaches vLLM (and LiteLLM). No Internet access is needed once the tokenizer is copied into `tools/tokenizer/` ([section 5.3](#53-copy-the-tokenizer)). | — |
 
@@ -311,11 +311,27 @@ In practice:
 
 ### 4.3 Install the bench
 
-On the client machine (the commands of the [quick start](#2-quick-start)):
+On the client machine, with [uv](https://docs.astral.sh/uv/): it downloads the Python that AIPerf needs (3.12) for this
+environment only, so you do not have to install or upgrade Python yourself.
+
+Install uv if you do not have it (other ways in the
+[uv documentation](https://docs.astral.sh/uv/getting-started/installation/)):
+
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+
+Get the code:
 
 ```bash
 git clone https://github.com/Shevehs/banc-gpu.git ~/banc-gpu && cd ~/banc-gpu
-python3 -m venv .venv-aiperf && source .venv-aiperf/bin/activate
+```
+
+Create the environment (`--seed` puts pip in it) and install the bench in it:
+
+```bash
+uv venv --seed --python 3.12 .venv-aiperf
+source .venv-aiperf/bin/activate
 pip install aiperf==0.12.0 "openai>=1.40" httpx
 ```
 
@@ -325,29 +341,8 @@ Check the installation:
 aiperf --version && python -c "import openai, aiohttp; print('ok')"
 ```
 
-AIPerf also installs `aiohttp` (interface) and the `hf` command (tokenizer). Without Internet access,
-`pip` must point to a package mirror.
-
-**Python too old** (e.g. 3.9, shipped with macOS), **instead of** the `python3 -m venv` and `pip install` lines
-above (if `.venv-aiperf` already exists, delete it first): without touching the system Python,
-[uv](https://docs.astral.sh/uv/guides/install-python/) downloads a Python 3.12 for this environment only:
-
-```bash
-python3 -m pip install --user uv            # or the installer from https://docs.astral.sh/uv/getting-started/installation/
-```
-
-Create the environment (`--seed` puts pip in it) and check its Python version:
-
-```bash
-uv venv --seed --python 3.12 .venv-aiperf
-source .venv-aiperf/bin/activate && python --version
-```
-
-Then install the bench as above:
-
-```bash
-pip install aiperf==0.12.0 "openai>=1.40" httpx
-```
+AIPerf also installs `aiohttp` (interface) and the `hf` command (tokenizer). Without Internet access, `pip` and `uv`
+(which downloads Python) must point to a mirror.
 
 [↑ Back to top](#top)
 
