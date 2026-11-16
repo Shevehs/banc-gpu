@@ -26,7 +26,7 @@ Two families of measurements:
 
 - [1. Choose a mode](#1-choose-a-mode)
 - [2. Quick start](#2-quick-start)
-  - [2.1 Get the code and install the bench](#21-get-the-code-and-install-the-bench)
+  - [2.1 Get the code and install the dependencies](#21-get-the-code-and-install-the-dependencies)
   - [2.2 Point the bench at your vLLM](#22-point-the-bench-at-your-vllm)
   - [2.3 Check that it can reach the server](#23-check-that-it-can-reach-the-server)
   - [2.4 Run a first measurement and read it](#24-run-a-first-measurement-and-read-it)
@@ -34,7 +34,7 @@ Two families of measurements:
 - [4. Requirements and installation](#4-requirements-and-installation)
   - [4.1 What must already be in place](#41-what-must-already-be-in-place)
   - [4.2 Check the vLLM in place](#42-check-the-vllm-in-place)
-  - [4.3 Install the bench](#43-install-the-bench)
+  - [4.3 Install the bench dependencies](#43-install-the-bench-dependencies)
 - [5. Configure the client](#5-configure-the-client)
   - [5.1 Activate the environment](#51-activate-the-environment)
   - [5.2 Set the connection](#52-set-the-connection)
@@ -94,9 +94,9 @@ requires restarting vLLM (see [section 4.2](#42-check-the-vllm-in-place)).
 ## 2. Quick start
 
 A first synthetic measurement, on a vLLM that is already running. You need [uv](https://docs.astral.sh/uv/), which
-installs the right Python for the bench ([how to install it](#43-install-the-bench), section 4.3).
+installs the right Python for the bench ([how to install it](#43-install-the-bench-dependencies), section 4.3).
 
-### 2.1 Get the code and install the bench
+### 2.1 Get the code and install the dependencies
 
 ```bash
 git clone https://github.com/Shevehs/banc-gpu.git ~/banc-gpu && cd ~/banc-gpu
@@ -245,7 +245,7 @@ vLLM's `/metrics` URLs, because the gateway does not expose them (a launch warni
 | **vLLM's `/metrics` reachable** from the client machine | Enabled by default; it provides preemptions, cache, speculative decoding, KV cache occupancy. It does **not** require the API key (see [Appendix A](#appendix-a-security-notes)). | `curl -s http://<host>:8000/metrics \| grep -c '^vllm:'` prints a number greater than 0 |
 | **LiteLLM installed** (optional) | To measure through the gateway, or to follow the agents separately in observation ([section 8.5](#85-per-agent-view-through-litellm)): LiteLLM sees which agent sends each request, vLLM does not. Your vLLM declared as a model of LiteLLM, with its key if it has one ([LiteLLM, vLLM](https://docs.litellm.ai/docs/providers/vllm); [configuration](https://docs.litellm.ai/docs/proxy/configs)). | `curl -s -H "Authorization: Bearer <key>" http://<vm>:4000/v1/models` |
 | **Prometheus** (observation only) | A separate server that scrapes vLLM's `/metrics` (and LiteLLM's) and keeps the history; vLLM does not provide one. A single binary ([download](https://prometheus.io/download/)), or the `prom/prometheus` Docker image. Configuration provided: `tools/prometheus.yml.example` ([section 8.2](#82-install-and-start-prometheus-once)). | `curl -s http://<host>:9090/-/ready` |
-| **uv** on the client machine | Installs the Python that AIPerf 0.12 requires (3.11 to 3.13) for the bench's environment; see [section 4.3](#43-install-the-bench). | `uv --version` |
+| **uv** on the client machine | Installs the Python that AIPerf 0.12 requires (3.11 to 3.13) for the bench's environment; see [section 4.3](#43-install-the-bench-dependencies). | `uv --version` |
 | **bash** | Tested with bash 5; written for bash 3.2 (macOS), verified only with a bash 3.2 built on Linux. | `bash --version` |
 | **Network** | The client machine reaches vLLM (and LiteLLM). No Internet access is needed once the tokenizer is copied into `tools/tokenizer/` ([section 5.3](#53-copy-the-tokenizer)). | — |
 
@@ -309,7 +309,7 @@ In practice:
 | `--api-key <key>` | any mode | key to give the bench (`BENCH_API_KEY`); it does not protect everything, see [Appendix A](#appendix-a-security-notes) |
 | `--fingerprint-mode` | any mode (keep the default `full`) | the bench reads the parallelism (TP, PP, DP, EP) from the responses' fingerprint; in `hash` mode it is hidden |
 
-### 4.3 Install the bench
+### 4.3 Install the bench dependencies
 
 On the client machine, with [uv](https://docs.astral.sh/uv/): it downloads the Python that AIPerf needs (3.12) for this
 environment only, so you do not have to install or upgrade Python yourself.
@@ -327,7 +327,7 @@ Get the code:
 git clone https://github.com/Shevehs/banc-gpu.git ~/banc-gpu && cd ~/banc-gpu
 ```
 
-Create the environment (`--seed` puts pip in it) and install the bench in it:
+Create the environment (`--seed` puts pip in it) and install the dependencies in it (AIPerf and the Python libraries the bench uses):
 
 ```bash
 uv venv --seed --python 3.12 .venv-aiperf
