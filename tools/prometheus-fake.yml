@@ -1,4 +1,4 @@
-# Prometheus to check the observation against the fake server (README, section 6). Any "LiteLLM" key will do.
+# Prometheus to check the observation against the fake server (README, Appendix E). Any "LiteLLM" key will do.
 global: {scrape_interval: 5s}
 scrape_configs:
   - job_name: vllm

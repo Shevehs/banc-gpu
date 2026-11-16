@@ -56,15 +56,15 @@ The interface never starts vLLM: it measures the one that is running. Options to
   TP/PP/DP/EP parallelism read from the response fingerprint, the number of GPUs deduced from it, a warning when a
   metrics URL is not vLLM's `/metrics` and, only if vLLM is started with `VLLM_SERVER_DEV_MODE=1`, the speculative
   decoding method and the scheduler), then one of the three stress tests: synthetic (AIPerf), AgentX or test agents
-  (repository README, section 7). For the test agents, "Label the agents" and "Per-agent keys" give every
-  request the identity of its profile, for the per-agent view through LiteLLM (repository README, section 8.5).
+  (repository README, section 6). For the test agents, "Label the agents" and "Per-agent keys" give every
+  request the identity of its profile, for the per-agent view through LiteLLM (repository README, section 7.5).
 - **Runs**: the runs started since the interface server was started, a live log, and stop. Logs are kept in `interface/logs/`.
 - **Results**: analysis of a results directory (table, selected point, warnings, throughput-per-GPU vs.
   interactivity curve with the target). The "GPUs" field is optional: empty, the count of each run is deduced
   from its fingerprint (`server_config.json`).
 - **Observation**: nothing to start. Prometheus URL, vLLM and LiteLLM target selectors, range ("Since", or start
   and end), window length, then "Show": views by window, by period (6-hour ranges or hours) and by agent
-  (repository README, section 8). A "refresh every minute" box follows real usage live. The ranges of the runs
+  (repository README, section 7). A "refresh every minute" box follows real usage live. The ranges of the runs
   started from the interface (since its server was started) are marked "run in progress" and discarded from the
   verdicts. It works while a run is in progress.
 
