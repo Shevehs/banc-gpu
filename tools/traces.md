@@ -200,7 +200,8 @@ logs from a real agent.
 
 If your logs have the token counts but not the prompts, assume that each call continues the previous one. A call with
 `in` tokens needs `ceil(in / 64)` IDs in all. Keep the first `floor(previous in / 64)` IDs of the previous call, which
-are its full blocks, and give new IDs to the rest. You lose what you cannot see (a context that was compacted, two
+are its full blocks (or fewer, if this call is shorter than the previous one), and give new IDs to the rest. The first
+call of a session gets only new IDs. You lose what you cannot see (a context that was compacted, two
 branches of a conversation), so the cache reuse is only an estimate.
 
 `tools/make_traces.py` builds its sessions in a similar way, with sizes that are always a multiple of 64. You can read
