@@ -668,7 +668,7 @@ Notes on these variables:
 The levels are numbers of **sessions replayed at the same time** (AIPerf's `--concurrency`). The report is the one
 described in [section 6.2](#62-reading-the-aiperf-report-synthetic-and-agentx).
 
-Duration: 5 levels x 30 min x 3 repetitions is about 7 h 30 per configuration (about 3 h 45 at 15 min per level).
+Duration: one test of 5 levels x 30 min takes about 2 h 30 (about 1 h 15 at 15 min per level). The measurement protocol ([section 8](#8-measurement-protocol)) recommends three repetitions, which makes about 7 h 30 per configuration (about 3 h 45 at 15 min per level).
 
 ### 6.4 AgentX without Internet access
 
