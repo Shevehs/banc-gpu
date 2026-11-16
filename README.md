@@ -42,7 +42,7 @@ Two families of measurements:
   - [5.4 Test the connection](#54-test-the-connection)
 - [6. Stress tests](#6-stress-tests)
   - [6.1 Synthetic stress test](#61-synthetic-stress-test)
-  - [6.2 Reading the stress-test report](#62-reading-the-stress-test-report)
+  - [6.2 Reading the AIPerf report (synthetic and AgentX)](#62-reading-the-aiperf-report-synthetic-and-agentx)
   - [6.3 AgentX stress test](#63-agentx-stress-test)
   - [6.4 AgentX without Internet access](#64-agentx-without-internet-access)
   - [6.5 Context shorter than the traces](#65-context-shorter-than-the-traces)
@@ -163,7 +163,7 @@ How to read it:
 - **Estimate**: the limit lies between level 1 and level 4, so the report estimates the throughput exactly at the
   target. Confirm it by running the levels in between (for example `"2 3"`).
 
-Details: [section 6.2](#62-reading-the-stress-test-report).
+Details: [section 6.2](#62-reading-the-aiperf-report-synthetic-and-agentx).
 
 Unfamiliar terms: see [Appendix G](#appendix-g-glossary). No GPU at hand? Check the scripts first with the fake server ([Appendix E](#appendix-e-try-the-bench-without-a-gpu)).
 
@@ -473,7 +473,7 @@ Check that the **prefix cache** and the **parallelism** are those of the measure
 
 The GPU count is the TP x PP x DP of the fingerprint, times the number of vLLM servers recognised in `BENCH_METRICS`
 (all assumed identical to the one that answered). The reports reuse it when `--gpu` is not given
-([section 6.2](#62-reading-the-stress-test-report)).
+([section 6.2](#62-reading-the-aiperf-report-synthetic-and-agentx)).
 
 **If something looks wrong**, these are the usual messages and what to do:
 
@@ -501,7 +501,10 @@ marks repetitions of the same configuration, which the report groups together.
 
 ### 6.1 Synthetic stress test
 
-vLLM launched **with** `--no-enable-prefix-caching`.
+This test uses **AIPerf** (through `sweep.sh`) to send requests of a fixed length, one level of concurrency after the
+other (2,048 input and 256 output tokens by default).
+
+vLLM must be launched **with** `--no-enable-prefix-caching`.
 
 ```bash
 ./sweep.sh trial-r1 "1 2 4 8 16 32 64"
@@ -543,9 +546,9 @@ every level then lasts that many seconds, with many more requests per level.
 Example for a reference measurement: `BENCH_ISL=32768 BENCH_OSL=512 BENCH_DURATION=900 ./sweep.sh conf-a-r1 "48 52 56 60 64"`.
 
 **You should see** one line per level with its duration, then a completion message. Failed requests do not stop
-AIPerf: check the `err` column in the report ([section 6.2](#62-reading-the-stress-test-report)).
+AIPerf: check the `err` column in the report ([section 6.2](#62-reading-the-aiperf-report-synthetic-and-agentx)).
 
-### 6.2 Reading the stress-test report
+### 6.2 Reading the AIPerf report (synthetic and AgentX)
 
 This report reads the AIPerf results: the synthetic stress test (`sweep.sh`) and the AgentX stress test
 (`agentx.sh`). The test agents have their own report ([section 6.6](#66-test-agents-stress-test)).
@@ -605,9 +608,9 @@ The full table is in `results/table.csv` (`results-agentx/table.csv` for AgentX)
 
 ### 6.3 AgentX stress test
 
-Replays the coding-agent sessions (Claude Code, sub-agents included) published by SemiAnalysis, with AIPerf's locked
-scenario `inferencex-agentx-mvp`, the one behind InferenceX's AgentX measurements
-([method](https://inferencex.semianalysis.com/blog/agentic-benchmark-agent-benchmark-guide)).
+This test uses **AIPerf** (through `agentx.sh`) to replay the coding-agent sessions (Claude Code, sub-agents included)
+published by SemiAnalysis, with AIPerf's locked scenario `inferencex-agentx-mvp`, the one behind InferenceX's AgentX
+measurements ([method](https://inferencex.semianalysis.com/blog/agentic-benchmark-agent-benchmark-guide)).
 
 The result is therefore comparable to the published AgentX exports: same traces, same scenario, but a different engine
 and hardware.
@@ -661,7 +664,7 @@ Notes on these variables:
   `AIPERF_SERVICE_PROFILE_CONFIGURE_TIMEOUT` is raised to at least this value, as AIPerf requires.
 
 The levels are numbers of **sessions replayed at the same time** (AIPerf's `--concurrency`). The report is the one
-described in [section 6.2](#62-reading-the-stress-test-report).
+described in [section 6.2](#62-reading-the-aiperf-report-synthetic-and-agentx).
 
 Duration: 5 levels x 30 min x 3 repetitions is about 7 h 30 per configuration (about 3 h 45 at 15 min per level).
 
@@ -773,7 +776,7 @@ Compare with the same sweep made directly on vLLM: the TTFT gap is the latency a
 `ignore_eos` and the two measurements are not comparable (not verified).
 
 Several replicas behind LiteLLM: `BENCH_METRICS` takes one URL per replica; the deduced GPU count adds them all
-([section 6.2](#62-reading-the-stress-test-report)), assuming they are identical to the one that answered.
+([section 6.2](#62-reading-the-aiperf-report-synthetic-and-agentx)), assuming they are identical to the one that answered.
 Measure the replicas **together**, as they will serve.
 
 [↑ Back to top](#top)
