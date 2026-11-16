@@ -19,10 +19,11 @@ At the top of the file:
 |---|---|
 | `id` | name of the session |
 | `models` | models used in the session |
-| `block_size` | tokens per cache block (64 in the published traces) |
+| `block_size` | tokens per cache block (any value above 0; 64 in the published traces) |
 | `hash_id_scope` | always `"local"`: hash IDs are only compared inside one trace |
 | `requests` | the calls, in time order |
 | `tool_tokens`, `system_tokens` | optional: size of the tools and system prefixes |
+| `totals` | optional: a summary of the trace, kept as it is |
 
 Each call in `requests`:
 
@@ -32,24 +33,35 @@ Each call in `requests`:
 | `type` | `"n"` for a normal call, `"s"` for a streaming call |
 | `model` | model name |
 | `in`, `out` | input and output tokens |
-| `hash_ids` | one cache block ID per `block_size` tokens of the input |
+| `hash_ids` | one cache block ID per `block_size` tokens of the input; optional, but without it the cache reuse is not reproduced |
 | `think_time` | optional: the client's delay before the call, in seconds |
 | `api_time` | optional: how long the call took, in seconds |
 | `ttft` | optional, streaming calls only: time to first token, in seconds |
 | `stop` | optional: `""`, `"tool_use"` or `"end_turn"` |
 | `input_types`, `output_types` | optional content-type notes |
 
-A field that is not in these lists is refused.
+All the top-level fields are required except `tool_tokens`, `system_tokens` and `totals`. In a call, `t`, `type`, `model`,
+`in` and `out` are required and the other fields are optional.
+
+A field that is not in these tables or in the sub-agent description below is refused.
 
 **Hash IDs** are what makes the cache reuse reproducible. Two calls that start with the same text must start with the
-same IDs. A call that continues the previous context repeats the IDs of the previous call, then adds new ones for the
-new blocks. In the published traces about 90% of consecutive calls do this.
+same IDs.
 
-**Sub-agents** are optional. A sub-agent is an entry of type `"subagent"` in `requests`, with its own list of
-`requests` and the fields `agent_id`, `subagent_type`, `status` and `models`. The next call of the main agent comes
-after the sub-agent has finished.
+A call that continues the previous context repeats the IDs of the previous call, then adds new ones for the new blocks.
+If the previous call ended on a block that was not full, that last block gets a new ID. In the published traces about
+90% of consecutive calls repeat the previous IDs.
 
-Minimal example, with two calls:
+**Sub-agents** are optional. A sub-agent is an entry of type `"subagent"` in `requests`, with:
+
+- `t` (the spawn time), its own list of `requests`, and the required fields `agent_id`, `subagent_type`, `status` and
+  `models`;
+- optionally `duration_ms`, `total_tokens`, `tool_use_count` (these three may be `null`), `tool_tokens` and
+  `system_tokens`.
+
+The next call of the main agent comes after the sub-agent has finished.
+
+Here is a minimal trace with two calls:
 
 ```json
 {
@@ -73,6 +85,11 @@ one, generate the set:
 
 ```bash
 python tools/make_traces.py --preset small --output traces-small
+```
+
+Then run AgentX on that folder:
+
+```bash
 BENCH_AGENTX_DIR=traces-small ./agentx.sh small-r1 "1 2 4"
 ```
 
@@ -85,8 +102,16 @@ BENCH_AGENTX_DIR=traces-small ./agentx.sh small-r1 "1 2 4"
 
 The script prints the value for your set. It adds 2,048 tokens for the chat template.
 
-Options: `--sessions` (default 30), `--seed` (the same seed gives the same set), `--max-context` (replaces the preset's
-longest call), `--no-subagents`, `--validate` and `--overwrite`.
+Options:
+
+- `--output`: the folder to write (required), with one `trace-NNNN.json` file per session;
+- `--preset`: `tiny`, `small`, `medium` or `large` (default `small`);
+- `--sessions`: the number of sessions (default 30);
+- `--seed`: the same seed gives the same set (default 1);
+- `--max-context`: replaces the preset's longest call, 4,096 tokens at least;
+- `--no-subagents`: sessions without sub-agents;
+- `--validate`: checks the traces with AIPerf's model before writing (needs AIPerf in the environment);
+- `--overwrite`: writes into a folder that already holds traces.
 
 The shape follows the published set: a very small first call, a jump to the working context, then calls that extend the
 previous context, with think times that have a long tail and sub-agents that start from a shared prefix. The sizes of
@@ -94,9 +119,13 @@ the sessions differ, and the first session reaches the preset's limit.
 
 ## Build traces from your own agent's logs
 
-No tool in this repository reads your logs: you write the conversion. What you need, for each call of each session:
-the time of the request, the size of the input, the size of the output, and how long the call took. To reproduce the
-cache reuse you also need the prompt itself.
+No tool in this repository reads your logs: you write the conversion. For each call of each session you need:
+
+- the time of the request;
+- the size of the input and of the output;
+- how long the call took.
+
+To reproduce the cache reuse you also need the prompt itself.
 
 ### Route 1: logs that keep the prompts
 
@@ -132,7 +161,14 @@ def build_trace(session_id, model, calls):
     return {"id": session_id, "models": [model], "block_size": BLOCK, "hash_id_scope": "local", "requests": requests}
 ```
 
-Write one file per session with `json.dump(build_trace(...), file)`, all in one folder.
+Write one file per session, all in the same folder:
+
+```python
+import json
+
+with open("my-traces/session-1.json", "w") as file:
+    json.dump(build_trace("session-1", "my-model", calls), file)
+```
 
 Points to know about this code:
 
@@ -142,15 +178,15 @@ Points to know about this code:
 - `in` is the real number of input tokens. It does not have to be a multiple of 64.
 - The code uses `"n"` for every call. Use `"s"` and add `ttft` if you recorded streaming.
 
-I ran this code on a five-call session and AIPerf's own model accepted the result. I have not run it on logs from a real
-agent.
+This code is tested against AIPerf's model on a synthetic session (`tests/test_traces_doc.py`). It has not been run on
+logs from a real agent.
 
 ### Route 2: logs with sizes only
 
 If your logs have the token counts but not the prompts, assume that each call continues the previous one: the call
 repeats the IDs of the previous call, then adds `ceil((new input - previous input) / 64)` new IDs. You lose what you
 cannot see (a context that was compacted, two branches of a conversation), so the cache reuse is only an estimate.
-`tools/make_traces.py` builds its sessions this way; the class `Session` there is an example.
+`tools/make_traces.py` builds its sessions this way. You can read its `Session` class as an example.
 
 ### What to decide
 
@@ -159,7 +195,7 @@ cannot see (a context that was compacted, two branches of a conversation), so th
 - **Think time**: the delay between the end of a call and the next request. Keep the real values: they decide how many
   calls are in flight at the same time.
 - **Long sessions**: `--max-model-len` must cover the longest call. `BENCH_MAX_CONTEXT` discards the sessions that go
-  above a limit.
+  above a limit ([README, section 6.6](../README.md#66-context-shorter-than-the-traces)).
 
 ## Check your traces
 
@@ -187,10 +223,10 @@ BENCH_URL=http://127.0.0.1:8001 BENCH_MODEL=bench BENCH_API_KEY=x BENCH_AGENTX_D
 
 ## Good to know
 
-- **Loading can hang.** From 8 traces on, AIPerf rebuilds the prompts with several processes. On one machine this step
-  stayed idle forever. If the run never starts, kill the AIPerf processes (a stuck one also blocks the next runs on a
-  cache lock) and set `AIPERF_DATASET_WEKA_PARALLEL_WORKERS=1` to load in a single process.
+- **Loading can hang.** From 8 traces on, AIPerf rebuilds the prompts with several processes, and this step can stay
+  idle forever (seen once, on a small machine). If the run never starts, kill the AIPerf processes (a stuck one also
+  blocks the next runs on a cache lock) and set `AIPERF_DATASET_WEKA_PARALLEL_WORKERS=1` to load in a single process.
 - **Not verified.** The generator and the replay were tried against the fake server only, not against a real vLLM. The
-  exact definition of the hash IDs is in the kv-cache-tester documentation (`trace_replay_tester.md`), which I have not
-  read. The scheme of route 1 keeps the property that matters here, identical prefixes give identical IDs, but it may
-  not be identical to theirs.
+  exact definition of the hash IDs is in the kv-cache-tester documentation (`trace_replay_tester.md`), which was not
+  consulted. The scheme of route 1 keeps the property that matters here (identical prefixes give identical IDs), but it
+  may not be identical to theirs.
