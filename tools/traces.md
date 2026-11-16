@@ -4,6 +4,10 @@
 replays a folder of your own traces (`BENCH_AGENTX_DIR`). This page says what a trace is, how to generate a set of the
 size you need, and how to build traces from your own agent's logs.
 
+AIPerf is the load-testing tool that `agentx.sh` runs: it replays each trace against your vLLM server
+([README, section 6.3](../README.md#63-agentx-stress-test)). Run the commands of this page from the root of the
+repository. The generator uses only the Python standard library.
+
 A run on a local folder is marked `submission_valid=false` by AIPerf: it is not comparable to the published AgentX
 results, but it is comparable between your own runs.
 
@@ -34,11 +38,11 @@ Each call in `requests`:
 | `model` | model name |
 | `in`, `out` | input and output tokens |
 | `hash_ids` | one cache block ID per `block_size` tokens of the input; optional, but without it the cache reuse is not reproduced |
-| `think_time` | optional: the client's delay before the call, in seconds |
+| `think_time` | optional: the client's pause between the end of the previous call and this request, in seconds |
 | `api_time` | optional: how long the call took, in seconds |
-| `ttft` | optional, streaming calls only: time to first token, in seconds |
-| `stop` | optional: `""`, `"tool_use"` or `"end_turn"` |
-| `input_types`, `output_types` | optional content-type notes |
+| `ttft` | optional, streaming calls only (refused on a `"n"` call): time to first token, in seconds |
+| `stop` | optional: why the call stopped, usually `""`, `"tool_use"` or `"end_turn"` |
+| `input_types`, `output_types` | optional lists of strings: content-type notes |
 
 All the top-level fields are required except `tool_tokens`, `system_tokens` and `totals`. In a call, `t`, `type`, `model`,
 `in` and `out` are required and the other fields are optional.
@@ -56,8 +60,10 @@ If the previous call ended on a block that was not full, that last block gets a 
 
 - `t` (the spawn time), its own list of `requests`, and the required fields `agent_id`, `subagent_type`, `status` and
   `models`;
-- optionally `duration_ms`, `total_tokens`, `tool_use_count` (these three may be `null`), `tool_tokens` and
+- optionally `duration_ms`, `total_tokens`, `tool_use_count` (integers, which may be `null`), `tool_tokens` and
   `system_tokens`.
+
+A sub-agent holds only `"n"` and `"s"` calls, never another sub-agent.
 
 The next call of the main agent comes after the sub-agent has finished.
 
@@ -70,9 +76,9 @@ Here is a minimal trace with two calls:
   "block_size": 64,
   "hash_id_scope": "local",
   "requests": [
-    {"t": 0.0, "type": "n", "model": "my-model", "in": 400, "out": 120, "hash_ids": [0, 1, 2, 3, 4, 5, 6],
+    {"t": 0.0, "type": "n", "model": "my-model", "in": 448, "out": 120, "hash_ids": [0, 1, 2, 3, 4, 5, 6],
      "api_time": 6.0},
-    {"t": 8.5, "type": "s", "model": "my-model", "in": 670, "out": 120,
+    {"t": 8.5, "type": "s", "model": "my-model", "in": 704, "out": 120,
      "hash_ids": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10], "api_time": 6.0, "think_time": 2.5, "ttft": 1.2}
   ]
 }
@@ -93,7 +99,11 @@ Then run AgentX on that folder:
 BENCH_AGENTX_DIR=traces-small ./agentx.sh small-r1 "1 2 4"
 ```
 
-| Preset | Longest call | vLLM needs `--max-model-len` of at least |
+`small-r1` is the label of the run. `"1 2 4"` are the levels: the numbers of sessions replayed at the same time. Each
+level lasts `BENCH_DURATION` seconds (1,800 by default), so this run takes about 90 minutes. The server is `BENCH_URL`
+(default `http://127.0.0.1:8000`), with `BENCH_MODEL` (default `bench`) and `BENCH_API_KEY`.
+
+| Preset | Upper limit of one call (input + output) | vLLM needs `--max-model-len` of at least |
 |---|---|---|
 | `tiny` | 8,000 tokens | 10,048 |
 | `small` | 28,000 tokens | 30,048 |
@@ -104,18 +114,21 @@ The script prints the value for your set. It adds 2,048 tokens for the chat temp
 
 Options:
 
-- `--output`: the folder to write (required), with one `trace-NNNN.json` file per session;
+- `--output`: the folder to write (required, created if missing), with one `trace-NNNN.json` file per session;
 - `--preset`: `tiny`, `small`, `medium` or `large` (default `small`);
-- `--sessions`: the number of sessions (default 30);
+- `--sessions`: the number of sessions, at least 1 (default 30);
 - `--seed`: the same seed gives the same set (default 1);
-- `--max-context`: replaces the preset's longest call, between 4,096 and 1,000,000 tokens;
-- `--no-subagents`: sessions without sub-agents;
-- `--validate`: checks the traces with AIPerf's model before writing; it stops with an error, and writes nothing, if AIPerf is not installed in the environment;
-- `--overwrite`: replaces the `trace-*.json` files of a folder that already holds traces (other `.json` files are kept, with a warning, because `agentx.sh` replays every `.json` file of the folder).
+- `--max-context`: replaces the preset's limit for one call (input + output), between 4,096 and 1,000,000 tokens;
+- `--no-subagents`: sessions without sub-agents (default: with sub-agents);
+- `--validate`: checks the traces with AIPerf's model before writing (default: off). If AIPerf is not installed in the
+  environment, the script stops with an error and writes nothing;
+- `--overwrite`: replaces the `trace-*.json` files of the folder (default: off). Without it, the script refuses to
+  write into a folder that holds any `.json` file. Other `.json` files are kept, with a warning, because `agentx.sh`
+  replays every `.json` file of the folder.
 
 The shape follows the published set: a very small first call, a jump to the working context, then calls that extend the
 previous context, with think times that have a long tail and sub-agents that start from a shared prefix. The sizes of
-the sessions differ, and the first session reaches the preset's limit.
+the sessions differ, and the first session gets close to the preset's limit.
 
 ## Build traces from your own agent's logs
 
@@ -161,11 +174,13 @@ def build_trace(session_id, model, calls):
     return {"id": session_id, "models": [model], "block_size": BLOCK, "hash_id_scope": "local", "requests": requests}
 ```
 
-Write one file per session, all in the same folder:
+`calls` is the list described in the docstring of `build_trace`. Write one file per session, all in the same folder:
 
 ```python
 import json
+import pathlib
 
+pathlib.Path("my-traces").mkdir(exist_ok=True)
 with open("my-traces/session-1.json", "w") as file:
     json.dump(build_trace("session-1", "my-model", calls), file)
 ```
@@ -183,10 +198,13 @@ logs from a real agent.
 
 ### Route 2: logs with sizes only
 
-If your logs have the token counts but not the prompts, assume that each call continues the previous one: the call
-repeats the IDs of the previous call, then adds `ceil((new input - previous input) / 64)` new IDs. You lose what you
-cannot see (a context that was compacted, two branches of a conversation), so the cache reuse is only an estimate.
-`tools/make_traces.py` builds its sessions this way. You can read its `Session` class as an example.
+If your logs have the token counts but not the prompts, assume that each call continues the previous one. A call with
+`in` tokens needs `ceil(in / 64)` IDs in all. Keep the first `floor(previous in / 64)` IDs of the previous call, which
+are its full blocks, and give new IDs to the rest. You lose what you cannot see (a context that was compacted, two
+branches of a conversation), so the cache reuse is only an estimate.
+
+`tools/make_traces.py` builds its sessions in a similar way, with sizes that are always a multiple of 64. You can read
+its `Session` class as an example.
 
 ### What to decide
 
@@ -214,7 +232,7 @@ EOF
 ```
 
 An error names the field that is wrong. Then do a short run against the fake server, which needs no GPU (start it as in
-the README, Appendix E). `BENCH_SHORT_RUN=1` allows a level shorter than 900 s:
+the [README, Appendix E](../README.md#appendix-e-try-the-bench-without-a-gpu)). `BENCH_SHORT_RUN=1` allows a level shorter than 900 s:
 
 ```bash
 BENCH_URL=http://127.0.0.1:8001 BENCH_MODEL=bench BENCH_API_KEY=x BENCH_AGENTX_DIR=my-traces \
@@ -224,9 +242,8 @@ BENCH_URL=http://127.0.0.1:8001 BENCH_MODEL=bench BENCH_API_KEY=x BENCH_AGENTX_D
 ## Good to know
 
 - **Loading can hang.** From 8 traces on, AIPerf rebuilds the prompts with several processes, and this step can stay
-  idle forever (seen once, on a small machine). If the run never starts, kill the AIPerf processes (a stuck one also
+  idle forever. If the run never starts, kill the AIPerf processes (a stuck one also
   blocks the next runs on a cache lock) and set `AIPERF_DATASET_WEKA_PARALLEL_WORKERS=1` to load in a single process.
-- **Not verified.** The generator and the replay were tried against the fake server only, not against a real vLLM. The
-  exact definition of the hash IDs is in the kv-cache-tester documentation (`trace_replay_tester.md`), which was not
-  consulted. The scheme of route 1 keeps the property that matters here (identical prefixes give identical IDs), but it
-  may not be identical to theirs.
+- **Not verified.** The generator and the replay were tried against the fake server only, not against a real vLLM.
+  The scheme of route 1 keeps the property that matters (identical prefixes get identical IDs). It may differ from the
+  definition in the kv-cache-tester documentation (`trace_replay_tester.md`).
