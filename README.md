@@ -717,9 +717,13 @@ What happens when a request does not fit:
   by vLLM's code, `vllm/entrypoints/serve/utils/api_utils.py`, `get_max_tokens`). The report flags it with a WARNING
   (AIPerf's `osl_mismatch_count`, column `shortened_outputs`).
 
-This subset is **not comparable** to the published AgentX results (inferred: bias toward shorter sessions). Note the
-number of discarded traces with the result. It is in the level log, `results-agentx/<label>/c<N>.log`, on the line
-`traces: scanned N, rejected_by_maxctx X (--max-context-length=…), eligible Y`.
+A run with `BENCH_MAX_CONTEXT` replays only the sessions that stay under the limit, so it leaves out the longest ones.
+Its load is probably lighter than the full set (inferred), and the result is **not comparable** to the published
+AgentX results.
+
+Record how many traces were kept with your result. The level log, `results-agentx/<label>/c<N>.log`, has a line such as
+`traces: scanned 393, rejected_by_maxctx 243 (--max-context-length=…), eligible 150`: it says that 150 of the 393 traces
+were used.
 
 ### 6.6 Test-agents stress test
 
