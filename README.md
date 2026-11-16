@@ -227,10 +227,13 @@ flowchart LR
   results --> report --> tables
 ```
 
-Solid arrows are traffic and file writes, dashed arrows are optional paths or metric reads. Observation sends
-no load and starts nothing: Prometheus (a separate server) scrapes vLLM's `/metrics` (and LiteLLM's) and keeps the
-history, and `observation.query` only queries it. When the target is the LiteLLM gateway, `BENCH_METRICS` must list
-vLLM's `/metrics` URLs, because the gateway does not expose them (a launch warning says so if it points elsewhere).
+Solid arrows are traffic and file writes; dashed arrows are optional paths or metric reads.
+
+Observation sends no load and starts nothing. Prometheus (a separate server) scrapes vLLM's `/metrics` (and LiteLLM's)
+and keeps the history, and `observation.query` only queries it.
+
+When the target is the LiteLLM gateway, `BENCH_METRICS` must list vLLM's `/metrics` URLs, because the gateway does not
+expose them. A launch warning says so if it points elsewhere.
 
 [↑ Back to top](#top)
 
@@ -271,27 +274,40 @@ In practice:
 **Options that matter to the bench**
 
 - `--served-model-name <name>` (recommended): the short name you give the bench as `BENCH_MODEL`.
-- **Prefix caching**: pass `--no-enable-prefix-caching` for the **synthetic** stress test (AIPerf reuses its
-  synthetic prompts, so the cache would inflate throughput); do **not** pass it for AgentX and the test agents
-  (agents re-read their context: the cache is part of what is measured); for observation, keep your production setting.
+- **Prefix caching**, by mode:
+  - **Synthetic stress test**: pass `--no-enable-prefix-caching`. AIPerf reuses its synthetic prompts, so the cache
+    would inflate throughput.
+  - **AgentX and test agents**: do **not** pass it. Agents re-read their context, so the cache is part of what is
+    measured.
+  - **Observation**: keep your production setting.
+
   Changing it requires **restarting vLLM** between the synthetic load and the other modes.
-- `--max-model-len`: large enough for the mode (table below). The bench does not truncate. A request whose input is longer is refused by vLLM and counted as an error; if only the output does not fit, vLLM shortens it and the report shows a warning ([section 6.5](#65-context-shorter-than-the-traces)).
-- `--max-num-seqs`: at least the highest concurrency, otherwise the extra requests wait. AgentX: at least sessions x parallel sub-agents (inferred; keep a margin). Test agents: at least the highest level x 3 (`code_review` launches 3 sub-agents).
+- `--max-model-len`: large enough for the mode (table below). The bench does not truncate.
+  - A request whose input is longer is refused by vLLM and counted as an error.
+  - If only the output does not fit, vLLM shortens it and the report shows a warning
+    ([section 6.5](#65-context-shorter-than-the-traces)).
+- `--max-num-seqs`: at least the highest concurrency, otherwise the extra requests wait.
+  - AgentX: at least sessions x parallel sub-agents (inferred; keep a margin).
+  - Test agents: at least the highest level x 3 (`code_review` launches 3 sub-agents).
 - `--max-num-batched-tokens`: the number of tokens vLLM processes in one step. Keep your production value, so that
   the measurement represents it, and note it with the result: it moves the TTFT and the interactivity in opposite
   directions.
-  - **Synthetic test**: when it is close to the size of the prompts (2,048 tokens), the prompts are prefilled almost
-    one at a time and the others wait in the queue. This shows as waiting requests (`vllm:num_requests_waiting`) and
-    as a long TTFT at high concurrency. To tell this cause from a lack of memory, look at the KV cache and the
-    preemptions: if the cache is not full and there is no preemption, the queue comes from this limit; if the cache is
-    full or there are preemptions, memory is the limit. A larger value usually lets several prompts through together
-    on a GPU server; on a machine where prefill is already compute-bound, it changes little.
+  - **Synthetic test**: when the value is close to the size of the prompts (2,048 tokens), the prompts are prefilled
+    almost one at a time and the others wait in the queue.
+    - It shows as waiting requests (`vllm:num_requests_waiting`) and as a long TTFT at high concurrency.
+    - To tell this cause from a lack of memory, look at the KV cache and the preemptions. If the cache is not full and
+      there is no preemption, the queue comes from this limit. If the cache is full or there are preemptions, memory
+      is the limit.
+    - A larger value usually lets several prompts through together on a GPU server. On a machine where prefill is
+      already compute-bound, it changes little.
   - **AgentX and test agents**: the prompts are very long (a median of about 142,000 tokens for AgentX). vLLM splits
     them into chunks of at most this size, one chunk per step, mixed with the steps of the requests already
-    generating. A small value keeps each step short, so the running requests keep a steady rhythm (better
-    interactivity), but a long prompt needs many steps (longer TTFT). A large value prefills faster but makes each
-    step longer, which shows as pauses between tokens for the other requests. This is the usual trade-off, not
-    measured here.
+    generating.
+    - A small value keeps each step short, so the running requests keep a steady rhythm (better interactivity), but a
+      long prompt needs many steps (longer TTFT).
+    - A large value prefills faster but makes each step longer, which shows as pauses between tokens for the other
+      requests.
+    - This is the usual trade-off, not measured here.
 
 | Mode | `--max-model-len` at least | Why |
 |---|---|---|
@@ -417,11 +433,17 @@ their sizes. On a machine with Hugging Face access:
 ls tools/tokenizer/tokenizer.json
 ```
 
-Without Hugging Face access, copy `tokenizer.json` and `tokenizer_config.json` from the weights folder
-into `tools/tokenizer/`. **Without a copy**: set in `target.env` the folder that already holds `tokenizer.json`, for
-example the one vLLM downloaded:
-`BENCH_TOKENIZER=$HOME/.cache/huggingface/hub/models--<organization>--<model>/snapshots/<hash>` (absolute path; the
-folder, not the file; the one of the model actually served). Check the model's license before versioning these files.
+Without Hugging Face access, copy `tokenizer.json` and `tokenizer_config.json` from the weights folder into
+`tools/tokenizer/`.
+
+**Without a copy**: set in `target.env` the folder that already holds `tokenizer.json`, for example the one vLLM
+downloaded. Give the absolute path of the folder, not of the file, and the one of the model actually served:
+
+```bash
+export BENCH_TOKENIZER=$HOME/.cache/huggingface/hub/models--<organization>--<model>/snapshots/<hash>
+```
+
+Check the model's license before versioning these files.
 
 ### 5.4 Test the connection
 
@@ -430,10 +452,16 @@ curl -s -H "Authorization: Bearer $BENCH_API_KEY" "$BENCH_URL/v1/models"
 python tools/server_config.py --url "$BENCH_URL" --model "$BENCH_MODEL" --metrics "$BENCH_METRICS" > /dev/null
 ```
 
-**You should see** the model, then `[config]` lines. The exact wording is set by `tools/server_config.py`; the content is
-the target's fingerprint (vLLM version, decoded TP / PP / DP / EP), the number of GPUs deduced from it, then for each
-`/metrics` URL the vLLM version, whether the prefix cache is on, and the number of speculative tokens read from the metrics (0 =
-no speculative decoding). Example for a TP 8 server with expert parallelism and 3 speculative tokens:
+**You should see** the model, then `[config]` lines. The exact wording is set by `tools/server_config.py`.
+
+The `[config]` lines give:
+
+- the target's fingerprint (vLLM version, decoded TP / PP / DP / EP);
+- the number of GPUs deduced from it;
+- then, for each `/metrics` URL: the vLLM version, whether the prefix cache is on, and the number of speculative
+  tokens read from the metrics (0 = no speculative decoding).
+
+Example for a TP 8 server with expert parallelism and 3 speculative tokens:
 
 ```
 [config] target fingerprint: vllm-<version>-tp8-ep-<hash> -> TP 8, PP 1, DP 1, EP yes
@@ -490,11 +518,14 @@ vLLM launched **with** `--no-enable-prefix-caching`.
 | `BENCH_TEMPERATURE` | 0.7 | fixed so that speculative decoding is comparable from one run to the next |
 | `BENCH_EXTRA` | empty | additional AIPerf options, e.g. `--use-server-token-count` |
 
-**How a level is sized.** The concurrency is the number of requests in flight at the same time; the number of
-requests of a level is the total sent before it ends. Take a concurrency of 4: the bench keeps 4 requests open, and as
-soon as one finishes it sends the next, until 32 requests (4 x 8) have completed. Each of the 4 slots has then handled
-8 requests one after the other. The load never exceeds 4 requests at once; `BENCH_REQUESTS_PER_CONCURRENCY` only sets
-how long it is held. This matters for two reasons:
+**How a level is sized.** The concurrency is the number of requests in flight at the same time. The number of requests
+of a level is the total sent before it ends.
+
+Take a concurrency of 4: the bench keeps 4 requests open, and as soon as one finishes it sends the next, until 32
+requests (4 x 8) have completed. Each of the 4 slots has then handled 8 requests one after the other.
+
+The load never exceeds 4 requests at once; `BENCH_REQUESTS_PER_CONCURRENCY` only sets how long it is held. This matters
+for two reasons:
 
 - **A steady load.** At the start of a level all the slots send their request together, and at the end the last
   requests finish while the other slots are already empty. With about 8 requests per slot, the middle part, where the
@@ -514,25 +545,43 @@ AIPerf: check the `err` column in the report ([section 6.2](#62-reading-the-stre
 
 ### 6.2 Reading the stress-test report
 
-The same report reads the synthetic and the AgentX results:
+This report reads the AIPerf results: the synthetic stress test (`sweep.sh`) and the AgentX stress test
+(`agentx.sh`). The test agents have their own report ([section 6.6](#66-test-agents-stress-test)).
 
 ```bash
 python -m report aiperf results --target 30
 ```
 
+Options:
+
 - `--target`: target interactivity, in tokens/s per request.
-- `--gpu`: number of GPUs behind the target (all replicas included). **Optional**: without it, the report deduces it
-  from the `server_config.json` of each run (TP x PP x DP read from the fingerprint, times the number of vLLM servers
-  recognised in `BENCH_METRICS`) and prints it (`GPUs: <run>: 8 (TP 8 × PP 1 × DP 1 × 1 vLLM server(s)), deduced from the
-  fingerprint`); a WARNING flags repetitions of one configuration with different counts. **Give it** if the
-  fingerprint is missing (the report then stops with an error and the reason), if it carries no parallelism degree
-  while the server has several GPUs (`--fingerprint-mode hash` hides them; a WARNING says so; on a Mac this warning is
-  expected), if the replicas differ, with prefill context parallelism (PCP, absent from the fingerprint; read only
-  when `/server_info` exists), or with a data-parallel deployment split into one API server per rank (each
-  fingerprint carries the global DP: the count would be too high; inferred). When given, it prevails; if it
-  contradicts the fingerprint, a WARNING says so.
+- `--gpu`: number of GPUs behind the target, all replicas included. Optional, see below.
 - `--require-metrics`: rejects a level without server metrics.
-- `--ttft-max <ms>`: rejects a level whose P95 TTFT exceeds this threshold (`aiperf` report only; `observation.query` has its own `--ttft-max`, [section 7.3](#73-query-the-observation)).
+- `--ttft-max <ms>`: rejects a level whose P95 TTFT exceeds this threshold. It exists in this report only;
+  `observation.query` has its own `--ttft-max` ([section 7.3](#73-query-the-observation)).
+
+**About `--gpu`.** Without it, the report deduces the count from the `server_config.json` of each run: TP x PP x DP read
+from the fingerprint, times the number of vLLM servers recognised in `BENCH_METRICS`. It prints the result, for example:
+
+```
+GPUs: <run>: 8 (TP 8 × PP 1 × DP 1 × 1 vLLM server(s)), deduced from the fingerprint
+```
+
+A WARNING flags repetitions of one configuration with different counts. If you give `--gpu`, it prevails, and a WARNING
+says so if it contradicts the fingerprint.
+
+**Give `--gpu` yourself when:**
+
+- the fingerprint is missing (the report then stops with an error and the reason);
+- the fingerprint carries no parallelism degree while the server has several GPUs (`--fingerprint-mode hash` hides
+  them; a WARNING says so, and on a Mac this warning is expected);
+- the replicas differ;
+- you use prefill context parallelism (PCP), which is absent from the fingerprint and read only when `/server_info`
+  exists;
+- you run a data-parallel deployment split into one API server per rank: each fingerprint carries the global DP, so the
+  deduced count would be too high (inferred).
+
+The columns of the table:
 
 | Column | Meaning |
 |---|---|
