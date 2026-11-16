@@ -469,9 +469,11 @@ Example for a TP 8 server with expert parallelism and 3 speculative tokens:
 [config] http://10.0.0.5:8000/metrics : vLLM <version>; prefix cache False; speculative tokens (metrics) 3; /server_info absent or unreadable (VLLM_SERVER_DEV_MODE not enabled?)
 ```
 
-Check that the **prefix cache** and the **parallelism** are those of the measurement you are about to make. The GPU
-count is the TP x PP x DP of the fingerprint, times the number of vLLM servers recognised in `BENCH_METRICS`
-(all assumed identical to the one that answered); the reports reuse it when `--gpu` is not given ([section 6.2](#62-reading-the-stress-test-report)).
+Check that the **prefix cache** and the **parallelism** are those of the measurement you are about to make.
+
+The GPU count is the TP x PP x DP of the fingerprint, times the number of vLLM servers recognised in `BENCH_METRICS`
+(all assumed identical to the one that answered). The reports reuse it when `--gpu` is not given
+([section 6.2](#62-reading-the-stress-test-report)).
 
 **If something looks wrong**, these are the usual messages and what to do:
 
@@ -594,10 +596,12 @@ The columns of the table:
 | MTP | speculative-decoding acceptance rate; "—" without speculative decoding |
 | mean output | average output tokens per request; must equal `BENCH_OSL` (varies from trace to trace for AgentX) |
 
-Then the **selected point**: the level with the highest throughput that meets the target, with no errors or preemptions
-(median of the repetitions), and an **estimate interpolated exactly at the target**. Read the warnings:
-"highest level tested" means you need to add levels above it. Full table:
-`results/table.csv` (`results-agentx/table.csv` for AgentX).
+Then the **selected point**: the level with the highest throughput that meets the target, with no errors or
+preemptions (median of the repetitions), and an **estimate interpolated exactly at the target**.
+
+Read the warnings: "highest level tested" means you need to add levels above it.
+
+The full table is in `results/table.csv` (`results-agentx/table.csv` for AgentX).
 
 ### 6.3 AgentX stress test
 
@@ -1327,9 +1331,12 @@ visible in `ps` on the client machine while AIPerf runs (AIPerf masks it in its 
 **The interface only talks to local or private hosts, and only reads inside your own directories.**
 
 The target URL receives the API key, the Prometheus URL receives its key, and the metrics URLs are fetched by the
-interface machine. So the interface refuses a URL whose host is not loopback, private (10/8, 172.16/12, 192.168/16,
-`fd00::/8`), link-local or a name that resolves only to such addresses (a host name that does not resolve is refused
-too). Start the interface with `BENCH_ALLOW_PUBLIC_URLS=1` to allow public hosts, for example a hosted LiteLLM gateway.
+interface machine.
+
+So the interface refuses a URL whose host is not loopback, private (10/8, 172.16/12, 192.168/16, `fd00::/8`),
+link-local or a name that resolves only to such addresses (a host name that does not resolve is refused too).
+
+Start the interface with `BENCH_ALLOW_PUBLIC_URLS=1` to allow public hosts, for example a hosted LiteLLM gateway.
 
 The traces folder of an AgentX run must lie, once `..` and symbolic links are resolved, under the repository, your home
 directory or a directory listed in `BENCH_ALLOWED_DIRS` (separated like `PATH`).
