@@ -533,13 +533,22 @@ vLLM launched **with** `--no-enable-prefix-caching`.
 | `BENCH_TEMPERATURE` | 0.7 | fixed so that speculative decoding is comparable from one run to the next |
 | `BENCH_EXTRA` | empty | additional AIPerf options, e.g. `--use-server-token-count` |
 
-**Why a level is sized by its concurrency.** At a concurrency of 16, 16 requests run at the same time, one per slot.
-Giving each slot about 8 requests to complete (so 128 requests) leaves the level enough work to reach a steady state
-and gives every level the same amount of work per slot; with a fixed total, a high level would end after a request
-or two per slot and mostly measure the start-up. The minimum of 16 keeps the lowest levels from having too few requests
-for a percentile. The cost is that the duration of a level depends on the speed of the server, and a low level
-rests on few requests, so its P10 interactivity and P95 TTFT are rough. For a reference measurement, set
-`BENCH_DURATION` instead: every level then lasts that many seconds, with many more requests per level.
+**How a level is sized.** The concurrency is the number of requests in flight at the same time; the number of
+requests of a level is the total sent before it ends. Take a concurrency of 4: the bench keeps 4 requests open, and as
+soon as one finishes it sends the next, until 32 requests (4 x 8) have completed. Each of the 4 slots has then handled
+8 requests one after the other. The load never exceeds 4 requests at once; `BENCH_REQUESTS_PER_CONCURRENCY` only sets
+how long it is held. This matters for two reasons:
+
+- **A steady load.** At the start of a level all the slots send their request together, and at the end the last
+  requests finish while the other slots are already empty. With about 8 requests per slot, the middle part, where the
+  full concurrency is in flight, dominates the measurement. A fixed total for every level would leave the high levels
+  with one request or two per slot, which mostly measures the start-up.
+- **Enough requests for the percentiles.** The P10 interactivity and the P95 TTFT are computed over all the requests of
+  the level, so more requests make them steadier. The minimum of 16 keeps the lowest levels from having too few.
+
+The cost is that the duration of a level depends on the speed of the server, and a low level rests on few requests, so
+its percentiles are rough. To confirm a selected level, or for a reference measurement, set `BENCH_DURATION` instead:
+every level then lasts that many seconds, with many more requests per level.
 
 Example for a reference measurement: `BENCH_ISL=32768 BENCH_OSL=512 BENCH_DURATION=900 ./sweep.sh conf-a-r1 "48 52 56 60 64"`.
 
