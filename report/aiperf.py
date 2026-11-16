@@ -120,12 +120,12 @@ def warn_runs(rows, root):
         if shortened:
             print(f"WARNING: {run}: outputs shorter than requested at concurrencies {', '.join(shortened)} "
                   "(AIPerf osl_mismatch_count: context almost full, vLLM reduces max_tokens): throughput and "
-                  "interactivity are based on truncated outputs; raise --max-model-len or lower MAX_CONTEXT.")
+                  "interactivity are based on truncated outputs; raise --max-model-len or lower BENCH_MAX_CONTEXT.")
         meta = pathlib.Path(root) / run / "agentx.txt"
         if meta.exists():
             infos = dict(x.split("=", 1) for x in meta.read_text().splitlines() if "=" in x)
             if infos.get("max_context"):
-                print(f"WARNING: {run}: traces filtered to {infos['max_context']} tokens (MAX_CONTEXT): subset only.")
+                print(f"WARNING: {run}: traces filtered to {infos['max_context']} tokens (BENCH_MAX_CONTEXT): subset only.")
 
 
 def print_table(rows):

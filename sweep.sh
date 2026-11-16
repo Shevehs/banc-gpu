@@ -3,8 +3,8 @@
 # Usage: ./sweep.sh LABEL "1 2 4 8 16"
 # Settings via environment variables (see the README, section 6.1).
 # URL points at vLLM directly or at a gateway (LiteLLM). The vLLM metrics are read from URL/metrics;
-# with a gateway or several replicas, give the vLLM /metrics URLs in METRICS.
-# Written for bash 3.2 (macOS) and later; tested with bash 5.
+# with a gateway or several replicas, give the vLLM /metrics URLs in BENCH_METRICS.
+# Written for bash 3.2 and later; tested with bash 5.
 set -euo pipefail
 LABEL="${1:?give a label, e.g. trial-r1}"
 if ! printf '%s' "$LABEL" | grep -Eq '^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$' || case "$LABEL" in *..*) true ;; *) false ;; esac; then
