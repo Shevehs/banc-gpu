@@ -194,11 +194,14 @@ def agentx_run(tmp_path):
     fake = bin_dir / "aiperf"
     fake.write_text(f"#!/bin/sh\nenv | grep '^AIPERF_' | sort > '{dump}'\nexit 0\n")
     fake.chmod(0o755)
+    system = bin_dir / "uname"                      # the operating system is chosen by the test: FAKE_UNAME (default Darwin)
+    system.write_text('#!/bin/sh\necho "${FAKE_UNAME:-Darwin}"\n')
+    system.chmod(0o755)
 
-    def run(**env):
+    def run(*, script=None, **env):
         environment = helpers.clean_environment(PATH=f"{bin_dir}:{os.environ['PATH']}", BENCH_ROOT_DIR=str(work / "results"),
                                                 BENCH_URL="http://127.0.0.1:1", BENCH_SHORT_RUN="1", BENCH_DURATION="5", **env)
-        result = helpers.run([BASH, str(helpers.ROOT / AGENTX), "lbl", "1"], cwd=work, env=environment, timeout=120)
+        result = helpers.run([BASH, str(script or helpers.ROOT / AGENTX), "lbl", "1"], cwd=work, env=environment, timeout=120)
         seen = dict(x.split("=", 1) for x in dump.read_text().splitlines()) if dump.exists() else None
         return result, seen, work / "results" / "lbl"
     return run
@@ -219,6 +222,55 @@ def test_agentx_aiperf_timeouts(agentx_run, env, expected):
     assert result.returncode == 0, result.stdout + result.stderr
     assert (seen[TIMEOUTS[0]], seen[TIMEOUTS[1]]) == expected
     assert int(seen[TIMEOUTS[1]]) >= int(seen[TIMEOUTS[0]])          # AIPerf requires it
+
+
+WORKERS = "AIPERF_DATASET_WEKA_PARALLEL_WORKERS"
+
+
+@pytest.mark.parametrize("system,tokenizer,terminal,expected", [
+    # system (uname), BENCH_TOKENIZER ("folder" = an existing folder), value set in the terminal, value seen by aiperf
+    ("Darwin", "folder", None, "1"),                        # a local folder: the traces are loaded in a single process
+    ("Darwin", "folder", "", "1"),                          # an empty value counts as not set
+    ("Darwin", "folder", "4", "4"),                         # a value set in the terminal is kept
+    ("Darwin", "folder", "0", "0"),                         # 0 (automatic, so parallel) is kept too: the user asked for it
+    ("Darwin", "some-org/some-model", None, None),          # a Hugging Face name: the parallel loading is left as it is
+    ("Linux", "folder", None, None),                        # AIPerf preloads the tokenizer there: nothing is changed
+])
+def test_agentx_workers_for_the_trace_loading(agentx_run, tmp_path, monkeypatch, system, tokenizer, terminal, expected):
+    monkeypatch.delenv(WORKERS, raising=False)
+    if tokenizer == "folder":
+        (tmp_path / "tokenizer").mkdir()
+        tokenizer = str(tmp_path / "tokenizer")
+    env = {"BENCH_TOKENIZER": tokenizer, "FAKE_UNAME": system}
+    if terminal is not None:
+        env[WORKERS] = terminal
+    result, seen, _ = agentx_run(**env)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert seen.get(WORKERS) == expected
+    assert ("single process" in result.stdout) == (expected == "1")          # said only when the script chose it
+
+
+def default_tokenizer_tree(tmp_path, with_tokenizer):
+    """A copy of agentx.sh next to a tools/ folder, with or without the default tokenizer, to try the default path."""
+    root = tmp_path / "tree"
+    (root / "tools").mkdir(parents=True)
+    shutil.copy(helpers.ROOT / AGENTX, root / AGENTX)
+    for item in (helpers.ROOT / "tools").iterdir():
+        if item.name != "tokenizer":
+            (root / "tools" / item.name).symlink_to(item)
+    if with_tokenizer:
+        (root / "tools" / "tokenizer").mkdir()
+        (root / "tools" / "tokenizer" / "tokenizer.json").write_text("{}")
+    return root / AGENTX
+
+
+@pytest.mark.parametrize("with_tokenizer,expected", [(True, "1"), (False, None)])
+def test_agentx_default_tokenizer_folder(agentx_run, tmp_path, monkeypatch, with_tokenizer, expected):
+    """Without BENCH_TOKENIZER, tools/tokenizer/ is used when it holds tokenizer.json: the same single-process loading."""
+    monkeypatch.delenv(WORKERS, raising=False)
+    result, seen, _ = agentx_run(script=default_tokenizer_tree(tmp_path, with_tokenizer), FAKE_UNAME="Darwin")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert seen.get(WORKERS) == expected
 
 
 def test_agentx_final_message_says_the_gpus_are_deduced(agentx_run):

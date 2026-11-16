@@ -242,9 +242,19 @@ BENCH_URL=http://127.0.0.1:8001 BENCH_MODEL=bench BENCH_API_KEY=x BENCH_AGENTX_D
 
 ## Good to know
 
-- **Loading can hang.** From 8 traces on, AIPerf rebuilds the prompts with several processes, and this step can stay
-  idle forever. If the run never starts, kill the AIPerf processes (a stuck one also
-  blocks the next runs on a cache lock) and set `AIPERF_DATASET_WEKA_PARALLEL_WORKERS=1` to load in a single process.
+- **Loading can hang.** From 8 traces on, AIPerf rebuilds the prompts with several processes.
+  - **Cause.** Outside Linux, each process loads the tokenizer by itself, in offline mode. It fails if the tokenizer
+    is a local folder or a Hugging Face name that is not in the cache. AIPerf starts a new process in its place,
+    without any message, and waits forever. On Linux, AIPerf preloads the tokenizer in a helper process that the
+    others use (read in its code, not tried).
+  - **Symptom.** The AIPerf log stops at `spawning N worker process(es)`. It is
+    `<results folder>/<label>/c<N>/logs/aiperf.log`, and the results folder is `results-agentx` by default.
+  - **Local tokenizer folder.** Outside Linux, `agentx.sh` loads the traces in a single process, unless
+    `AIPERF_DATASET_WEKA_PARALLEL_WORKERS` is set in your terminal. This is slower than parallel loading for a large set (not measured).
+  - **A stuck run.** Stop it with `pkill -9 -f aiperf`: a plain `pkill` is ignored. Check with `pgrep -fl aiperf`
+    that nothing is left, because a stuck process also blocks the next runs on a cache lock.
+  - **Relaunch** with `AIPERF_DATASET_WEKA_PARALLEL_WORKERS=1` if the tokenizer is a Hugging Face name that is not in
+    the cache, or if you set the variable to another value in your terminal.
 - **Not verified.** The generator and the replay were tried against the fake server only, not against a real vLLM.
   The scheme of route 1 keeps the property that matters (identical prefixes get identical IDs). It may differ from the
   definition in the kv-cache-tester documentation (`trace_replay_tester.md`).

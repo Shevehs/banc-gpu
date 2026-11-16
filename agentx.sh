@@ -70,6 +70,18 @@ printf 'dataset=%s\ndirectory=%s\nduration=%s\nshort_run=%s\nmax_context=%s\nsub
 # (same workaround as sweep.sh). The online traces can still be downloaded.
 OFFLINE_UNSET=()
 [ -n "$TOKENIZER" ] && [ -d "$TOKENIZER" ] && OFFLINE_UNSET=(env -u HF_HUB_OFFLINE -u TRANSFORMERS_OFFLINE)
+# The same folder also breaks the worker processes that AIPerf 0.12 starts to rebuild the prompts (from 8 traces on):
+# they switch to offline mode themselves and cannot load a folder, so each one fails at start-up, is replaced, and
+# AIPerf waits for results forever. A single process loads the folder without trouble: do that, unless the variable
+# is set in the terminal. This only concerns systems other than Linux: there, AIPerf preloads the tokenizer in a helper
+# process and the workers do not load it themselves (read in its code, not tried), so nothing is changed. With a Hugging
+# Face name in BENCH_TOKENIZER, the parallel loading is left as it is (it needs the name in the cache). Loading in a
+# single process is slower for a large set (not measured): raise AIPERF_DATASET_CONFIGURATION_TIMEOUT if needed.
+if [ -n "$TOKENIZER" ] && [ -d "$TOKENIZER" ] && [ -z "${AIPERF_DATASET_WEKA_PARALLEL_WORKERS:-}" ] \
+   && [ "$(uname -s)" != "Linux" ]; then
+  export AIPERF_DATASET_WEKA_PARALLEL_WORKERS=1
+  echo "   Local tokenizer folder: the traces are loaded in a single process (AIPerf's parallel loading cannot use it)."
+fi
 # Loading the 393 traces (download included on the first run) takes several minutes, more than the 300 s
 # AIPerf allows by default (AIPERF_DATASET_CONFIGURATION_TIMEOUT; the profile configuration timeout,
 # AIPERF_SERVICE_PROFILE_CONFIGURE_TIMEOUT, must be at least equal). Values set in the terminal are respected.

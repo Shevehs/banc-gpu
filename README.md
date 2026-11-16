@@ -666,6 +666,7 @@ python -m report aiperf results-agentx --target 30
 | `BENCH_SHORT_RUN` | empty | `1` = levels shorter than 900 s, to check the pipeline only (not comparable) |
 | `BENCH_MAX_CONTEXT` | empty | tokens; AIPerf discards traces whose peak context exceeds this value (`--max-context-length`) |
 | `AIPERF_DATASET_CONFIGURATION_TIMEOUT` | 1800 | seconds allowed for loading the traces |
+| `AIPERF_DATASET_WEKA_PARALLEL_WORKERS` | 1 with a local tokenizer folder (outside Linux), otherwise AIPerf's own choice | number of processes that load the traces; 1 = a single process |
 
 Notes on these variables:
 
@@ -676,6 +677,9 @@ Notes on these variables:
   description in AIPerf (`plugins.yaml`).
 - **`AIPERF_DATASET_CONFIGURATION_TIMEOUT`**: AIPerf's default is 300 s, too short for the 393 traces.
   `AIPERF_SERVICE_PROFILE_CONFIGURE_TIMEOUT` is raised to at least this value, as AIPerf requires.
+- **`AIPERF_DATASET_WEKA_PARALLEL_WORKERS`**: with a local tokenizer folder, `agentx.sh` sets it to 1 (outside Linux),
+  because AIPerf's loading processes cannot use a folder ([section 6.5](#65-agentx-with-generated-or-your-own-traces)). A value set in the
+  terminal is kept. Loading in a single process is slower than in parallel for a large set; this was not measured.
 
 The levels are numbers of **sessions replayed at the same time** (AIPerf's `--concurrency`). The report is the one
 described in [section 6.2](#62-reading-the-aiperf-report-synthetic-and-agentx).
@@ -754,9 +758,11 @@ reuse is not reproduced. The conversion code of `tools/traces.md` computes them 
   published AgentX ones, but they are comparable between your own runs.
 - The other rules of the scenario still apply, such as at least 900 s per level.
 - `--max-model-len` must cover the longest call of your traces ([section 6.6](#66-context-shorter-than-the-traces)).
-- From 8 traces on, loading can hang, and a set generated with the defaults has 30. The symptom is a run that never
-  starts. Kill the AIPerf processes, then set `AIPERF_DATASET_WEKA_PARALLEL_WORKERS=1` to load in a single process
-  ([details](tools/traces.md#good-to-know)).
+- From 8 traces on, AIPerf loads the traces with several processes (a generated set has 30). Outside Linux, these
+  processes cannot use a local tokenizer folder, and the run never starts.
+- With a local folder (`tools/tokenizer/`, the default), `agentx.sh` therefore loads the traces in a single process by
+  itself. With a Hugging Face name in `BENCH_TOKENIZER`, the loading stays parallel and needs the name in the
+  Hugging Face cache. On Linux, nothing is changed ([details](tools/traces.md#good-to-know)).
 
 **Check a folder first, without a GPU**
 
@@ -1387,6 +1393,7 @@ durations), labels, agent names and error messages; no prompt or response conten
 | AgentX: "Scenario invariants violated" | `BENCH_DURATION` < 900 s, or AIPerf launched by hand on local traces | `BENCH_DURATION` ≥ 900 (or `BENCH_SHORT_RUN=1` for a simple check); go through `agentx.sh` |
 | AgentX: `err` > 0 in the report | requests longer than `--max-model-len` (AIPerf removes them from its metrics; the report counts them in `err`) | raise it; `BENCH_AGENTX_VARIANT=256k` for a model at about 256,000 tokens; or `BENCH_MAX_CONTEXT` about `--max-model-len` − 2,048 to discard traces that are too long ([section 6.6](#66-context-shorter-than-the-traces)) |
 | AgentX: no trace fits | `BENCH_MAX_CONTEXT` below the context of every trace | raise `BENCH_MAX_CONTEXT` and `--max-model-len`; with the published traces, AgentX is not feasible on a small server ([section 6.6](#66-context-shorter-than-the-traces)) |
+| AgentX: the run never starts, `results-agentx/<label>/c<N>/logs/aiperf.log` stops at `spawning N worker process(es)` | the loading processes cannot load the tokenizer: an uncached Hugging Face name, or `AIPERF_DATASET_WEKA_PARALLEL_WORKERS` set to another value than 1 with a local folder | `pkill -9 -f aiperf`, check with `pgrep -fl aiperf`, then relaunch with `AIPERF_DATASET_WEKA_PARALLEL_WORKERS=1` ([details](tools/traces.md#good-to-know)) |
 | AgentX: `timed out waiting for dataset configuration` | loading the traces takes longer than AIPerf's timeout | raise `AIPERF_DATASET_CONFIGURATION_TIMEOUT` ([section 6.3](#63-agentx-stress-test)) |
 | `ERROR: number of GPUs unknown` from a report | fingerprint missing, or `BENCH_METRICS` did not point to vLLM during the run | `--gpu N` ("GPU" field of the interface) |
 | LiteLLM in Docker: connection error to vLLM | `127.0.0.1` refers to the container, not the machine | `api_base: http://host.docker.internal:<vLLM port>/v1` ([Docker Desktop](https://docs.docker.com/desktop/features/networking/networking-how-tos/)) |
@@ -1685,6 +1692,9 @@ When you are done, stop the two background processes (`jobs` lists them, then `k
 - `agentx.sh` with a generated set of traces and a small hand-made folder
   ([section 6.5](#65-agentx-with-generated-or-your-own-traces)), against the fake server: AIPerf accepted both
   folders, replayed the sessions and the report ran.
+- The loading of 30 generated traces by AIPerf, against the fake server:
+  - with a local tokenizer folder, it stalls with several processes and works in a single process;
+  - with a Hugging Face name that is in the cache, it works with several processes.
 - The observation against the fake server, with Prometheus 3.7.3 ([section 7.3](#73-query-the-observation)).
 - The per-agent view with a real LiteLLM 1.109.1: metric names, types and labels, and the Prisma and
   `prometheus_client` requirements ([section 7.5](#75-per-agent-view-through-litellm),
@@ -1726,6 +1736,8 @@ See [section 4.2](#42-check-the-vllm-in-place), [section 6.6](#66-context-shorte
 - That LiteLLM forwards `min_tokens` and `ignore_eos`.
 - Prometheus versions newer than 3.7.3.
 - `agentx.sh` with AIPerf on the published trace set, since the latest changes to the scripts.
+- `agentx.sh` with a local tokenizer folder on Linux, where AIPerf starts its loading processes differently
+  ([section 6.5](#65-agentx-with-generated-or-your-own-traces)).
 - `agentx.sh` with traces ([section 6.5](#65-agentx-with-generated-or-your-own-traces)):
   - generated or hand-made traces on a real vLLM;
   - traces captured from a real agent;
