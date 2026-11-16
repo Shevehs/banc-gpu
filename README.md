@@ -473,7 +473,7 @@ expose `process_start_time_seconds`):
 
 ### 6.1 Start the fake server
 
-Run it in the background, in a terminal you keep open:
+Run it in the background, in a terminal you keep open and where the environment is active ([section 5.1](#51-activate-the-environment)); without it, the `python` command is not found:
 
 ```bash
 python tools/fake_server.py --port 8001 --token-delay 0.02 \
