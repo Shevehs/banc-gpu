@@ -4,6 +4,8 @@ import re
 
 import pytest
 
+from tools.make_traces import PRESETS
+
 DOC = pathlib.Path(__file__).resolve().parent.parent / "tools" / "traces.md"
 
 
@@ -14,7 +16,7 @@ def blocks(language):
 
 def test_the_example_trace_follows_aiperfs_model():
     models = pytest.importorskip("aiperf.dataset.loader.weka_trace_models")
-    example = json.loads(blocks("json")[0])
+    example = json.loads(next(b for b in blocks("json") if '"block_size"' in b))
     models.WekaTrace.model_validate(example)
     for call in example["requests"]:
         assert len(call["hash_ids"]) == -(-call["in"] // example["block_size"])
@@ -22,7 +24,7 @@ def test_the_example_trace_follows_aiperfs_model():
 
 def test_the_conversion_code_builds_a_valid_trace():
     scope = {}
-    exec(blocks("python")[0], scope)                     # the code of "Route 1"
+    exec(next(b for b in blocks("python") if "def build_trace" in b), scope)     # the code of "Route 1"
     prompt = list(range(1000, 1700))
     calls = []
     for k in range(4):
@@ -35,3 +37,11 @@ def test_the_conversion_code_builds_a_valid_trace():
     assert [r.get("think_time") for r in trace["requests"]] == [None, 2.5, 2.5, 2.5]
     models = pytest.importorskip("aiperf.dataset.loader.weka_trace_models")
     models.WekaTrace.model_validate(trace)
+
+
+def test_the_preset_table_matches_the_presets():
+    rows = re.findall(r"\| `(\w+)` \| ([\d,]+) tokens \| ([\d,]+) \|", DOC.read_text())
+    assert {name for name, _, _ in rows} == set(PRESETS)
+    for name, longest, needs in rows:
+        assert int(longest.replace(",", "")) == PRESETS[name].max_context
+        assert int(needs.replace(",", "")) == PRESETS[name].max_context + 2_048

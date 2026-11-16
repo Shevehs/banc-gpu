@@ -87,7 +87,9 @@ class Session:
         return min(60.0, lognormal(self.rng, 4.8, 1.1))
 
     def call(self, kind, t, hash_ids, think, scale):
-        """One call at time t (seconds). Returns the entry and the time at which the call ends."""
+        """One call of type `kind` ("n" or "s") at time t (seconds), with the cache block IDs `hash_ids`, the
+        client delay `think` before it (None for the first call) and `scale`, the size that sets the output length.
+        Returns the entry and the time at which the call ends."""
         tokens_in = BLOCK * len(hash_ids)
         out = self.output_tokens(tokens_in, scale)
         ttft = 1.5 + tokens_in / 30_000 + self.rng.uniform(0, 1.0)
@@ -122,10 +124,12 @@ class Session:
 
     def subagent_group(self, spawn, prefix, number):
         """One to three sub-agents spawned together. Returns the entries, the end of the last one, the new count."""
-        entries, end = [], spawn
+        entries, end, offset = [], spawn, 0.0
         for k in range(self.rng.randint(1, 3)):
             number += 1
-            entry, finish = self.subagent(spawn + k * self.rng.uniform(1, 8), prefix, number)
+            if k:
+                offset += self.rng.uniform(1, 8)
+            entry, finish = self.subagent(spawn + offset, prefix, number)
             entries.append(entry)
             end = max(end, finish)
         return entries, end, number
@@ -134,8 +138,8 @@ class Session:
         """The trace of one session."""
         rng, preset = self.rng, self.preset
         peak = int(self.max_context * math.exp(rng.uniform(math.log(0.25), 0)))   # sessions differ in size
-        if index == 1:
-            peak = self.max_context                                               # the first one reaches the limit
+        if index == 1:                                  # the first session reaches the limit, with no compaction
+            peak = self.max_context
         peak_blocks = max(30, (peak - self.out_cap) // BLOCK)
         ceiling = (self.max_context - self.out_cap) // BLOCK                      # most blocks a call may carry
         calls = max(12, min(preset.calls_max, round(lognormal(rng, preset.calls_median, 0.7))))
@@ -148,7 +152,8 @@ class Session:
         first, t_end = self.call("s", 0.0, self.fresh(rng.randint(6, 12)), None, peak)   # the tiny first call
         requests = [first]
         context = self.fresh(start_blocks)
-        t, think, number = t_end + rng.uniform(0, 0.3), 0.0, 0
+        gap = rng.uniform(0, 0.3)
+        t, think, number = t_end + gap, gap, 0
         for k in range(calls - 1):
             entry, t_end = self.call("s", t, context, think, peak)
             requests.append(entry)
@@ -158,7 +163,7 @@ class Session:
             if self.subagents and rng.random() < 0.05:
                 entries, t, number = self.subagent_group(t_end + rng.uniform(0.1, 1.0), shared, number)
                 requests.extend(entries)
-            if k >= 10 and rng.random() < 0.03:                                # compaction: a fresh, shorter context
+            if k >= 10 and rng.random() < 0.03 and index != 1:                 # compaction: a fresh, shorter context
                 context = self.fresh(max(start_blocks, int(0.3 * len(context))))
             else:
                 context = context + self.fresh(min(growth[k] if k < len(growth) else 1, ceiling - len(context)))
@@ -169,7 +174,8 @@ class Session:
 
 
 def make_set(preset, sessions, seed, max_context=None, subagents=True):
-    """The list of traces of a set. The same arguments always give the same set."""
+    """The list of `sessions` traces of a `Preset`, with `max_context` replacing its longest call if given and
+    sub-agents unless `subagents` is False. The same arguments always give the same set."""
     rng = random.Random(seed)
     limit = max_context or preset.max_context
     return [Session(rng, preset, limit, subagents).build(i + 1) for i in range(sessions)]
@@ -197,20 +203,21 @@ def summarize(traces):
 
 
 def validate(traces):
-    """Check the traces against AIPerf's own model. Returns a message if AIPerf is missing, else None.
+    """Check the traces against AIPerf's own model.
 
     Raises:
+        SystemExit: if AIPerf cannot be imported in this environment.
         pydantic.ValidationError: if a trace does not follow the format."""
     try:
         from aiperf.dataset.loader.weka_trace_models import WekaTrace
-    except ImportError:
-        return "AIPerf is not installed in this environment: nothing was validated."
+    except ImportError as error:
+        raise SystemExit(f"--validate needs AIPerf in this environment ({error}). Nothing was written.") from None
     for trace in traces:
         WekaTrace.model_validate(trace)
-    return None
 
 
 def main(argv=None):
+    """Command-line entry point: write a set of traces, print a summary. Returns the exit code."""
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--preset", choices=sorted(PRESETS), default="small",
                         help="size of the set: " + ", ".join(f"{p.name} (up to {p.max_context:,} tokens)"
@@ -221,22 +228,32 @@ def main(argv=None):
     parser.add_argument("--max-context", type=int, default=None,
                         help="tokens: replaces the preset's longest call (input + output)")
     parser.add_argument("--no-subagents", action="store_true", help="sessions without sub-agents")
-    parser.add_argument("--validate", action="store_true", help="check the traces with AIPerf's model")
-    parser.add_argument("--overwrite", action="store_true", help="write into a folder that already holds traces")
+    parser.add_argument("--validate", action="store_true",
+                        help="check the traces with AIPerf's model before writing (needs AIPerf)")
+    parser.add_argument("--overwrite", action="store_true",
+                        help="replace the trace-*.json files of a folder that already holds traces")
     args = parser.parse_args(argv)
 
     preset = PRESETS[args.preset]
     if args.sessions < 1:
         raise SystemExit("--sessions must be at least 1.")
-    if args.max_context is not None and args.max_context < 4_096:
-        raise SystemExit("--max-context must be at least 4,096 tokens.")
+    if args.max_context is not None and not 4_096 <= args.max_context <= 1_000_000:
+        raise SystemExit("--max-context must be between 4,096 and 1,000,000 tokens.")
     out = pathlib.Path(args.output)
+    if out.exists() and not out.is_dir():
+        raise SystemExit(f"{out} is not a folder.")
     if out.exists() and any(out.glob("*.json")) and not args.overwrite:
         raise SystemExit(f"{out} already holds traces: use --overwrite, or another folder.")
     traces = make_set(preset, args.sessions, args.seed, args.max_context, not args.no_subagents)
     if args.validate:
-        print(validate(traces) or "Traces validated with AIPerf's model.")
+        validate(traces)
+        print("Traces validated with AIPerf's model.")
     out.mkdir(parents=True, exist_ok=True)
+    for old in out.glob("trace-*.json"):                      # agentx.sh replays every .json of the folder
+        old.unlink()
+    others = [f.name for f in out.glob("*.json")]
+    if others:
+        print(f"Warning: {len(others)} other .json file(s) in {out} will be replayed too.", file=sys.stderr)
     for i, trace in enumerate(traces, 1):
         (out / f"trace-{i:04d}.json").write_text(json.dumps(trace, separators=(",", ":")))
     s = summarize(traces)
