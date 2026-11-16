@@ -94,7 +94,7 @@ def test_no_vllm_server_no_count():
         r = config()
         r["servers"] = servers
         n, explanation, _ = deduced_gpus(r)
-        assert n is None and explanation == "no metrics URL answers like a vLLM server (METRICS empty or wrong)"
+        assert n is None and explanation == "no metrics URL answers like a vLLM server (BENCH_METRICS empty or wrong)"
     r = config()
     del r["servers"]
     assert deduced_gpus(r)[0] is None
@@ -231,7 +231,7 @@ def test_resolver_unknown_runs_stop_with_the_reasons_sorted_by_run(tmp_path):
     assert resolver.for_run(run_dir(tmp_path, "c-r1", config())) == 8
     with pytest.raises(SystemExit) as e:
         resolver.finish([])
-    assert str(e.value) == ("ERROR: number of GPUs unknown for a-r1 (no metrics URL answers like a vLLM server (METRICS empty or wrong)); "
+    assert str(e.value) == ("ERROR: number of GPUs unknown for a-r1 (no metrics URL answers like a vLLM server (BENCH_METRICS empty or wrong)); "
                             "b-r1 (server_config.json missing): give --gpu (\"GPU\" field in the interface).")
 
 

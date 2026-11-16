@@ -183,7 +183,7 @@ def deduced_gpus(r):
                    if ((s.get("vllm_lines") or 0) > 0 if "vllm_lines" in s
                        else s.get("speculative_tokens_metrics") is not None or bool(s.get("cache_config")))]
         if not servers:
-            return None, "no metrics URL answers like a vLLM server (METRICS empty or wrong)", False
+            return None, "no metrics URL answers like a vLLM server (BENCH_METRICS empty or wrong)", False
         tp, pp, dp = (int(dec[k]) for k in ("tensor_parallel_size", "pipeline_parallel_size", "data_parallel_size"))
         par = ((servers[0].get("configuration") or {}).get("parallelism") or {})
         pcp = int(par.get("prefill_context_parallel_size") or 1)
