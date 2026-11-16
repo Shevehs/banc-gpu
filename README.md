@@ -366,12 +366,22 @@ cp tools/target.env.example target.env     # target.env is ignored by git: it co
 
 Fill in `target.env` (keep the `export`s), then load it in each new terminal: `source target.env`.
 
-**Why `BENCH_METRICS` must point to vLLM**: the stress tests read there the state of the engine, which only vLLM knows.
-If it holds LiteLLM's metrics (or nothing), these are lost: **preemptions** (a level where vLLM runs out of memory
-can then be kept as healthy), maximum KV cache, the engine's queue, the prefix cache and speculative-decoding
-acceptance; the columns stay empty. Throughput, interactivity, TTFT and errors, measured at the client, remain valid.
-At the start of each run, a `[config] WARNING: … is not vLLM's /metrics` line flags the mistake (LiteLLM answers "HTTP 401:
-key required", or there is no `vllm:` metric at all).
+**Why `BENCH_METRICS` must point to vLLM**
+
+The stress tests read the state of the engine at this address, and only vLLM knows it. If `BENCH_METRICS` holds
+LiteLLM's metrics, or nothing, these are lost:
+
+- the **preemptions** (a level where vLLM runs out of memory can then be kept as healthy);
+- the maximum KV cache usage;
+- the engine's queue;
+- the prefix cache;
+- the acceptance of speculative decoding.
+
+The matching columns stay empty. Throughput, interactivity, TTFT and errors are measured at the client, so they remain
+valid.
+
+At the start of each run, a `[config] WARNING: … is not vLLM's /metrics` line flags the mistake. In that case LiteLLM
+answers "HTTP 401: key required", or there is no `vllm:` metric at all.
 
 | Variable | Meaning | Example |
 |---|---|---|
