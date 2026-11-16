@@ -45,7 +45,7 @@ Two families of measurements:
   - [6.2 Reading the AIPerf report (synthetic and AgentX)](#62-reading-the-aiperf-report-synthetic-and-agentx)
   - [6.3 AgentX stress test](#63-agentx-stress-test)
   - [6.4 AgentX without Internet access](#64-agentx-without-internet-access)
-  - [6.5 AgentX with your own traces](#65-agentx-with-your-own-traces)
+  - [6.5 AgentX with generated or your own traces](#65-agentx-with-generated-or-your-own-traces)
   - [6.6 Context shorter than the traces](#66-context-shorter-than-the-traces)
   - [6.7 Test-agents stress test](#67-test-agents-stress-test)
   - [6.8 Stress test through LiteLLM](#68-stress-test-through-litellm)
@@ -79,7 +79,7 @@ Two families of measurements:
 | Mode | Tool | Load | vLLM prefix cache | What it gives | Section |
 |---|---|---|---|---|---|
 | **Synthetic stress test** | `sweep.sh` (AIPerf) | fixed-length requests | **disabled** | conservative floor | [6.1](#61-synthetic-stress-test) |
-| **AgentX stress test** | `agentx.sh` (AIPerf, scenario `inferencex-agentx-mvp`) | replayed public coding-agent sessions | enabled | measurement comparable to InferenceX's AgentX results | [6.3](#63-agentx-stress-test) |
+| **AgentX stress test** | `agentx.sh` (AIPerf, scenario `inferencex-agentx-mvp`) | replayed coding-agent sessions: the public ones, generated ones or yours | enabled | with the public sessions, a measurement comparable to InferenceX's AgentX results | [6.3](#63-agentx-stress-test) |
 | **Test-agents stress test** | `agents_test/` | three simulated agent profiles | enabled | agent load close to your usage | [6.7](#67-test-agents-stress-test) |
 | **Observation** | `observation/query.py` + Prometheus | your agents, in real use | as configured | "does it hold?", per window, period, agent | [7](#7-observation-real-use) |
 
@@ -314,7 +314,7 @@ In practice:
 |---|---|---|
 | Synthetic | input + output + chat template (e.g. 2,048 + 256, plus a margin) | requests have a fixed length |
 | AgentX | the longest trace context, input **plus output**: up to about 990,000 input tokens (full set), 256,000 (`256k` variant), plus the output and a margin for the chat template; otherwise set `BENCH_MAX_CONTEXT` ([section 6.6](#66-context-shorter-than-the-traces)) | AIPerf does not truncate AgentX traces |
-| AgentX, your own traces | the longest call of your traces, input **plus output**, plus a margin for the chat template | you choose the sizes ([section 6.5](#65-agentx-with-your-own-traces)) |
+| AgentX, generated or your own traces | the longest call of your traces, input **plus output**, plus a margin for the chat template | you choose the sizes; the generator prints the value ([section 6.5](#65-agentx-with-generated-or-your-own-traces)) |
 | Test agents | about 135,000 x `--scale`, plus the output | contexts reach about 135,000 tokens at scale 1 (estimated with the Qwen vocabulary) |
 | Observation | not applicable | the bench sends nothing |
 
@@ -627,8 +627,8 @@ Contexts are long (a median of about 142,000 input tokens, according to
 The full measurement is therefore done on GPU servers.
 
 On a small server whose context is limited to 32,768 tokens, no trace of the published set fits
-([section 6.6](#66-context-shorter-than-the-traces)). You can use shorter traces of your own
-([section 6.5](#65-agentx-with-your-own-traces)).
+([section 6.6](#66-context-shorter-than-the-traces)). You can generate shorter traces, or use your own
+([section 6.5](#65-agentx-with-generated-or-your-own-traces)).
 
 **What the scenario enforces** (documented in the AIPerf 0.12.0 code,
 `aiperf/common/scenario/inferencex_agentx_mvp.py`, and in AIPerf's message at run time):
@@ -700,73 +700,83 @@ into your environment.
 Not verified: that the repository stores one trace per JSON file in a single folder (the script counts the files and
 reports it).
 
-### 6.5 AgentX with your own traces
+### 6.5 AgentX with generated or your own traces
 
-AgentX replays recorded sessions, so you can replay the sessions of your own agents instead of SemiAnalysis'.
-`agentx.sh` takes a local folder of traces through `BENCH_AGENTX_DIR`, the same variable as for the offline copy
-([section 6.4](#64-agentx-without-internet-access)).
+By default, AgentX replays the sessions published by SemiAnalysis. It can also replay a local folder of traces,
+set with `BENCH_AGENTX_DIR` (the same variable as for the offline copy, [section 6.4](#64-agentx-without-internet-access)).
 
-It was tried with a small folder of hand-made traces, replayed against the fake server: AIPerf accepted the folder,
-replayed the sessions and the report ran. The run was marked `submission_valid=false`, as expected. Traces captured
-from a real agent have **not** been tried.
+There are two ways to get such a folder:
 
-**What a trace is.** One JSON file per session, in the "Weka" format of the kv-cache-tester project, which the
-SemiAnalysis traces also use. A trace holds no prompt or response text, only sizes, timings and cache block hashes;
-AIPerf builds the prompts from them.
+- **Generate it.** A script writes synthetic sessions of the size you choose, so that the same test runs on a small
+  server and on a large one.
+- **Build it from your own agent's logs.** The test then replays your real usage.
 
-- At the top of the file: `id`, `models`, `block_size` (tokens per cache block), `hash_id_scope` (always `"local"`) and
-  `requests`, the calls in time order. `tool_tokens` and `system_tokens` are optional.
-- Each call has: `t` (seconds since the start of the session), `type` (`"n"` for a normal call, `"s"` for a streaming
-  call), `model`, `in` and `out` (input and output tokens), and `hash_ids` (one cache block hash per `block_size` tokens
-  of the input; a call that continues the previous context repeats the hash IDs of its beginning).
-- Optional per call: `stop` (`""`, `"tool_use"` or `"end_turn"`), `think_time` (the client's delay before the call, in
-  seconds), `api_time`, `ttft` (streaming calls only), `input_types` and `output_types`.
-- A sub-agent is an entry of type `"subagent"` with its own list of `requests`, and the fields `agent_id`,
-  `subagent_type`, `status` and `models`.
-- A field that is not in this list is refused.
+[`tools/traces.md`](tools/traces.md) explains both, and the format of a trace.
 
-A minimal example, with two calls:
+**Generate a set**
 
-```json
-{
-  "id": "session-1",
-  "models": ["bench"],
-  "block_size": 64,
-  "hash_id_scope": "local",
-  "requests": [
-    {"t": 0.0, "type": "n", "model": "bench", "in": 400, "out": 120, "hash_ids": [0, 1, 2, 3, 4, 5, 6],
-     "stop": "tool_use", "think_time": 0.5},
-    {"t": 4.0, "type": "s", "model": "bench", "in": 670, "out": 120,
-     "hash_ids": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10], "stop": "end_turn", "think_time": 0.5}
-  ]
-}
-```
-
-**Producing them is up to you.** No tool in this repository converts agent logs into this format. You have to write
-the conversion from your agent's request logs: timestamps, token counts per call, and whether the call used a tool. The
-hash IDs are the delicate part, because identical prefixes must get identical IDs for the cache reuse to be reproduced.
-AIPerf's loader points to the kv-cache-tester documentation (`trace_replay_tester.md`) for the exact definition, which has
-not been checked here.
-
-**Run them:**
+This writes 30 sessions whose longest call is about 28,000 tokens (preset `small`):
 
 ```bash
-BENCH_AGENTX_DIR=my-traces ./agentx.sh my-agent-r1 "1 2 4"
+python tools/make_traces.py --preset small --output traces-small
+```
+
+The presets are `tiny`, `small`, `medium` and `large`: the longest call is 8,000, 28,000, 120,000 and 250,000 tokens.
+The script prints the `--max-model-len` that vLLM needs for your set.
+
+Replay the set:
+
+```bash
+BENCH_AGENTX_DIR=traces-small ./agentx.sh small-r1 "1 2 4"
+```
+
+`small-r1` is the label of the run and `"1 2 4"` are the levels. With the default duration of 1,800 s per level, this
+run takes about 90 minutes.
+
+Read the report:
+
+```bash
 python -m report aiperf results-agentx --target 30
 ```
 
-- The run is marked `submission_valid=false`: AIPerf cannot verify a local set. Your results are not comparable to
-  the published AgentX ones, but they are comparable between your own runs.
-- The other rules of the scenario still apply, such as at least 900 s per level.
-- `--max-model-len` must cover the longest session of your traces ([section 6.6](#66-context-shorter-than-the-traces)).
+**Build a set from your own logs**
 
-**To check the format first**, without a GPU: start the fake server ([Appendix E](#appendix-e-try-the-bench-without-a-gpu))
-and run a short check. `BENCH_SHORT_RUN=1` allows a level shorter than 900 s:
+No tool in this repository converts agent logs. [`tools/traces.md`](tools/traces.md) gives the conversion code for two
+cases: logs that keep the prompts, and logs that keep only sizes.
+
+The delicate part is the cache block IDs (`hash_ids`): identical prefixes must get identical IDs, otherwise the cache
+reuse is not reproduced. Then replay the folder with the same commands as above, with your own folder in
+`BENCH_AGENTX_DIR`.
+
+**Good to know**
+
+- The run is marked `submission_valid=false`: AIPerf cannot verify a local set. The results are not comparable to the
+  published AgentX ones, but they are comparable between your own runs.
+- The other rules of the scenario still apply, such as at least 900 s per level.
+- `--max-model-len` must cover the longest call of your traces ([section 6.6](#66-context-shorter-than-the-traces)).
+- From 8 traces on, loading can hang. If the run never starts, see "Good to know" in
+  [`tools/traces.md`](tools/traces.md#good-to-know).
+
+**Check a folder first, without a GPU**
+
+Start the fake server ([Appendix E](#appendix-e-try-the-bench-without-a-gpu)), then run a short check.
+`BENCH_SHORT_RUN=1` allows a level shorter than 900 s:
 
 ```bash
 BENCH_URL=http://127.0.0.1:8001 BENCH_MODEL=bench BENCH_API_KEY=x BENCH_AGENTX_DIR=my-traces \
   BENCH_SHORT_RUN=1 BENCH_DURATION=60 ./agentx.sh check-r1 "1"
 ```
+
+**What was tried**
+
+A generated set of 20 traces and a small hand-made folder were replayed against the fake server. AIPerf accepted the
+folders, replayed the sessions and the report ran.
+
+Not tried:
+- a real vLLM with generated or hand-made traces;
+- traces captured from a real agent;
+- the exact definition of the hash IDs (AIPerf's loader points to the kv-cache-tester documentation, which has not
+  been checked).
 
 ### 6.6 Context shorter than the traces
 
@@ -785,7 +795,7 @@ The filter applies to the **maximum** context of each session.
 (observed during a trial on a small server: "No eligible traces … scanned 393"). AIPerf then stops before the first
 level, and the script says so.
 
-On a small server, use shorter traces of your own ([section 6.5](#65-agentx-with-your-own-traces)) or the test agents
+On a small server, use generated traces or your own, which can be shorter ([section 6.5](#65-agentx-with-generated-or-your-own-traces)) or the test agents
 ([section 6.7](#67-test-agents-stress-test)). The published set is measured on GPU servers.
 
 **Leave a margin** below `--max-model-len` (here 2,048 tokens). The filter compares the lengths recorded in the traces,
@@ -1670,7 +1680,7 @@ When you are done, stop the two background processes (`jobs` lists them, then `k
   ([Appendix E](#appendix-e-try-the-bench-without-a-gpu)).
 - `sweep.sh` with AIPerf 0.12.0 and the AIPerf report, against a real vLLM 0.33.0 on a small local server (levels 1, 4
   and 16, with the preemption counter read from `/metrics`).
-- `agentx.sh` with a small hand-made folder of traces ([section 6.5](#65-agentx-with-your-own-traces)), against the fake
+- `agentx.sh` with a generated set of traces and a small hand-made folder ([section 6.5](#65-agentx-with-generated-or-your-own-traces)), against the fake
   server: AIPerf accepted the folder, replayed the sessions and the report ran.
 - The observation against the fake server, with Prometheus 3.7.3 ([section 7.3](#73-query-the-observation)).
 - The per-agent view with a real LiteLLM 1.109.1: metric names, types and labels, and the Prisma and
@@ -1713,10 +1723,10 @@ See [section 4.2](#42-check-the-vllm-in-place), [section 6.6](#66-context-shorte
 - That LiteLLM forwards `min_tokens` and `ignore_eos`.
 - Prometheus versions newer than 3.7.3.
 - `agentx.sh` with AIPerf on the published trace set, since the latest changes to the scripts.
-- `agentx.sh` with traces captured from a real agent, and the exact definition of the hash IDs
-  ([section 6.5](#65-agentx-with-your-own-traces)).
+- `agentx.sh` with generated or hand-made traces on a real vLLM, with traces captured from a real agent, and the exact definition of the hash IDs
+  ([section 6.5](#65-agentx-with-generated-or-your-own-traces)).
 
-See [section 6.4](#64-agentx-without-internet-access), [section 6.5](#65-agentx-with-your-own-traces) and
+See [section 6.4](#64-agentx-without-internet-access), [section 6.5](#65-agentx-with-generated-or-your-own-traces) and
 [section 6.8](#68-stress-test-through-litellm).
 
 [↑ Back to top](#top)
