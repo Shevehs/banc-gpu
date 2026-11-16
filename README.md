@@ -1177,18 +1177,31 @@ Open **the exact address printed** (it contains an access token). On a remote VM
 - **Runs**: live log, stop.
 - **Results**: tables, selected point, curve of the stress tests; the "GPU" field is optional (deduced from the
   fingerprint when empty).
-- **Observation** (own tab): nothing to start. Fields: Prometheus URL and optional key, vLLM targets selector, LiteLLM
-  targets selector with the label that tells agents apart (per-agent view), range (since, or start and end), window length,
-  scrape interval, target interactivity, **GPUs** (required, as on the command line), optional max TTFT P95 and the view
-  (by window, period or agent). "Show" runs `observation.query`; a checkbox refreshes it every minute. The ranges of
-  the runs started from the interface (plus one minute) are discarded ("run in progress"); those of runs started by
-  hand only if you give them to `observation.query --exclude`.
+- **Observation** (own tab): nothing to start.
+  - Fields: Prometheus URL and optional key, vLLM targets selector, LiteLLM targets selector with the label that tells
+    agents apart (per-agent view), range (since, or start and end), window length, scrape interval, target
+    interactivity, **GPUs** (required, as on the command line), optional max TTFT P95, and the view (by window, period
+    or agent).
+  - "Show" runs `observation.query`; a checkbox refreshes it every minute.
+  - The ranges of the runs started from the interface (plus one minute) are discarded ("run in progress"). Those of
+    runs started by hand are only discarded if you give them to `observation.query --exclude`.
 
-The fields are not saved, and the interface does not inherit the variables from `target.env`. It accepts only
-local or private target, metrics and Prometheus URLs (`BENCH_ALLOW_PUBLIC_URLS=1` allows public ones) and traces folders under the
-repository, your home directory or `BENCH_ALLOWED_DIRS` ([Appendix A](#appendix-a-security-notes)). One run
-at a time. Test-agents runs started here write to `agents_test/results-agents` by default (the command line writes to
-`results-agents`); the other runs use the same folders as the command line. Observation can be displayed during a run. Details: [`interface/README.md`](interface/README.md).
+The fields are not saved, and the interface does not inherit the variables from `target.env`.
+
+It accepts only:
+
+- local or private target, metrics and Prometheus URLs (`BENCH_ALLOW_PUBLIC_URLS=1` allows public ones);
+- traces folders under the repository, your home directory or `BENCH_ALLOWED_DIRS`
+  ([Appendix A](#appendix-a-security-notes)).
+
+Other behaviors:
+
+- one run at a time;
+- test-agents runs started here write to `agents_test/results-agents` by default (the command line writes to
+  `results-agents`); the other runs use the same folders as the command line;
+- observation can be displayed during a run.
+
+Details: [`interface/README.md`](interface/README.md).
 
 [↑ Back to top](#top)
 
@@ -1211,12 +1224,16 @@ Runs started from the interface put the test-agents results in `agents_test/resu
 Observation writes nothing by default: the history is in Prometheus (`prometheus-data/` if you start the binary
 yourself); `observation.query --output f.csv` writes the windows of a query.
 
-`server_config.json` contains: vLLM version, model and maximum context, cache configuration,
-fingerprint and decoded parallelism, number of speculative tokens (counted in `/metrics`), for each `/metrics` URL the
-number of `vllm:` lines read (`vllm_lines`) and the HTTP status (`metrics_status`) from which the reports and the
-launch warning tell vLLM's address from another one, and, only if
-vLLM is launched with `VLLM_SERVER_DEV_MODE=1`, the speculative decoding method and the scheduler
-(`max_num_seqs`, `max_num_batched_tokens`). That mode is **not recommended**, see [Appendix A](#appendix-a-security-notes).
+`server_config.json` contains:
+
+- the vLLM version, the model and its maximum context, the cache configuration;
+- the fingerprint and the decoded parallelism;
+- the number of speculative tokens (counted in `/metrics`);
+- for each `/metrics` URL, the number of `vllm:` lines read (`vllm_lines`) and the HTTP status (`metrics_status`), from
+  which the reports and the launch warning tell vLLM's address from another one;
+- only if vLLM is launched with `VLLM_SERVER_DEV_MODE=1`: the speculative decoding method and the scheduler
+  (`max_num_seqs`, `max_num_batched_tokens`). That mode is **not recommended**, see
+  [Appendix A](#appendix-a-security-notes).
 
 ### 10.2 Repository contents
 
