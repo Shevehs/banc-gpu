@@ -444,14 +444,19 @@ Check that the **prefix cache** and the **parallelism** are those of the measure
 count is the TP x PP x DP of the fingerprint, times the number of vLLM servers recognised in `BENCH_METRICS`
 (all assumed identical to the one that answered); the reports reuse it when `--gpu` is not given ([section 7.2](#72-reading-the-stress-test-report)).
 
-- **`[config] WARNING: … is not vLLM's /metrics`**: `BENCH_METRICS` points to LiteLLM (HTTP 401, key required) or to
-  something that exposes no `vllm:` metric: put vLLM's `/metrics` address there ([section 5.2](#52-set-the-connection)).
+**If something looks wrong**, these are the usual messages and what to do:
 
-- **No fingerprint, and the output says the server did not respond**: fix the model name, key or target before going on.
-- **No fingerprint and no other message**: the vLLM version does not produce it, `--fingerprint-mode none` is set,
-  or a gateway drops the field; target vLLM directly, or note the launch command with your results.
-- **"TP 1, PP 1, DP 1, EP no (or hidden…)"**: true for a server without parallelism, but also what a
-  server launched with `--fingerprint-mode hash` shows: check the launch command.
+- **`[config] WARNING: … is not vLLM's /metrics`**: the address in `BENCH_METRICS` is not vLLM's. Either it points to
+  LiteLLM, which answers "HTTP 401: key required", or it exposes no `vllm:` metric at all. Put vLLM's `/metrics`
+  address in `BENCH_METRICS` ([section 5.2](#52-set-the-connection)).
+- **No fingerprint, and the output says the server did not respond**: the model name, the key or the target is wrong.
+  Fix it before going on.
+- **No fingerprint and no other message**: the vLLM version does not produce it, `--fingerprint-mode none` is set, or a
+  gateway drops the field. Target vLLM directly, or note the launch command with your results.
+- **"TP 1, PP 1, DP 1, EP no (or hidden…)"**: this is true for a server without parallelism, but it is also what a
+  server launched with `--fingerprint-mode hash` shows. Check the launch command.
+
+More cases are in the troubleshooting table ([section 11.3](#113-troubleshooting)).
 
 [↑ Back to top](#top)
 
