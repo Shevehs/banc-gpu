@@ -839,13 +839,29 @@ Their tools are simulated: they return fabricated text and act on no system.
 Check first that `BENCH_MODEL` is a name the server serves ([section 5.4](#54-test-the-connection)). Unlike `sweep.sh`
 and `agentx.sh`, the launcher does not check it, and the tasks would fail at once.
 
+The commands below take the target from the variables of `target.env`: load it in this terminal first
+([section 5.2](#52-set-the-connection)). These variables are a convenience, not a requirement:
+
+- `--url`, `--model` and `--metrics` also accept values typed directly, for example `--url http://127.0.0.1:8000`.
+- Left out, they default to `http://127.0.0.1:8000`, the model name `bench` and `<url>/metrics`.
+- A variable that is not set is not the same as an option left out: `"$BENCH_URL"` then gives an empty value, which
+  replaces the default.
+- `${BENCH_METRICS:-$BENCH_URL/metrics}` means `BENCH_METRICS` if it is set, otherwise `$BENCH_URL/metrics`.
+
+The API key is the exception: the launcher reads `BENCH_API_KEY` from the environment, never from an option.
+
 vLLM must run with the prefix cache enabled (without `--no-enable-prefix-caching`). If you have just run the synthetic
 test, restart vLLM ([section 4.2](#42-check-the-vllm-in-place)). Check that the `[config]` line says `prefix cache True`
-([section 5.4](#54-test-the-connection)), then:
+([section 5.4](#54-test-the-connection)), then start the test agents:
 
 ```bash
 python -m agents_test.launcher --url "$BENCH_URL" --model "$BENCH_MODEL" --metrics "${BENCH_METRICS:-$BENCH_URL/metrics}" \
   --levels "1 2 4 8" --duration 900 --warmup 300 --scale 1 --label conf-a-r1
+```
+
+Then read the report:
+
+```bash
 python -m report agents results-agents --target 30
 ```
 
@@ -866,8 +882,7 @@ Other options:
 - `--no-metrics`: does not read `/metrics`;
 - `--overwrite`: replaces existing results with the same label.
 
-The key is read from `BENCH_API_KEY`. `BENCH_AGENT_KEYS` gives one key per profile
-([section 7.5](#75-per-agent-view-through-litellm)).
+`BENCH_AGENT_KEYS` gives one key per profile ([section 7.5](#75-per-agent-view-through-litellm)).
 
 The report gives an "all" row per level, then one row per profile (tasks, err, tput/GPU, inter P10, TTFT P95 in
 seconds, cache share, task duration, preemptions, MTP, maximum KV cache), and the selected level. The full table is
