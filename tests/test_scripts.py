@@ -29,8 +29,8 @@ def sandbox(tmp_path):
     work.mkdir()
 
     def run(script, *args, **env):
-        environment = helpers.clean_environment(PATH=f"{bin_dir}:{os.environ['PATH']}", BENCH_ROOT_DIR=str(work / "results"),
-                                                BENCH_URL="http://127.0.0.1:1", **env)
+        environment = helpers.clean_environment(**{"PATH": f"{bin_dir}:{os.environ['PATH']}", "BENCH_ROOT_DIR": str(work / "results"),
+                                                    "BENCH_URL": "http://127.0.0.1:1", **env})
         result = helpers.run([BASH, str(helpers.ROOT / script), *args], cwd=work, env=environment, timeout=60)
         assert not marker.exists(), "aiperf was called"
         return result
@@ -199,8 +199,9 @@ def agentx_run(tmp_path):
     system.chmod(0o755)
 
     def run(*, script=None, **env):
-        environment = helpers.clean_environment(PATH=f"{bin_dir}:{os.environ['PATH']}", BENCH_ROOT_DIR=str(work / "results"),
-                                                BENCH_URL="http://127.0.0.1:1", BENCH_SHORT_RUN="1", BENCH_DURATION="5", **env)
+        environment = helpers.clean_environment(**{"PATH": f"{bin_dir}:{os.environ['PATH']}", "BENCH_ROOT_DIR": str(work / "results"),
+                                                    "BENCH_URL": "http://127.0.0.1:1", "BENCH_SHORT_RUN": "1",
+                                                    "BENCH_DURATION": "5", **env})
         result = helpers.run([BASH, str(script or helpers.ROOT / AGENTX), "lbl", "1"], cwd=work, env=environment, timeout=120)
         seen = dict(x.split("=", 1) for x in dump.read_text().splitlines()) if dump.exists() else None
         return result, seen, work / "results" / "lbl"
@@ -280,3 +281,41 @@ def test_agentx_final_message_says_the_gpus_are_deduced(agentx_run):
     assert "--gpu <GPU>" not in result.stdout and "python -m report aiperf" in result.stdout
     config = json.loads((results / "server_config.json").read_text())      # collected even though the target is down
     assert config["fingerprint"]["response"] is False and config["servers"][0]["vllm_lines"] is None
+
+
+# ---------------------------------------------------------------- a model name the server does not know
+VLLM_UNKNOWN_MODEL = (404, {"error": {"message": "The model `bench` does not exist.", "type": "NotFoundError",
+                                      "param": "model", "code": 404}}, {})
+LITELLM_UNKNOWN_MODEL = (400, {"error": {"message": "/chat/completions: Invalid model name passed in model=bench.",
+                                         "type": "invalid_request_error", "param": None, "code": "400"}}, {})
+SERVED = (200, {"data": [{"id": "served-one"}, {"id": "served-two"}]}, {})
+
+
+@pytest.mark.parametrize("script", [SWEEP, AGENTX])
+@pytest.mark.parametrize("answer", [VLLM_UNKNOWN_MODEL, LITELLM_UNKNOWN_MODEL])
+def test_unknown_model_stops_before_anything_is_created(sandbox, stub, script, answer):
+    s = stub({"/v1/chat/completions": answer, "/v1/models": SERVED})
+    r = sandbox(script, "lbl", BENCH_URL=s.url)
+    assert r.returncode == 1
+    assert 'does not know the model "bench"' in r.stderr and "served-one, served-two" in r.stderr
+    assert "set BENCH_MODEL" in r.stdout
+    assert nothing_created(sandbox)
+
+
+@pytest.mark.parametrize("script", [SWEEP, AGENTX])
+def test_unknown_model_keeps_existing_results_even_with_overwrite(sandbox, stub, script):
+    old = sandbox.work / "results" / "lbl"
+    old.mkdir(parents=True)
+    (old / "old.txt").write_text("kept")
+    s = stub({"/v1/chat/completions": VLLM_UNKNOWN_MODEL, "/v1/models": SERVED})
+    r = sandbox(script, "lbl", BENCH_URL=s.url, BENCH_OVERWRITE="1")
+    assert r.returncode == 1 and (old / "old.txt").read_text() == "kept"
+
+
+def test_agentx_a_model_the_server_accepts_goes_on(agentx_run, stub):
+    s = stub({"/v1/chat/completions": (200, {"system_fingerprint": None}, {}), "/v1/models": SERVED})
+    result, seen, _ = agentx_run(BENCH_URL=s.url, BENCH_MODEL="served-one")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert seen is not None                                                # aiperf was reached
+    assert "does not know" not in result.stderr
+

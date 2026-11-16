@@ -17,8 +17,12 @@ last, so that a slow target does not prevent the rest of the snapshot.
 The API key is sent only to the target: /metrics, /version and /server_info do not require it
 (vLLM only protects /v1, /v2, /inference and /cohere). Redirects are not followed.
 
+With --check-model, nothing is collected: the script only sends the one-token completion and exits with code 3,
+and the server's own message, if the server refuses the model as unknown (see unknown_model_message).
+
 Usage: python tools/server_config.py --url http://host:8000 [--model bench]
        [--metrics "http://h1:8000/metrics …"] [--output server_config.json]
+       python tools/server_config.py --url http://host:8000 --model bench --check-model
 API key: environment variable BENCH_API_KEY. Standard library only.
 """
 import argparse
@@ -35,6 +39,7 @@ _INFO = re.compile(r'^vllm:cache_config_info\{([^}]*)\}')
 _LABEL = re.compile(r'(\w+)="((?:[^"\\]|\\.)*)"')
 _POSITION = re.compile(r'^vllm:spec_decode_num_accepted_tokens_per_pos(?:_total)?\{[^}]*position="(\d+)"')
 _FINGERPRINT = re.compile(r'^vllm-(?P<version>.+?)(?P<per>(?:-(?:tp|pp|dp)\d+|-ep)*)-(?P<hash>[0-9a-zA-Z]{8}|nohash)$')
+_UNKNOWN_MODEL = re.compile(r"invalid model|unknown model|model\b.{0,80}(?:not found|does not exist)", re.IGNORECASE)
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -68,6 +73,58 @@ def _get_json(url, key=None, body=None, timeout_s=5):
 
 def _as_dict(x):
     return x if isinstance(x, dict) else {}
+
+
+def _error_body(text):
+    """(message, error object) of an OpenAI-style error body {"error": {...}}; else the start of the text and {}."""
+    try:
+        error = json.loads(text).get("error")
+    except Exception:  # noqa: BLE001
+        error = None
+    if isinstance(error, dict):
+        return str(error.get("message") or "")[:300], error
+    return text[:300].strip(), {}
+
+
+def unknown_model_message(url, model, key=None, timeout_s=15):
+    """The server's own message if it refuses `model` as unknown, otherwise None.
+
+    Sends the one-token completion. A server refuses an unknown model with HTTP 404 (vLLM, OpenAI: the error names
+    the model) or HTTP 400 "Invalid model name" (LiteLLM). Everything else gives None, because other checks report it:
+    the model is accepted (including by servers that accept any name), the server is unreachable, the key is refused
+    (401), the address is wrong (a 404 that does not speak about the model), or another error."""
+    body = {"model": model, "max_tokens": 1, "temperature": 0, "messages": [{"role": "user", "content": "ok"}]}
+    try:
+        _request(url.rstrip("/") + "/v1/chat/completions", key, body, timeout_s)
+    except urllib.error.HTTPError as e:
+        message, error = _error_body(e.read(20_000).decode("utf-8", "replace"))
+        names_the_model = (error.get("param") == "model" or error.get("code") == "model_not_found"
+                           or bool(_UNKNOWN_MODEL.search(message)))
+        if (e.code == 404 and names_the_model) or (e.code == 400 and _UNKNOWN_MODEL.search(message)):
+            return message
+    except Exception:  # noqa: BLE001
+        pass
+    return None
+
+
+def served_model_ids(url, key=None):
+    """Ids listed by the target's /v1/models; empty if it cannot say."""
+    models = _get_json(url.rstrip("/") + "/v1/models", key, timeout_s=5)
+    data = models.get("data") if models else None
+    return [m["id"] for m in data if isinstance(m, dict) and isinstance(m.get("id"), str)] if isinstance(data, list) else []
+
+
+def check_model(url, model, key=None):
+    """--check-model: exit code 3 and a message on stderr if the target refuses `model` as unknown, 0 otherwise
+    (also when the target cannot be asked: the later steps report it)."""
+    message = unknown_model_message(url, model, key)
+    if message is None:
+        return 0
+    print(f'[config] ERROR: the server does not know the model "{model}": {message}', file=sys.stderr)
+    served = served_model_ids(url, key)
+    if served:
+        print("[config] Models served: " + ", ".join(served[:10]) + (" …" if len(served) > 10 else ""), file=sys.stderr)
+    return 3
 
 
 def read_fingerprint(e):
@@ -253,8 +310,14 @@ def main():
     a.add_argument("--url", required=True); a.add_argument("--metrics", default="")
     a.add_argument("--model", default=None, help="if given, a one-token completion to read the fingerprint")
     a.add_argument("--output", default=None)
+    a.add_argument("--check-model", action="store_true",
+                   help="only check that the target knows --model: exit code 3 and its message if not, 0 otherwise")
     p = a.parse_args()
     key = os.environ.get("BENCH_API_KEY") or None  # standalone: run as a file by the .sh scripts
+    if p.check_model:
+        if not p.model:
+            a.error("--check-model needs --model")
+        sys.exit(check_model(p.url, p.model, key))
     r = collect(p.url, p.metrics.split(), key, p.model)
     text = json.dumps(r, indent=1, ensure_ascii=False)
     if p.output:

@@ -405,7 +405,7 @@ answers "HTTP 401: key required", or there is no `vllm:` metric at all.
 | Variable | Meaning | Example |
 |---|---|---|
 | `BENCH_URL` | **target** of the requests: vLLM directly (GPU measurement) or LiteLLM (measurement through the gateway) | `http://10.0.0.5:8000` |
-| `BENCH_MODEL` | name served by vLLM (`--served-model-name`) or LiteLLM alias | `bench` |
+| `BENCH_MODEL` | name served by vLLM (`--served-model-name`) or LiteLLM alias; `sweep.sh` and `agentx.sh` stop if the server does not know it | `bench` |
 | `BENCH_METRICS` | `/metrics` address **of vLLM** (never LiteLLM's or Prometheus'), one per replica, separated by spaces. Empty = `BENCH_URL/metrics`, which only suits a `BENCH_URL` that points to vLLM directly. If `BENCH_URL` points to LiteLLM, give vLLM's address | `http://10.0.0.5:8000/metrics` |
 | `BENCH_API_KEY` | the target's key (vLLM's `--api-key`, or a LiteLLM key). Sent to the target only; it is not written to the bench's logs, but see [Appendix A](#appendix-a-security-notes) (visible in `ps` while AIPerf runs) | — |
 | `BENCH_TOKENIZER` | empty = `tools/tokenizer/` ([section 5.3](#53-copy-the-tokenizer)); otherwise the absolute path of a folder that holds `tokenizer.json` (no copy), or a Hugging Face name (AIPerf downloads it; the test agents, which only read a local folder, then estimate the sizes) | empty |
@@ -479,6 +479,9 @@ The GPU count is the TP x PP x DP of the fingerprint, times the number of vLLM s
 
 **If something looks wrong**, these are the usual messages and what to do:
 
+- **`[config] ERROR: the server does not know the model "…"`**: the name in `BENCH_MODEL` is not one the server
+  serves. It is `bench` when the variable is not set. `sweep.sh` and `agentx.sh` then stop before any measurement
+  and nothing is created. Set `BENCH_MODEL` to one of the names the message lists (they come from `/v1/models`).
 - **`[config] WARNING: … is not vLLM's /metrics`**: the address in `BENCH_METRICS` is not vLLM's. Either it points to
   LiteLLM, which answers "HTTP 401: key required", or it exposes no `vllm:` metric at all. Put vLLM's `/metrics`
   address in `BENCH_METRICS` ([section 5.2](#52-set-the-connection)).
@@ -1382,6 +1385,7 @@ durations), labels, agent names and error messages; no prompt or response conten
 
 | Symptom | Likely cause | What to do |
 |---|---|---|
+| `ERROR: the server does not know the model` (`sweep.sh` / `agentx.sh` stop at once) | `BENCH_MODEL` is not set (so it is `bench`), or is not a name the server serves | set `BENCH_MODEL` to a name the message lists, for example by loading `target.env` ([section 5.2](#52-set-the-connection)); the test agents do not make this check |
 | failure at concurrency N (`sweep.sh` / `agentx.sh` stop) | see `results/<label>/c<N>.log` | often tokenizer not found ([section 5.3](#53-copy-the-tokenizer)) or target unreachable ([section 5.4](#54-test-the-connection)) |
 | `HFValidationError` or tokenizer not found in the AIPerf log | AIPerf launched by hand with `HF_HUB_OFFLINE=1`, or `BENCH_TOKENIZER` = a Hugging Face name absent from the local cache | go through `sweep.sh` with the tokenizer in `tools/tokenizer/` ([section 5.3](#53-copy-the-tokenizer)) |
 | preempt / cache / MTP columns empty | `/metrics` not read, or not vLLM's | check `BENCH_METRICS`: vLLM's address, required through LiteLLM (launch warning, [section 5.4](#54-test-the-connection)) |
