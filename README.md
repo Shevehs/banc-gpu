@@ -601,25 +601,35 @@ Then the **selected point**: the level with the highest throughput that meets th
 
 ### 6.3 AgentX stress test
 
-Replays the coding-agent sessions (Claude Code, sub-agents included) published by SemiAnalysis, with AIPerf's
-locked scenario `inferencex-agentx-mvp`, the one behind InferenceX's AgentX measurements
-([method](https://inferencex.semianalysis.com/blog/agentic-benchmark-agent-benchmark-guide)). The result
-is therefore comparable to the published AgentX exports (same traces, same scenario; different engine and hardware).
-Contexts are long (median about 142,000 input tokens, according to
-[InferenceX](https://inferencex.semianalysis.com/blog/agentic-benchmark-agent-benchmark-guide)) and are not truncated: the full measurement is
-done on GPU servers: on a small model (Mac, 32,768 tokens), no trace fits ([section 6.5](#65-context-shorter-than-the-traces)).
+Replays the coding-agent sessions (Claude Code, sub-agents included) published by SemiAnalysis, with AIPerf's locked
+scenario `inferencex-agentx-mvp`, the one behind InferenceX's AgentX measurements
+([method](https://inferencex.semianalysis.com/blog/agentic-benchmark-agent-benchmark-guide)).
 
-What the scenario enforces (documented in the AIPerf 0.12.0 code, `aiperf/common/scenario/inferencex_agentx_mvp.py`,
-and in AIPerf's message at run time): streaming; output at the trace's length (`ignore_eos`, added
-automatically); **at least 900 s per level** (1,800 by default); no truncation of inputs; delays between
-turns replayed; first-turn prefix scrambled, so that a run does not benefit from the previous run's cache; trace set
-**pinned** (`semianalysisai/cc-traces-weka-062126`) so that the run is marked valid.
+The result is therefore comparable to the published AgentX exports: same traces, same scenario, but a different engine
+and hardware.
 
-The traces are published on Hugging Face: by default, `agentx.sh` **downloads them itself** on the first run
-(about 1.85 GB, Internet access required), and the run is marked valid. Without Internet access, see [section 6.4](#64-agentx-without-internet-access).
+Contexts are long (a median of about 142,000 input tokens, according to
+[InferenceX](https://inferencex.semianalysis.com/blog/agentic-benchmark-agent-benchmark-guide)) and are not truncated.
+The full measurement is therefore done on GPU servers. On a small model (Mac, 32,768 tokens), no trace fits
+([section 6.5](#65-context-shorter-than-the-traces)).
 
-vLLM launched with the prefix cache **enabled** (the traces carry the cache block fingerprints, to
-reproduce their reuse). Then:
+**What the scenario enforces** (documented in the AIPerf 0.12.0 code,
+`aiperf/common/scenario/inferencex_agentx_mvp.py`, and in AIPerf's message at run time):
+
+- streaming;
+- output at the trace's length (`ignore_eos`, added automatically);
+- **at least 900 s per level** (1,800 by default);
+- no truncation of inputs;
+- delays between turns replayed;
+- first-turn prefix scrambled, so that a run does not benefit from the previous run's cache;
+- trace set **pinned** (`semianalysisai/cc-traces-weka-062126`) so that the run is marked valid.
+
+The traces are published on Hugging Face. By default, `agentx.sh` **downloads them itself** on the first run (about
+1.85 GB, Internet access required), and the run is marked valid. Without Internet access, see
+[section 6.4](#64-agentx-without-internet-access).
+
+vLLM must be launched with the prefix cache **enabled**: the traces carry the cache block fingerprints, to reproduce
+their reuse. Then:
 
 ```bash
 BENCH_DURATION=1800 ./agentx.sh agentx-r1 "1 2 4 8"
@@ -629,63 +639,87 @@ python -m report aiperf results-agentx --target 30
 | Variable | Default | Meaning |
 |---|---|---|
 | `BENCH_DURATION` | 1800 | seconds per level; at least 900 |
-| `BENCH_AGENTX_DIR` | empty | local traces folder (without Internet access, [section 6.4](#64-agentx-without-internet-access)); the run is then marked `submission_valid=false` (AIPerf cannot verify the set) |
-| `BENCH_AGENTX_VARIANT` | empty | empty: full set `semianalysisai/cc-traces-weka-062126`; `256k`: `…-062126-256k`, where SemiAnalysis removed requests above 256,000 tokens (for a `--max-model-len` of about 256,000; accepted by the scenario). From the dataset description in AIPerf (`plugins.yaml`) |
+| `BENCH_AGENTX_DIR` | empty | local traces folder, for use without Internet access ([section 6.4](#64-agentx-without-internet-access)) |
+| `BENCH_AGENTX_VARIANT` | empty | empty = the full set; `256k` = the set without the requests above 256,000 tokens |
 | `BENCH_ROOT_DIR` | `results-agentx` | results folder |
 | `BENCH_SHORT_RUN` | empty | `1` = levels shorter than 900 s, to check the pipeline only (not comparable) |
 | `BENCH_MAX_CONTEXT` | empty | tokens; AIPerf discards traces whose peak context exceeds this value (`--max-context-length`) |
-| `AIPERF_DATASET_CONFIGURATION_TIMEOUT` | 1800 | seconds allowed for loading the traces (AIPerf: 300 by default, too short for the 393 traces); `AIPERF_SERVICE_PROFILE_CONFIGURE_TIMEOUT` is raised to at least this value, as AIPerf requires |
+| `AIPERF_DATASET_CONFIGURATION_TIMEOUT` | 1800 | seconds allowed for loading the traces |
 
-The levels are numbers of **sessions replayed at the same time** (AIPerf's `--concurrency`). The report
-is the one described in [section 6.2](#62-reading-the-stress-test-report).
+Notes on these variables:
+
+- **`BENCH_AGENTX_DIR`**: with a local folder, the run is marked `submission_valid=false`, because AIPerf cannot verify
+  the set.
+- **`BENCH_AGENTX_VARIANT=256k`**: this is the set `…-062126-256k`, where SemiAnalysis removed the requests above
+  256,000 tokens. Use it for a `--max-model-len` of about 256,000. The scenario accepts it. This comes from the dataset
+  description in AIPerf (`plugins.yaml`).
+- **`AIPERF_DATASET_CONFIGURATION_TIMEOUT`**: AIPerf's default is 300 s, too short for the 393 traces.
+  `AIPERF_SERVICE_PROFILE_CONFIGURE_TIMEOUT` is raised to at least this value, as AIPerf requires.
+
+The levels are numbers of **sessions replayed at the same time** (AIPerf's `--concurrency`). The report is the one
+described in [section 6.2](#62-reading-the-stress-test-report).
+
 Duration: 5 levels x 30 min x 3 repetitions is about 7 h 30 per configuration (about 3 h 45 at 15 min per level).
 
 ### 6.4 AgentX without Internet access
 
-Client machine without Internet access: copy the traces. Once, on a machine with Hugging Face access (where the traces are published):
+If the client machine has no Internet access, copy the traces. Do this once, on a machine with Hugging Face access
+(where the traces are published):
 
 ```bash
 ./tools/download_agentx_traces.sh traces-agentx     # 393 traces, about 1.85 GB
 ```
 
-Copy the folder to the client machine, then `BENCH_AGENTX_DIR=traces-agentx ./agentx.sh …`. The set is published
-under the Apache-2.0 license according to its [Hugging Face page](https://huggingface.co/datasets/semianalysisai/cc-traces-weka-062126):
-check it before bringing it into your environment. Not verified: that the repository stores one trace per JSON
-file in a single folder (the script counts the files and reports it).
+Copy the folder to the client machine, then run `BENCH_AGENTX_DIR=traces-agentx ./agentx.sh …`.
+
+The set is published under the Apache-2.0 license, according to its
+[Hugging Face page](https://huggingface.co/datasets/semianalysisai/cc-traces-weka-062126). Check it before bringing it
+into your environment.
+
+Not verified: that the repository stores one trace per JSON file in a single folder (the script counts the files and
+reports it).
 
 ### 6.5 Context shorter than the traces
 
-The scenario forbids truncating a trace (and AIPerf has no option to do so), but it accepts discarding those that do not
-fit (AIPerf's `--max-context-length`: documented by its help, and no scenario warning when tried). Useful on a GPU server whose
-`--max-model-len` is a little shorter than the longest traces:
+The scenario forbids truncating a trace, and AIPerf has no option to do so. It does accept discarding the traces that do
+not fit, with AIPerf's `--max-context-length` (documented by its help; no scenario warning when tried).
+
+This is useful on a GPU server whose `--max-model-len` is a little shorter than the longest traces:
 
 ```bash
 BENCH_MAX_CONTEXT=129024 BENCH_DURATION=1800 ./agentx.sh agentx-128k-r1 "1 2 4 8"   # vLLM: --max-model-len 131072
 ```
 
-The filter applies to the **maximum** context of each session. **Not on a small model**: at 30,720 tokens (vLLM at
-32,768), none of the 393 traces fits (observed during the trial on a Mac: "No eligible traces … scanned 393"). AIPerf
-then stops before the first level, and the script says so. On a Mac, agent load is measured with the test agents
-([section 6.6](#66-test-agents-stress-test)); AgentX is measured on GPU servers.
+The filter applies to the **maximum** context of each session.
 
-Leave a **margin** below `--max-model-len` (here 2,048 tokens): the filter compares the lengths recorded
-in the traces, whereas the server also counts the chat template (roles, separators; inferred).
-A request whose **input** exceeds `--max-model-len` is refused by vLLM; AIPerf removes it from its metrics,
-and the report counts it in `err` and rejects the level. If the input fits but not the output, vLLM does not refuse:
-it reduces `max_tokens` to the remaining room (documented by vLLM's code, `vllm/entrypoints/serve/utils/api_utils.py`, `get_max_tokens`);
-the report flags it with a WARNING (AIPerf's `osl_mismatch_count`, column `shortened_outputs`).
+**Not on a small model**: at 30,720 tokens (vLLM at 32,768), none of the 393 traces fits (observed during the trial on a
+Mac: "No eligible traces … scanned 393"). AIPerf then stops before the first level, and the script says so. On a Mac,
+measure agent load with the test agents ([section 6.6](#66-test-agents-stress-test)); AgentX is measured on GPU
+servers.
 
-This subset is **not comparable** to the published AgentX results (inferred: bias toward shorter sessions); note the
-number of discarded traces with the result (level log, `results-agentx/<label>/c<N>.log`: line
-`traces: scanned N, rejected_by_maxctx X (--max-context-length=…), eligible Y`).
+**Leave a margin** below `--max-model-len` (here 2,048 tokens). The filter compares the lengths recorded in the traces,
+whereas the server also counts the chat template (roles, separators; inferred).
+
+What happens when a request does not fit:
+
+- If its **input** exceeds `--max-model-len`, vLLM refuses it. AIPerf removes it from its metrics, and the report counts
+  it in `err` and rejects the level.
+- If the input fits but not the output, vLLM does not refuse: it reduces `max_tokens` to the remaining room (documented
+  by vLLM's code, `vllm/entrypoints/serve/utils/api_utils.py`, `get_max_tokens`). The report flags it with a WARNING
+  (AIPerf's `osl_mismatch_count`, column `shortened_outputs`).
+
+This subset is **not comparable** to the published AgentX results (inferred: bias toward shorter sessions). Note the
+number of discarded traces with the result. It is in the level log, `results-agentx/<label>/c<N>.log`, on the line
+`traces: scanned N, rejected_by_maxctx X (--max-context-length=…), eligible Y`.
 
 ### 6.6 Test-agents stress test
 
 The test agents are three profiles (`code_review` with sub-agents, step-by-step `pentest`, `report`).
 Their tools are simulated: they return fabricated text and act on no system.
 
-**Restart vLLM with the prefix cache enabled** (without `--no-enable-prefix-caching`, [section 4.2](#42-check-the-vllm-in-place)), check
-`prefix cache True` in the `[config]` line ([section 5.4](#54-test-the-connection)), then:
+**Restart vLLM with the prefix cache enabled** (without `--no-enable-prefix-caching`,
+[section 4.2](#42-check-the-vllm-in-place)). Check that the `[config]` line says `prefix cache True`
+([section 5.4](#54-test-the-connection)), then:
 
 ```bash
 python -m agents_test.launcher --url "$BENCH_URL" --model "$BENCH_MODEL" --metrics "${BENCH_METRICS:-$BENCH_URL/metrics}" \
@@ -703,13 +737,21 @@ python -m report agents results-agents --target 30
 | `--output` | results folder (default `results-agents`, relative to the current folder; runs started from the [interface](#9-interface) use `agents_test/results-agents`) |
 | `--label-agents` | adds `metadata.agent` = profile name to each request (per-agent view through LiteLLM, [section 7.5](#75-per-agent-view-through-litellm)) |
 
-Other options: `--spread` (staggers the workers' start over this many seconds), `--latency-factor` (multiplies the simulated tool times; 1 to measure), `--no-metrics` (does not read `/metrics`) and `--overwrite` (replaces existing results with the same label).
+Other options:
 
-The key is read from `BENCH_API_KEY`; `BENCH_AGENT_KEYS` gives one key per
-profile ([section 7.5](#75-per-agent-view-through-litellm)). The report gives an "all" row per level
-then one per profile (throughput/GPU, inter P10, TTFT P95, cache share, task duration, preemptions, MTP,
-maximum KV cache), and the selected level. **To check**: the cache column clearly above 0
-for `pentest` and `report`. Full table: `results-agents/table_agents.csv`. The report accepts `--require-metrics` but not `--ttft-max`.
+- `--spread`: staggers the workers' start over this many seconds;
+- `--latency-factor`: multiplies the simulated tool times (1 to measure);
+- `--no-metrics`: does not read `/metrics`;
+- `--overwrite`: replaces existing results with the same label.
+
+The key is read from `BENCH_API_KEY`. `BENCH_AGENT_KEYS` gives one key per profile
+([section 7.5](#75-per-agent-view-through-litellm)).
+
+The report gives an "all" row per level, then one row per profile (throughput/GPU, inter P10, TTFT P95, cache share,
+task duration, preemptions, MTP, maximum KV cache), and the selected level. The full table is
+`results-agents/table_agents.csv`. The report accepts `--require-metrics` but not `--ttft-max`.
+
+**To check**: the cache column should be clearly above 0 for `pentest` and `report`.
 
 For a quick first check: `--levels "1 2" --duration 300 --warmup 60 --scale 0.2`.
 
