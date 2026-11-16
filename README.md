@@ -527,10 +527,19 @@ vLLM launched **with** `--no-enable-prefix-caching`.
 | Variable | Default | Meaning |
 |---|---|---|
 | `BENCH_ISL` / `BENCH_OSL` | 2048 / 256 | input / output tokens per request (output enforced: `min_tokens` + `ignore_eos`) |
-| `BENCH_DURATION` | empty | seconds per level; empty = 8 x concurrency requests (at least 16; `BENCH_REQUESTS_PER_CONCURRENCY` replaces the 8) |
+| `BENCH_DURATION` | empty | seconds per level; empty = a fixed number of requests per level (next row) |
+| `BENCH_REQUESTS_PER_CONCURRENCY` | 8 | without `BENCH_DURATION`: requests per level = this value x the concurrency, at least 16 |
 | `BENCH_ROOT_DIR` | `results` | results folder |
 | `BENCH_TEMPERATURE` | 0.7 | fixed so that speculative decoding is comparable from one run to the next |
 | `BENCH_EXTRA` | empty | additional AIPerf options, e.g. `--use-server-token-count` |
+
+**Why a level is sized by its concurrency.** At a concurrency of 16, 16 requests run at the same time, one per slot.
+Giving each slot about 8 requests to complete (so 128 requests) leaves the level enough work to reach a steady state
+and gives every level the same amount of work per slot; with a fixed total, a high level would end after a request
+or two per slot and mostly measure the start-up. The minimum of 16 keeps the lowest levels from having too few requests
+for a percentile. The cost is that the duration of a level depends on the speed of the server, and a low level
+rests on few requests, so its P10 interactivity and P95 TTFT are rough. For a reference measurement, set
+`BENCH_DURATION` instead: every level then lasts that many seconds, with many more requests per level.
 
 Example for a reference measurement: `BENCH_ISL=32768 BENCH_OSL=512 BENCH_DURATION=900 ./sweep.sh conf-a-r1 "48 52 56 60 64"`.
 
