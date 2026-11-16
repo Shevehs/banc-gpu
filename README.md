@@ -1030,12 +1030,14 @@ python -m observation.query --prometheus http://127.0.0.1:9090 --since 1d --wind
 ```
 
 The windows of the range are grouped by 6-hour range (night, morning, afternoon, evening) or by hour
-(`--period hour`), in the local time of the machine that queries. A period's throughput is an average: for the peak,
-look at its windows one by one (`--view windows`).
+(`--period hour`), in the local time of the machine that queries.
+
+A period's throughput is an average: for the peak, look at its windows one by one (`--view windows`).
 
 ### 7.5 Per-agent view through LiteLLM
 
 vLLM does not know which agent is calling; LiteLLM does, provided each request carries its agent's identity.
+
 In both ways below, first enable LiteLLM's Prometheus metrics
 ([LiteLLM, Prometheus](https://docs.litellm.ai/docs/proxy/prometheus)):
 
@@ -1048,10 +1050,12 @@ LiteLLM refuses to start with this setting if `prometheus_client` is missing
 ([Appendix B](#appendix-b-litellm-per-key-setup-and-install-details)).
 
 **Way 1: one virtual key per agent** (nothing to change in the agents' code; recommended in production).
-It needs a PostgreSQL database and Prisma on the LiteLLM side; the setup is in
-[Appendix B](#appendix-b-litellm-per-key-setup-and-install-details). Each agent uses **its** key as the API key
-(`OpenAI(api_key=…)`, or its framework's key variable). The metrics then carry the label
-`api_key_alias="code-review"`: `--by api_key_alias` (the default is `metadata_agent`, way 2).
+
+- It needs a PostgreSQL database and Prisma on the LiteLLM side; the setup is in
+  [Appendix B](#appendix-b-litellm-per-key-setup-and-install-details).
+- Each agent uses **its** key as the API key (`OpenAI(api_key=…)`, or its framework's key variable).
+- The metrics then carry the label `api_key_alias="code-review"`: use `--by api_key_alias` (the default is
+  `metadata_agent`, way 2).
 
 **Way 2: a field in the request** (no database; one line in the agent). Each request sends
 `"metadata": {"agent": "<name>"}` in its body; with the OpenAI Python client:
@@ -1068,8 +1072,10 @@ litellm_settings:
   custom_prometheus_metadata_labels: ["metadata.agent"]
 ```
 
-The label is then called `metadata_agent`: `--by metadata_agent`. If the agent calls vLLM without going through
-LiteLLM, vLLM accepts unknown fields and ignores them (trace at debug level only; documented in
+The label is then called `metadata_agent`: `--by metadata_agent`.
+
+If the agent calls vLLM without going through LiteLLM, vLLM accepts unknown fields and ignores them (trace at debug
+level only; documented in
 [`protocol.py`](https://github.com/vllm-project/vllm/blob/7f855f605892656ebf7265642e5d22a34a6ae731/vllm/entrypoints/serve/engine/protocol.py#L39-L75)).
 
 **Test agents** support both ([section 6.6](#66-test-agents-stress-test)):
@@ -1078,22 +1084,32 @@ LiteLLM, vLLM accepts unknown fields and ignores them (trace at debug level only
   "Keys per agent" field of the interface); a profile without a key keeps the common key.
 - Way 2: `agents_test.launcher --label-agents` (or the "Label agents" checkbox): `metadata.agent` = profile name.
 
-**Collect, then query**: declare LiteLLM in `prometheus.yml` (the `litellm` block of the example: path **`/metrics/`**
-with the trailing slash, the one LiteLLM serves; key in the `litellm.key` file named by `credentials_file`,
-[section 7.2](#72-install-and-start-prometheus-once)), because its metrics require a key by default in recent versions
-(1.85.0 according to its documentation; from 1.84 according to its code). A limited virtual key is better than the
-master key (inferred: check that it is enough for `/metrics/` on your version). Then:
+**Collect, then query**: declare LiteLLM in `prometheus.yml`, using the `litellm` block of the example:
+
+- the path is **`/metrics/`**, with the trailing slash, the one LiteLLM serves;
+- the key is in the `litellm.key` file named by `credentials_file`
+  ([section 7.2](#72-install-and-start-prometheus-once)).
+
+LiteLLM's metrics require a key by default in recent versions (1.85.0 according to its documentation; from 1.84
+according to its code). A limited virtual key is better than the master key (inferred: check that it is enough for
+`/metrics/` on your version). Then:
 
 ```bash
 python -m observation.query --prometheus http://127.0.0.1:9090 --litellm 'job="litellm"' \
   --by metadata_agent --since 2h --target 30 --gpu 8 --view agents
 ```
 
-Per agent: requests, share of output tokens, input and output tokens per request, TTFT P50 and P95,
-P95 latency and an average generation speed (output tokens ÷ (latency − TTFT); average, not percentile;
-empty if some of the requests are not streaming; proxy time included). Requests without an identity
-appear under "(no identity)" (LiteLLM labels them `None`). Names, types and labels of LiteLLM's metrics were
-checked with LiteLLM 1.109.1 during validation; check them on your version on the first try:
+Per agent, the query gives:
+
+- requests, share of output tokens, input and output tokens per request;
+- TTFT P50 and P95, and P95 latency;
+- an average generation speed (output tokens ÷ (latency − TTFT); an average, not a percentile; empty if some of the
+  requests are not streaming; proxy time included).
+
+Requests without an identity appear under "(no identity)" (LiteLLM labels them `None`).
+
+Names, types and labels of LiteLLM's metrics were checked with LiteLLM 1.109.1 during validation. Check them on your
+version on the first try:
 
 ```bash
 curl -s -H "Authorization: Bearer <key>" http://<vm>:4000/metrics/ | grep -E '^litellm_(output_tokens|request_total_latency)' | head
@@ -1109,17 +1125,20 @@ A single short pass is not enough to settle on a figure. For each server configu
 
 1. **Coarse pass** (synthetic load): wide levels, 2 min each, to locate the knee:
    `BENCH_DURATION=120 ./sweep.sh conf-a-coarse "1 2 4 8 16 32 48 64 96 128 192 256"`.
-2. **Fine pass**: 4 or 5 tighter levels (about 5 to 15% apart, e.g. `"48 52 56 60 64"`) around the knee (last level that meets the target,
-   first that does not), **15 min** each (`BENCH_DURATION=900`), **three repetitions** (`conf-a-r1`, `-r2`, `-r3`).
-   Keep the median and the min–max spread, and the estimate interpolated at the target. More than 10% spread between
-   repetitions (indicative threshold): disturbed machine, redo.
-3. **Without speculative decoding** (if the model uses it): restart vLLM without `--speculative-config` and redo
-   the fine pass in another root (`BENCH_ROOT_DIR=results-nomtp`). The gain from speculative decoding depends on the
-   text and the temperature: note the acceptance rate (MTP column) next to each point.
-4. **AgentX** (cache enabled): 4 or 5 session levels, 30 min (or 15) per level, three repetitions;
-   to compare with the published AgentX exports ([section 6.3](#63-agentx-stress-test)).
-   **Test agents** (cache enabled): levels up to beyond the selected level, 15 min, 300 s warmup,
-   three repetitions ([section 6.6](#66-test-agents-stress-test)).
+2. **Fine pass**: 4 or 5 tighter levels (about 5 to 15% apart, e.g. `"48 52 56 60 64"`) around the knee (the last level
+   that meets the target and the first that does not).
+   - **15 min** each (`BENCH_DURATION=900`), **three repetitions** (`conf-a-r1`, `-r2`, `-r3`).
+   - Keep the median, the min–max spread and the estimate interpolated at the target.
+   - More than 10% spread between repetitions (indicative threshold) means a disturbed machine: redo.
+3. **Without speculative decoding** (if the model uses it): restart vLLM without `--speculative-config` and redo the
+   fine pass in another root (`BENCH_ROOT_DIR=results-nomtp`).
+   - The gain from speculative decoding depends on the text and the temperature: note the acceptance rate (MTP column)
+     next to each point.
+4. **AgentX and test agents**, with the cache enabled:
+   - **AgentX**: 4 or 5 session levels, 30 min (or 15) per level, three repetitions; to compare with the published
+     AgentX exports ([section 6.3](#63-agentx-stress-test)).
+   - **Test agents**: levels up to beyond the selected level, 15 min, 300 s warmup, three repetitions
+     ([section 6.6](#66-test-agents-stress-test)).
 5. **Through LiteLLM**: a short sweep ([section 6.7](#67-stress-test-through-litellm)), for the added latency.
 6. **Recovery**: stop a replica, restart it, and measure the time until the first response
    (`curl -s -H "Authorization: Bearer $BENCH_API_KEY" "$BENCH_URL/v1/models"` every 10 s); no sweep during
@@ -1127,11 +1146,15 @@ A single short pass is not enough to settle on a figure. For each server configu
 7. **Compare** the configurations: synthetic throughput with and without MTP, AgentX throughput, agent throughput and
    cache rate, P95 TTFT, maximum KV cache, recovery time. Choosing the configuration and the target is
    not the bench's job.
-8. **In production**: continuous observation (Prometheus in service, [section 7.2](#72-install-and-start-prometheus-once); per-period view, [section 7.4](#74-per-period-view)); the gap with the stress tests shows what they do not
-   reproduce of your real load.
+8. **In production**: continuous observation (Prometheus in service,
+   [section 7.2](#72-install-and-start-prometheus-once); per-period view, [section 7.4](#74-per-period-view)). The gap
+   with the stress tests shows what they do not reproduce of your real load.
 
-Order of magnitude, per configuration and per context: about 4 h for the coarse and fine passes (5 levels x
-15 min x 3), about 7 h 30 for AgentX (5 x 30 min x 3), about 5 h 30 for the test agents with 7 levels (7 x 15 min x 3).
+Order of magnitude, per configuration and per context:
+
+- coarse and fine passes: about 4 h (5 levels x 15 min x 3);
+- AgentX: about 7 h 30 (5 x 30 min x 3);
+- test agents with 7 levels: about 5 h 30 (7 x 15 min x 3).
 
 [↑ Back to top](#top)
 
