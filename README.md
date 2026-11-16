@@ -754,9 +754,11 @@ reuse is not reproduced. The conversion code of `tools/traces.md` computes them 
   published AgentX ones, but they are comparable between your own runs.
 - The other rules of the scenario still apply, such as at least 900 s per level.
 - `--max-model-len` must cover the longest call of your traces ([section 6.6](#66-context-shorter-than-the-traces)).
-- From 8 traces on, loading can hang, and a set generated with the defaults has 30. The symptom is a run that never
-  starts. Kill the AIPerf processes, then set `AIPERF_DATASET_WEKA_PARALLEL_WORKERS=1` to load in a single process
-  ([details](tools/traces.md#good-to-know)).
+- From 8 traces on, AIPerf loads them with several processes, and a set generated with the defaults has 30. These
+  processes cannot use a tokenizer given as a local folder (`tools/tokenizer/`, the default), and the run then never
+  starts. With a local folder, `agentx.sh` therefore loads the traces in a single process by itself. With a Hugging
+  Face name in `BENCH_TOKENIZER`, the loading stays parallel. If a run never starts anyway, see
+  [`tools/traces.md`](tools/traces.md#good-to-know).
 
 **Check a folder first, without a GPU**
 
@@ -1387,6 +1389,7 @@ durations), labels, agent names and error messages; no prompt or response conten
 | AgentX: "Scenario invariants violated" | `BENCH_DURATION` < 900 s, or AIPerf launched by hand on local traces | `BENCH_DURATION` ≥ 900 (or `BENCH_SHORT_RUN=1` for a simple check); go through `agentx.sh` |
 | AgentX: `err` > 0 in the report | requests longer than `--max-model-len` (AIPerf removes them from its metrics; the report counts them in `err`) | raise it; `BENCH_AGENTX_VARIANT=256k` for a model at about 256,000 tokens; or `BENCH_MAX_CONTEXT` about `--max-model-len` − 2,048 to discard traces that are too long ([section 6.6](#66-context-shorter-than-the-traces)) |
 | AgentX: no trace fits | `BENCH_MAX_CONTEXT` below the context of every trace | raise `BENCH_MAX_CONTEXT` and `--max-model-len`; with the published traces, AgentX is not feasible on a small server ([section 6.6](#66-context-shorter-than-the-traces)) |
+| AgentX: the run never starts, the AIPerf log stops at `spawning N worker process(es)` | AIPerf's loading processes cannot load the tokenizer (an uncached Hugging Face name, or a local folder with `AIPERF_DATASET_WEKA_PARALLEL_WORKERS` set to another value than 1) and are replaced endlessly | stop AIPerf with `pkill -9 -f aiperf`, check with `pgrep -fl aiperf` that nothing is left, then relaunch with `AIPERF_DATASET_WEKA_PARALLEL_WORKERS=1` ([`tools/traces.md`](tools/traces.md#good-to-know)) |
 | AgentX: `timed out waiting for dataset configuration` | loading the traces takes longer than AIPerf's timeout | raise `AIPERF_DATASET_CONFIGURATION_TIMEOUT` ([section 6.3](#63-agentx-stress-test)) |
 | `ERROR: number of GPUs unknown` from a report | fingerprint missing, or `BENCH_METRICS` did not point to vLLM during the run | `--gpu N` ("GPU" field of the interface) |
 | LiteLLM in Docker: connection error to vLLM | `127.0.0.1` refers to the container, not the machine | `api_base: http://host.docker.internal:<vLLM port>/v1` ([Docker Desktop](https://docs.docker.com/desktop/features/networking/networking-how-tos/)) |

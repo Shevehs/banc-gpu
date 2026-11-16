@@ -19,8 +19,9 @@ Usage:
     python tools/make_traces.py --preset small --output traces-small
     BENCH_AGENTX_DIR=traces-small ./agentx.sh small-r1 "1 2 4"
 
-Note: from 8 traces on, AIPerf rebuilds the prompts with several processes, and this step can hang. If the run never
-starts, kill the AIPerf processes and set AIPERF_DATASET_WEKA_PARALLEL_WORKERS=1 (serial loading).
+Note: from 8 traces on, AIPerf rebuilds the prompts with several processes, and this step hangs if they cannot load
+the tokenizer (a local folder, for example). agentx.sh loads in a single process when the tokenizer is a folder. If a run
+never starts anyway, stop AIPerf with `pkill -9 -f aiperf` and set AIPERF_DATASET_WEKA_PARALLEL_WORKERS=1.
 
 The format, and how to build traces from your own logs, are described in tools/traces.md.
 """

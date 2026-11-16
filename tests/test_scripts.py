@@ -221,6 +221,36 @@ def test_agentx_aiperf_timeouts(agentx_run, env, expected):
     assert int(seen[TIMEOUTS[1]]) >= int(seen[TIMEOUTS[0]])          # AIPerf requires it
 
 
+WORKERS = "AIPERF_DATASET_WEKA_PARALLEL_WORKERS"
+
+
+def test_agentx_local_tokenizer_folder_loads_the_traces_in_one_process(agentx_run, tmp_path, monkeypatch):
+    monkeypatch.delenv(WORKERS, raising=False)
+    folder = tmp_path / "tokenizer"
+    folder.mkdir()
+    result, seen, _ = agentx_run(BENCH_TOKENIZER=str(folder))
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert seen[WORKERS] == "1"
+    assert "single process" in result.stdout
+
+
+def test_agentx_huggingface_name_keeps_the_parallel_loading(agentx_run, monkeypatch):
+    monkeypatch.delenv(WORKERS, raising=False)
+    result, seen, _ = agentx_run(BENCH_TOKENIZER="some-org/some-model")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert WORKERS not in seen
+    assert "single process" not in result.stdout
+
+
+def test_agentx_keeps_a_value_set_in_the_terminal(agentx_run, tmp_path):
+    folder = tmp_path / "tokenizer"
+    folder.mkdir()
+    result, seen, _ = agentx_run(BENCH_TOKENIZER=str(folder), **{WORKERS: "4"})
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert seen[WORKERS] == "4"
+    assert "single process" not in result.stdout
+
+
 def test_agentx_final_message_says_the_gpus_are_deduced(agentx_run):
     result, _, results = agentx_run()
     assert result.returncode == 0
