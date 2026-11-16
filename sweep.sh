@@ -29,6 +29,12 @@ OVERWRITE="${BENCH_OVERWRITE:-}"                       # 1 = replace existing re
 EXTRA="${BENCH_EXTRA:-}"                           # additional AIPerf options, e.g. "--use-server-token-count --api-key XXX"
 # A different seed for each label (hence for each repetition), unless BENCH_SEED is set.
 SEED="${BENCH_SEED:-$(printf '%s' "$LABEL" | cksum | cut -d' ' -f1)}"
+# A model name the server does not know makes every request fail at once: say so before anything is replaced or created.
+CHECK=0
+BENCH_API_KEY="$API_KEY" python3 "$HERE/tools/server_config.py" --url "$URL" --model "$MODEL" --check-model || CHECK=$?
+if [ "$CHECK" = "3" ]; then
+  echo "Stopped before any measurement: set BENCH_MODEL to a model the server serves (it is \"bench\" when BENCH_MODEL is not set)."; exit 1
+fi
 if [ -d "$ROOT_DIR/$LABEL" ] && [ -n "$(ls -A "$ROOT_DIR/$LABEL" 2>/dev/null)" ]; then
   if [ "$OVERWRITE" = "1" ]; then rm -rf "${ROOT_DIR:?}/$LABEL"
   else echo "$ROOT_DIR/$LABEL already exists: change the label, or rerun with BENCH_OVERWRITE=1 to replace it."; exit 1; fi

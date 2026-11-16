@@ -45,6 +45,12 @@ for C in $CONCURRENCIES; do case "$C" in *[!0-9]*) echo "Invalid concurrency: $C
 if [ "$SHORT_RUN" != "1" ] && [ "$DURATION" -lt 900 ]; then
   echo "BENCH_DURATION=$DURATION: the AgentX scenario requires at least 900 s per level (BENCH_SHORT_RUN=1 for a simple check)."; exit 1
 fi
+# A model name the server does not know makes every request fail at once: say so before anything is replaced or created.
+CHECK=0
+BENCH_API_KEY="$API_KEY" python3 "$HERE/tools/server_config.py" --url "$URL" --model "$MODEL" --check-model || CHECK=$?
+if [ "$CHECK" = "3" ]; then
+  echo "Stopped before any measurement: set BENCH_MODEL to a model the server serves (it is \"bench\" when BENCH_MODEL is not set)."; exit 1
+fi
 if [ -d "$ROOT_DIR/$LABEL" ] && [ -n "$(ls -A "$ROOT_DIR/$LABEL" 2>/dev/null)" ]; then
   if [ "$OVERWRITE" = "1" ]; then rm -rf "${ROOT_DIR:?}/$LABEL"
   else echo "$ROOT_DIR/$LABEL already exists: change the label, or rerun with BENCH_OVERWRITE=1 to replace it."; exit 1; fi

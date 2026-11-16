@@ -405,7 +405,7 @@ answers "HTTP 401: key required", or there is no `vllm:` metric at all.
 | Variable | Meaning | Example |
 |---|---|---|
 | `BENCH_URL` | **target** of the requests: vLLM directly (GPU measurement) or LiteLLM (measurement through the gateway) | `http://10.0.0.5:8000` |
-| `BENCH_MODEL` | name served by vLLM (`--served-model-name`) or LiteLLM alias | `bench` |
+| `BENCH_MODEL` | name served by vLLM (`--served-model-name`) or LiteLLM alias. `sweep.sh` and `agentx.sh` stop if the server does not know it | `bench` |
 | `BENCH_METRICS` | `/metrics` address **of vLLM** (never LiteLLM's or Prometheus'), one per replica, separated by spaces. Empty = `BENCH_URL/metrics`, which only suits a `BENCH_URL` that points to vLLM directly. If `BENCH_URL` points to LiteLLM, give vLLM's address | `http://10.0.0.5:8000/metrics` |
 | `BENCH_API_KEY` | the target's key (vLLM's `--api-key`, or a LiteLLM key). Sent to the target only; it is not written to the bench's logs, but see [Appendix A](#appendix-a-security-notes) (visible in `ps` while AIPerf runs) | — |
 | `BENCH_TOKENIZER` | empty = `tools/tokenizer/` ([section 5.3](#53-copy-the-tokenizer)); otherwise the absolute path of a folder that holds `tokenizer.json` (no copy), or a Hugging Face name (AIPerf downloads it; the test agents, which only read a local folder, then estimate the sizes) | empty |
@@ -479,11 +479,17 @@ The GPU count is the TP x PP x DP of the fingerprint, times the number of vLLM s
 
 **If something looks wrong**, these are the usual messages and what to do:
 
+- **`[config] ERROR: the server does not know the model …`**: the name in `BENCH_MODEL` is not one the server
+  serves. It is `bench` when the variable is not set. Set `BENCH_MODEL` to a name the server serves. The message lists
+  them when the server can say; otherwise read `/v1/models` with the first command above.
+- **The same error at the start of `sweep.sh` or `agentx.sh`**: both scripts make this check themselves. They stop
+  before any measurement, with nothing created. Only a clear refusal of the name stops them: an unreachable server or
+  a refused key does not.
 - **`[config] WARNING: … is not vLLM's /metrics`**: the address in `BENCH_METRICS` is not vLLM's. Either it points to
   LiteLLM, which answers "HTTP 401: key required", or it exposes no `vllm:` metric at all. Put vLLM's `/metrics`
   address in `BENCH_METRICS` ([section 5.2](#52-set-the-connection)).
-- **No fingerprint, and the output says the server did not respond**: the model name, the key or the target is wrong.
-  Fix it before going on.
+- **No fingerprint, and the output says the server did not respond**: the key or the target is wrong, or the model
+  name (the `ERROR` line above names it when the server refuses it). Fix it before going on.
 - **No fingerprint and no other message**: the vLLM version does not produce it, `--fingerprint-mode none` is set, or a
   gateway drops the field. Target vLLM directly, or note the launch command with your results.
 - **"TP 1, PP 1, DP 1, EP no (or hidden…)"**: this is true for a server without parallelism, but it is also what a
@@ -829,6 +835,9 @@ were used.
 
 The test agents are three profiles (`code_review` with sub-agents, step-by-step `pentest`, `report`).
 Their tools are simulated: they return fabricated text and act on no system.
+
+Check first that `BENCH_MODEL` is a name the server serves ([section 5.4](#54-test-the-connection)). Unlike `sweep.sh`
+and `agentx.sh`, the launcher does not check it, and the tasks would fail at once.
 
 vLLM must run with the prefix cache enabled (without `--no-enable-prefix-caching`). If you have just run the synthetic
 test, restart vLLM ([section 4.2](#42-check-the-vllm-in-place)). Check that the `[config]` line says `prefix cache True`
@@ -1361,7 +1370,7 @@ yourself); `observation.query --output f.csv` writes the windows of a query.
 | `agents_test/agents.py` | the three test agents and their simulated tools |
 | `agents_test/launcher.py` | launch by levels |
 | `agents_test/common.py`, `metrics.py` | measured model call (streaming), `/metrics` reading |
-| `tools/server_config.py` | reading of the vLLM servers' configuration; GPU count deduced from the fingerprint |
+| `tools/server_config.py` | reading of the vLLM servers' configuration, GPU count deduced from the fingerprint, check that the model name is known |
 | `tools/download_tokenizer.sh`, `tools/target.env.example` | download of the default tokenizer, settings template |
 | `tools/tokenizer/` | the tokenizer files, copied by `download_tokenizer.sh` ([section 5.3](#53-copy-the-tokenizer)); not in the repository until you add them |
 | `tools/settings.py` | reads the `BENCH_*` variables |
@@ -1382,6 +1391,7 @@ durations), labels, agent names and error messages; no prompt or response conten
 
 | Symptom | Likely cause | What to do |
 |---|---|---|
+| `ERROR: the server does not know the model` (`sweep.sh` / `agentx.sh` stop at once) | `BENCH_MODEL` is not set (so it is `bench`), or is not a name the server serves | set `BENCH_MODEL` to a name the message lists, for example by loading `target.env` ([section 5.2](#52-set-the-connection)) |
 | failure at concurrency N (`sweep.sh` / `agentx.sh` stop) | see `results/<label>/c<N>.log` | often tokenizer not found ([section 5.3](#53-copy-the-tokenizer)) or target unreachable ([section 5.4](#54-test-the-connection)) |
 | `HFValidationError` or tokenizer not found in the AIPerf log | AIPerf launched by hand with `HF_HUB_OFFLINE=1`, or `BENCH_TOKENIZER` = a Hugging Face name absent from the local cache | go through `sweep.sh` with the tokenizer in `tools/tokenizer/` ([section 5.3](#53-copy-the-tokenizer)) |
 | preempt / cache / MTP columns empty | `/metrics` not read, or not vLLM's | check `BENCH_METRICS`: vLLM's address, required through LiteLLM (launch warning, [section 5.4](#54-test-the-connection)) |
@@ -1689,6 +1699,8 @@ When you are done, stop the two background processes (`jobs` lists them, then `k
   ([Appendix E](#appendix-e-try-the-bench-without-a-gpu)).
 - `sweep.sh` with AIPerf 0.12.0 and the AIPerf report, against a real vLLM 0.33.0 on a small local server (levels 1, 4
   and 16, with the preemption counter read from `/metrics`).
+- The model-name check, against a real vLLM 0.33.0 and a real LiteLLM 1.106.10: a wrong name stops the script with the
+  server's message, the right name goes on, and a missing key or no server does not stop it.
 - `agentx.sh` with a generated set of traces and a small hand-made folder
   ([section 6.5](#65-agentx-with-generated-or-your-own-traces)), against the fake server: AIPerf accepted both
   folders, replayed the sessions and the report ran.

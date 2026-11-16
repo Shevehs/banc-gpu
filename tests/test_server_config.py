@@ -1,5 +1,6 @@
 """tools/server_config.py: fingerprint decoding, configuration extraction, summary and collection against a stub."""
 import json
+import urllib.error
 
 import pytest
 
@@ -265,3 +266,148 @@ def test_main_prints_json_without_output(stub):
     s = stub(routes())
     r = helpers.run([helpers.sys.executable, "-B", "tools/server_config.py", "--url", s.url])
     assert json.loads(r.stdout)["target"] == s.url
+
+
+# ---------------------------------------------------------------- --check-model
+UNKNOWN_VLLM = (404, {"error": {"message": "The model `bench` does not exist. Valid aliases: a.",
+                                "type": "NotFoundError", "param": "model", "code": 404}}, {})
+UNKNOWN_LITELLM = (400, {"error": {"message": "/chat/completions: Invalid model name passed in model=bench.",
+                                   "type": "invalid_request_error", "param": None, "code": "400"}}, {})
+UNKNOWN_OPENAI = (404, {"error": {"message": "The model `bench` does not exist or you do not have access to it.",
+                                  "type": "invalid_request_error", "param": None, "code": "model_not_found"}}, {})
+
+
+@pytest.mark.parametrize("answer", [UNKNOWN_VLLM, UNKNOWN_LITELLM, UNKNOWN_OPENAI])
+def test_unknown_model_message_is_the_servers_own(stub, answer):
+    s = stub(routes(**{"/v1/chat/completions": answer}))
+    assert server_config.unknown_model_message(s.url, "bench") == answer[1]["error"]["message"]
+
+
+@pytest.mark.parametrize("answer", [
+    (200, {"system_fingerprint": "x"}, {}),                                          # accepted
+    (200, "not json", {}),                                                           # accepted, whatever the body
+    (401, {"error": {"message": "Authentication Error, No api key passed in."}}, {}),  # the key is refused, not the model
+    (403, {"error": {"message": "model not allowed for this key"}}, {}),             # 403 is not "unknown model"
+    (404, "Not Found", {}),                                                          # wrong address
+    (404, {"detail": "Not Found"}, {}),
+    (400, {"error": {"message": "max_tokens must be positive"}}, {}),                # another bad request
+    (400, {"error": {"message": "This model's maximum context length is 10 tokens."}}, {}),   # names the model, is not unknown
+    (500, {"error": {"message": "model does not exist (internal)"}}, {}),            # a server error
+    (302, "", {"Location": "/elsewhere"}),                                           # redirects are refused, not followed
+])
+def test_unknown_model_message_ignores_every_other_answer(stub, answer):
+    s = stub(routes(**{"/v1/chat/completions": answer}))
+    assert server_config.unknown_model_message(s.url, "bench") is None
+
+
+def test_unknown_model_message_when_nothing_answers():
+    assert server_config.unknown_model_message("http://127.0.0.1:1", "bench", timeout_s=1) is None
+
+
+def test_unknown_model_message_sends_the_key_and_one_token(stub):
+    s = stub(routes(**{"/v1/chat/completions": UNKNOWN_VLLM}))
+    server_config.unknown_model_message(s.url + "/", "bench", key="sk-1")
+    (request,) = [r for r in s.seen if r["method"] == "POST"]
+    assert request["headers"]["Authorization"] == "Bearer sk-1" and request["path"] == "/v1/chat/completions"
+    body = json.loads(request["body"])
+    assert body["model"] == "bench" and body["max_tokens"] == 1 and body["temperature"] == 0
+
+
+def test_check_model_passes_silently_for_a_known_model(stub, capsys):
+    s = stub(routes())
+    assert server_config.check_model(s.url, "bench") == 0
+    assert capsys.readouterr().err == ""
+    assert [r["path"] for r in s.seen] == ["/v1/chat/completions"]            # one request, nothing else
+
+
+def test_check_model_reports_the_server_message_and_the_served_models(stub, capsys):
+    s = stub(routes(**{"/v1/chat/completions": UNKNOWN_VLLM,
+                       "/v1/models": (200, {"data": [{"id": "a"}, {"id": "b"}, "junk", {"id": 3}]}, {})}))
+    assert server_config.check_model(s.url, "bench", key="sk-1") == 3
+    err = capsys.readouterr().err
+    assert 'ERROR: the server does not know the model "bench": The model `bench` does not exist.' in err
+    assert "Models served: a, b" in err and "…" not in err
+    assert {r["headers"].get("Authorization") for r in s.seen} == {"Bearer sk-1"}
+
+
+def test_check_model_shortens_a_long_list_of_served_models(stub, capsys):
+    models = {"data": [{"id": f"m{i}"} for i in range(12)]}
+    s = stub(routes(**{"/v1/chat/completions": UNKNOWN_VLLM, "/v1/models": (200, models, {})}))
+    assert server_config.check_model(s.url, "bench") == 3
+    assert "m9 …" in capsys.readouterr().err
+
+
+def test_check_model_without_a_list_still_reports_the_message(stub, capsys):
+    s = stub(routes(**{"/v1/chat/completions": UNKNOWN_LITELLM, "/v1/models": (401, {}, {})}))
+    assert server_config.check_model(s.url, "bench") == 3
+    err = capsys.readouterr().err
+    assert "Invalid model name" in err and "Models served" not in err
+
+
+def test_main_check_model_exit_codes(stub):
+    bad = stub(routes(**{"/v1/chat/completions": UNKNOWN_VLLM}))
+    good = stub(routes())
+    command = [helpers.sys.executable, "-B", "tools/server_config.py", "--check-model", "--model", "bench", "--url"]
+    refused = helpers.run(command + [bad.url])
+    assert refused.returncode == 3 and "does not know the model" in refused.stderr and refused.stdout == ""
+    assert helpers.run(command + [good.url]).returncode == 0
+    assert helpers.run(command + ["http://127.0.0.1:1"]).returncode == 0           # cannot ask: no verdict
+
+
+def test_main_check_model_needs_a_model(stub):
+    s = stub(routes())
+    r = helpers.run([helpers.sys.executable, "-B", "tools/server_config.py", "--check-model", "--url", s.url])
+    assert r.returncode == 2 and "--check-model needs --model" in r.stderr
+
+
+@pytest.mark.parametrize("answer,expected", [
+    ((400, {"error": {"message": "Tokenizer for model x not found"}}, {}), None),      # a 400 that names a model for another reason
+    ((400, {"error": {"message": "Chat template for model x does not exist"}}, {}), None),
+    ((400, {"error": {"message": "unknown", "code": "model_not_found"}}, {}), "unknown"),   # the code is enough, with a 400 or a 404
+    ((404, {"error": {"message": "gone", "code": "model_not_found"}}, {}), "gone"),
+    ((500, {"error": {"message": "gone", "code": "model_not_found"}}, {}), None),
+    ((404, {"error": "model bench not found"}, {}), "model bench not found"),          # error given as a plain string
+    ((404, {"error": ["model bench not found"]}, {}), '{"error": ["model bench not found"]}'),   # another shape: the text
+    ((404, {"error": ["something else"]}, {}), None),
+    ((404, "model bench not found", {}), "model bench not found"),                     # not JSON at all, but it says so
+])
+def test_unknown_model_message_edge_cases(stub, answer, expected):
+    s = stub(routes(**{"/v1/chat/completions": answer}))
+    assert server_config.unknown_model_message(s.url, "bench") == expected
+
+
+def test_unknown_model_message_fits_on_one_line(stub):
+    message = "The model `bench`\n\tdoes not exist.   " + "x" * 1000
+    s = stub(routes(**{"/v1/chat/completions": (404, {"error": {"message": message, "param": "model"}}, {})}))
+    result = server_config.unknown_model_message(s.url, "bench")
+    assert result.startswith("The model `bench` does not exist. xxx") and len(result) == 300
+    assert "\n" not in result and "\t" not in result
+
+
+def test_unknown_model_message_survives_an_error_body_that_cannot_be_read(monkeypatch):
+    class Broken:
+        def read(self, *a):
+            raise OSError("connection reset")
+
+        def close(self):
+            pass
+
+    def refuse(*a, **k):
+        raise urllib.error.HTTPError("http://x", 404, "Not Found", {}, Broken())
+    monkeypatch.setattr(server_config, "_request", refuse)
+    assert server_config.unknown_model_message("http://x", "bench") is None
+
+
+def test_collect_records_a_refused_model_and_the_summary_says_so(stub):
+    s = stub(routes(**{"/v1/chat/completions": UNKNOWN_VLLM}))
+    r = collect(s.url, [s.url + "/metrics"], model="bench")
+    assert r["fingerprint"]["response"] is False
+    assert r["fingerprint"]["unknown_model"] == UNKNOWN_VLLM[1]["error"]["message"]
+    assert "[config] ERROR: the server does not know the model: The model `bench` does not exist." in summary(r)
+    assert len([x for x in s.seen if x["method"] == "POST"]) == 1                 # the same single request
+
+
+def test_collect_of_an_accepted_model_has_no_refusal(stub):
+    s = stub(routes())
+    r = collect(s.url, [s.url + "/metrics"], model="bench")
+    assert "unknown_model" not in r["fingerprint"] and "ERROR" not in summary(r)

@@ -12,6 +12,7 @@ import pytest
 from observation.analysis import COUNTERS, GAUGES, HISTOGRAMS, LITELLM
 from observation.query import LITELLM_WITNESSES, VLLM_WITNESSES
 from tests import helpers
+from tools import server_config
 
 pytest.importorskip("aiohttp")
 
@@ -227,3 +228,9 @@ def test_custom_itl_bounds():
         text = metrics(url)
         bounds = re.findall(r'vllm:request_time_per_output_token_seconds_bucket\{[^}]*le="([^"]+)"', text)
         assert sorted(bounds, key=lambda x: float(x.replace("+Inf", "1e9"))) == ["0.0333", "0.1", "+Inf"]
+
+
+def test_the_model_check_never_stops_the_fake_server():
+    """The fake server accepts any model name: the check of sweep.sh and agentx.sh must let it through."""
+    with helpers.fake_server() as url:
+        assert server_config.check_model(url, "a-name-that-is-not-served") == 0
