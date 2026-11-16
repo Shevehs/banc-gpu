@@ -274,7 +274,7 @@ In practice:
   synthetic prompts, so the cache would inflate throughput); do **not** pass it for AgentX and the test agents
   (agents re-read their context: the cache is part of what is measured); for observation, keep your production setting.
   Changing it requires **restarting vLLM** between the synthetic load and the other modes.
-- `--max-model-len`: large enough for the mode (table below). The bench does not truncate.
+- `--max-model-len`: large enough for the mode (table below). The bench does not truncate. A request whose input is longer is refused by vLLM and counted as an error; if only the output does not fit, vLLM shortens it and the report shows a warning ([section 7.5](#75-context-shorter-than-the-traces)).
 - `--max-num-seqs`: at least the highest concurrency, otherwise the extra requests wait. AgentX: at least sessions x parallel sub-agents (inferred; keep a margin). Test agents: at least the highest level x 3 (`code_review` launches 3 sub-agents).
 - `--max-num-batched-tokens`: the number of tokens vLLM processes in one step. Keep your production value, so that
   the measurement represents it, and note it with the result: it moves the TTFT and the interactivity in opposite
