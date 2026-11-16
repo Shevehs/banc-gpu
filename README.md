@@ -276,6 +276,12 @@ In practice:
   Changing it requires **restarting vLLM** between the synthetic load and the other modes.
 - `--max-model-len`: large enough for the mode (table below). The bench does not truncate.
 - `--max-num-seqs`: at least the highest concurrency, otherwise the extra requests wait. AgentX: at least sessions x parallel sub-agents (inferred; keep a margin). Test agents: at least the highest level x 3 (`code_review` launches 3 sub-agents).
+- `--max-num-batched-tokens`: the number of tokens vLLM processes in one step. Keep your production value, so that
+  the measurement represents it, but know its effect: when it is close to the size of the prompts (2,048 tokens in the
+  synthetic test), the prompts are prefilled almost one at a time and the others wait in the queue. This shows as
+  waiting requests (`vllm:num_requests_waiting`) and as a long TTFT at high concurrency, with no preemption and a
+  KV cache that is not full. A larger value usually lets several prompts through together on a GPU server; on a machine
+  where prefill is already compute-bound, it changes little.
 
 | Mode | `--max-model-len` at least | Why |
 |---|---|---|
