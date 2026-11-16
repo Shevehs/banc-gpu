@@ -410,8 +410,7 @@ answers "HTTP 401: key required", or there is no `vllm:` metric at all.
 | `BENCH_API_KEY` | the target's key (vLLM's `--api-key`, or a LiteLLM key). Sent to the target only; it is not written to the bench's logs, but see [Appendix A](#appendix-a-security-notes) (visible in `ps` while AIPerf runs) | — |
 | `BENCH_TOKENIZER` | empty = `tools/tokenizer/` ([section 5.3](#53-copy-the-tokenizer)); otherwise the absolute path of a folder that holds `tokenizer.json` (no copy), or a Hugging Face name (AIPerf downloads it; the test agents, which only read a local folder, then estimate the sizes) | empty |
 
-The scripts read the `BENCH_*` variables. The launcher of the test agents reads only the key from the environment;
-its other settings are options ([section 6.7](#67-test-agents-stress-test)).
+Settings are read from the `BENCH_*` variables.
 
 **In a company only** (on a local workstation, nothing to do):
 
@@ -840,27 +839,18 @@ Their tools are simulated: they return fabricated text and act on no system.
 Check first that `BENCH_MODEL` is a name the server serves ([section 5.4](#54-test-the-connection)). Unlike `sweep.sh`
 and `agentx.sh`, the launcher does not check it, and the tasks would fail at once.
 
-The commands below take the target from the variables of `target.env`: load it in this terminal first
-([section 5.2](#52-set-the-connection)). These variables are a convenience, not a requirement:
+Like `sweep.sh` and `agentx.sh`, the launcher reads the variables of `target.env`: load it in this terminal first
+([section 5.2](#52-set-the-connection)). `BENCH_URL`, `BENCH_MODEL` and `BENCH_METRICS` are the defaults of `--url`,
+`--model` and `--metrics`. An option typed on the command line wins over its variable.
 
-- `--url`, `--model` and `--metrics` also accept values typed directly, for example `--url http://127.0.0.1:8000`.
-- Left out, they default to `http://127.0.0.1:8000`, the model name `bench` and `<url>/metrics`.
-- A variable that is not set is not the same as an option left out. With `BENCH_URL` unset, `--url "$BENCH_URL"` passes
-  an empty URL instead of the default, and every request fails. The same goes for `--model`.
-- `${BENCH_METRICS:-$BENCH_URL/metrics}` means `BENCH_METRICS` if it is set and not empty, otherwise
-  `$BENCH_URL/metrics`.
-
-The key has no option. The launcher reads `BENCH_API_KEY` from the environment, which `target.env` also sets.
-`BENCH_AGENT_KEYS` gives one key per profile ([section 7.5](#75-per-agent-view-through-litellm)). Without a key, the
-launcher sends the placeholder `bench`, which is fine for a vLLM started without `--api-key`.
+Without the variables, the defaults are `http://127.0.0.1:8000`, the model name `bench` and `<url>/metrics`.
 
 vLLM must run with the prefix cache enabled (without `--no-enable-prefix-caching`). If you have just run the synthetic
 test, restart vLLM ([section 4.2](#42-check-the-vllm-in-place)). Check that the `[config]` line says `prefix cache True`
 ([section 5.4](#54-test-the-connection)), then start the test agents:
 
 ```bash
-python -m agents_test.launcher --url "$BENCH_URL" --model "$BENCH_MODEL" --metrics "${BENCH_METRICS:-$BENCH_URL/metrics}" \
-  --levels "1 2 4 8" --duration 900 --warmup 300 --scale 1 --label conf-a-r1
+python -m agents_test.launcher --levels "1 2 4 8" --duration 900 --warmup 300 --scale 1 --label conf-a-r1
 ```
 
 Then read the report:
@@ -871,6 +861,9 @@ python -m report agents results-agents --target 30
 
 | Option | Meaning |
 |---|---|
+| `--url` | the target: vLLM or the LiteLLM gateway (default `BENCH_URL`, else `http://127.0.0.1:8000`) |
+| `--model` | the served model name (default `BENCH_MODEL`, else `bench`) |
+| `--metrics` | vLLM `/metrics` URLs, separated by spaces (default `BENCH_METRICS`, else `<url>/metrics`) |
 | `--levels` | numbers of simultaneous tasks; each level holds for `--duration` seconds, alternating the three profiles |
 | `--warmup` | seconds excluded from the measurement at the start of a level (at least the duration of one task); must be < `--duration` |
 | `--scale` | multiplies all sizes: 1 = contexts up to about 135,000 tokens; 0.2 for a small server with 32,768 tokens of context |
@@ -885,6 +878,10 @@ Other options:
 - `--latency-factor`: multiplies the simulated tool times (1 to measure)
 - `--no-metrics`: does not read `/metrics`
 - `--overwrite`: replaces existing results with the same label
+
+The key has no option. The launcher reads `BENCH_API_KEY` from the environment, which `target.env` also sets.
+`BENCH_AGENT_KEYS` gives one key per profile ([section 7.5](#75-per-agent-view-through-litellm)). Without a key, the
+launcher sends the placeholder `bench`, which is fine for a vLLM started without `--api-key`.
 
 The report gives an "all" row per level, then one row per profile (tasks, err, tput/GPU, inter P10, TTFT P95 in
 seconds, cache share, task duration, preemptions, MTP, maximum KV cache), and the selected level. The full table is

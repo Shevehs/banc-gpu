@@ -7,6 +7,8 @@ Example (small model, 32,768-token context):
 --url points at vLLM directly or at a gateway (LiteLLM). The server metrics (preemptions,
 cache, speculative decoding, KV cache) are read from --metrics: by default <url>/metrics, which
 is right when --url is vLLM; with a gateway, give the vLLM /metrics URLs (one per replica).
+--url, --model and --metrics default to the variables BENCH_URL, BENCH_MODEL and BENCH_METRICS (as for sweep.sh
+and agentx.sh); an option given on the command line wins.
 API key: environment variable BENCH_API_KEY (never as an argument, so it does not appear in
 logs or in the process list).
 
@@ -34,17 +36,16 @@ from tools import settings
 from tools.server_config import collect as collect_server_config, summary
 
 
-def main():
-    """Command-line entry point: run each level of concurrent tasks, then write the logs and level.json.
+def build_parser():
+    """The command-line parser.
 
-    Results go to <output>/<label>/n<N>/.
-
-    Raises:
-        SystemExit: on invalid options or an existing label without --overwrite (exit code 130 on Ctrl-C)."""
-    settings.warn_ignored_settings()
+    --url, --model and --metrics default to the variables BENCH_URL, BENCH_MODEL and BENCH_METRICS, like the shell
+    scripts (an empty variable counts as not set), then to the values below. An option given on the command line wins."""
     a = argparse.ArgumentParser()
-    a.add_argument("--url", default="http://127.0.0.1:8000")
-    a.add_argument("--model", default="bench", help="served model name (--served-model-name)")
+    a.add_argument("--url", default=settings.read_setting("URL", "http://127.0.0.1:8000"),
+                   help="target (default: BENCH_URL, else http://127.0.0.1:8000)")
+    a.add_argument("--model", default=settings.read_setting("MODEL", "bench"),
+                   help="served model name, --served-model-name (default: BENCH_MODEL, else bench)")
     a.add_argument("--agents", default="code_review,pentest,report")
     a.add_argument("--levels", default="1 2 4 8", help="concurrent tasks, separated by spaces")
     a.add_argument("--duration", type=float, default=900, help="seconds per level")
@@ -54,15 +55,26 @@ def main():
     a.add_argument("--scale", type=float, default=1.0, help="multiplies all sizes (0.2 for a model with a 32,768-token context)")
     a.add_argument("--mode", choices=["scripted", "autonomous"], default="scripted")
     a.add_argument("--latency-factor", type=float, default=1.0, help="multiplies the simulated tool latencies")
-    a.add_argument("--metrics", default=None,
-                   help="vLLM /metrics URLs, separated by spaces (default: <url>/metrics)")
+    a.add_argument("--metrics", default=settings.read_setting("METRICS"),
+                   help="vLLM /metrics URLs, separated by spaces (default: BENCH_METRICS, else <url>/metrics)")
     a.add_argument("--no-metrics", action="store_true", help="do not read /metrics")
     a.add_argument("--output", default="results-agents")
     a.add_argument("--label", required=True)
     a.add_argument("--overwrite", action="store_true", help="replace existing results with the same label")
     a.add_argument("--label-agents", action="store_true",
                    help="add metadata.agent=<profile> to each request (per-agent view via LiteLLM)")
-    p = a.parse_args()
+    return a
+
+
+def main():
+    """Command-line entry point: run each level of concurrent tasks, then write the logs and level.json.
+
+    Results go to <output>/<label>/n<N>/.
+
+    Raises:
+        SystemExit: on invalid options or an existing label without --overwrite (exit code 130 on Ctrl-C)."""
+    settings.warn_ignored_settings()
+    p = build_parser().parse_args()
     module_agents.LATENCY_FACTOR = p.latency_factor
     key = settings.api_key()
     # One key per profile (LiteLLM virtual keys, per-agent view by api_key_alias):
