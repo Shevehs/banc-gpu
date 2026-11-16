@@ -17,8 +17,9 @@ last, so that a slow target does not prevent the rest of the snapshot.
 The API key is sent only to the target: /metrics, /version and /server_info do not require it
 (vLLM only protects /v1, /v2, /inference and /cohere). Redirects are not followed.
 
-With --check-model, nothing is collected: the script only sends the one-token completion and exits with code 3,
-and the server's own message, if the server refuses the model as unknown (see unknown_model_message).
+With --check-model, the script sends only the one-token completion. If the server refuses the model as unknown, it
+prints the server's own message and the models it serves on stderr and exits with code 3. In every other case it
+exits with 0, also when the server cannot be asked (see unknown_model_message).
 
 Usage: python tools/server_config.py --url http://host:8000 [--model bench]
        [--metrics "http://h1:8000/metrics …"] [--output server_config.json]
@@ -40,6 +41,7 @@ _LABEL = re.compile(r'(\w+)="((?:[^"\\]|\\.)*)"')
 _POSITION = re.compile(r'^vllm:spec_decode_num_accepted_tokens_per_pos(?:_total)?\{[^}]*position="(\d+)"')
 _FINGERPRINT = re.compile(r'^vllm-(?P<version>.+?)(?P<per>(?:-(?:tp|pp|dp)\d+|-ep)*)-(?P<hash>[0-9a-zA-Z]{8}|nohash)$')
 _UNKNOWN_MODEL = re.compile(r"invalid model|unknown model|model\b.{0,80}(?:not found|does not exist)", re.IGNORECASE)
+_INVALID_MODEL = re.compile(r"invalid model|unknown model", re.IGNORECASE)   # the narrower wording accepted with a 400
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -76,35 +78,65 @@ def _as_dict(x):
 
 
 def _error_body(text):
-    """(message, error object) of an OpenAI-style error body {"error": {...}}; else the start of the text and {}."""
+    """(message, error object) of an OpenAI-style error body {"error": {...}}; else the start of the text and {}.
+    The message is cut to 300 characters and its white space is collapsed, so it fits on one line of a log."""
     try:
         error = json.loads(text).get("error")
     except Exception:  # noqa: BLE001
         error = None
     if isinstance(error, dict):
-        return str(error.get("message") or "")[:300], error
-    return text[:300].strip(), {}
+        message, fields = str(error.get("message") or ""), error
+    else:
+        message, fields = (error if isinstance(error, str) else text), {}
+    return " ".join(message.split())[:300], fields
+
+
+def _refusal(code, text):
+    """The server's message if this error answer (HTTP status `code`, body `text`) refuses the model as unknown.
+
+    A 404 counts when the error names the model (vLLM, OpenAI). A 400 counts only for the explicit wording of LiteLLM
+    ("Invalid model name") or the code model_not_found: other 400 answers can mention a model for another reason."""
+    message, error = _error_body(text)
+    if error.get("code") == "model_not_found":
+        return message if code in (400, 404) else None
+    if code == 404 and (error.get("param") == "model" or _UNKNOWN_MODEL.search(message)):
+        return message
+    if code == 400 and _INVALID_MODEL.search(message):
+        return message
+    return None
+
+
+def _chat_probe(url, model, key=None, timeout_s=15):
+    """The one-token completion: (the response object or None, the server's message if it refuses `model` as
+    unknown or None). Any other failure (unreachable, key refused, wrong address, server error) gives (None, None)."""
+    body = {"model": model, "max_tokens": 1, "temperature": 0, "messages": [{"role": "user", "content": "ok"}]}
+    try:
+        status, text = _request(url.rstrip("/") + "/v1/chat/completions", key, body, timeout_s)
+    except urllib.error.HTTPError as e:
+        try:
+            text = e.read(20_000).decode("utf-8", "replace")
+        except Exception:  # noqa: BLE001
+            text = ""
+        finally:
+            e.close()
+        return None, _refusal(e.code, text)
+    except Exception:  # noqa: BLE001
+        return None, None
+    try:
+        response = json.loads(text) if status == 200 else None
+    except ValueError:
+        response = None
+    return (response if isinstance(response, dict) else None), None
 
 
 def unknown_model_message(url, model, key=None, timeout_s=15):
     """The server's own message if it refuses `model` as unknown, otherwise None.
 
-    Sends the one-token completion. A server refuses an unknown model with HTTP 404 (vLLM, OpenAI: the error names
-    the model) or HTTP 400 "Invalid model name" (LiteLLM). Everything else gives None, because other checks report it:
-    the model is accepted (including by servers that accept any name), the server is unreachable, the key is refused
-    (401), the address is wrong (a 404 that does not speak about the model), or another error."""
-    body = {"model": model, "max_tokens": 1, "temperature": 0, "messages": [{"role": "user", "content": "ok"}]}
-    try:
-        _request(url.rstrip("/") + "/v1/chat/completions", key, body, timeout_s)
-    except urllib.error.HTTPError as e:
-        message, error = _error_body(e.read(20_000).decode("utf-8", "replace"))
-        names_the_model = (error.get("param") == "model" or error.get("code") == "model_not_found"
-                           or bool(_UNKNOWN_MODEL.search(message)))
-        if (e.code == 404 and names_the_model) or (e.code == 400 and _UNKNOWN_MODEL.search(message)):
-            return message
-    except Exception:  # noqa: BLE001
-        pass
-    return None
+    A server refuses an unknown model with HTTP 404 (vLLM, OpenAI) or HTTP 400 "Invalid model name" (LiteLLM).
+    Everything else gives None, because other checks report it: the model is accepted (including by servers that
+    accept any name), the server is unreachable, the key is refused (401), the address is wrong (a 404 that does not
+    speak about the model), or another error."""
+    return _chat_probe(url, model, key, timeout_s)[1]
 
 
 def served_model_ids(url, key=None):
@@ -115,7 +147,7 @@ def served_model_ids(url, key=None):
 
 
 def check_model(url, model, key=None):
-    """--check-model: exit code 3 and a message on stderr if the target refuses `model` as unknown, 0 otherwise
+    """--check-model: returns 3 and prints a message on stderr if the target refuses `model` as unknown, 0 otherwise
     (also when the target cannot be asked: the later steps report it)."""
     message = unknown_model_message(url, model, key)
     if message is None:
@@ -212,13 +244,13 @@ def collect(url, metrics=None, key=None, model=None, budget_s=45):
     if model and time.time() >= end:
         res["fingerprint"] = {"raw": None, "decoded": None, "response": None, "budget_exhausted": True}
     elif model:  # a one-token completion, last and before any measurement
-        r = _get_json(url + "/v1/chat/completions", key, {"model": model, "max_tokens": 1, "temperature": 0,
-                                                      "messages": [{"role": "user", "content": "ok"}]},
-                  timeout_s=remaining(15))
+        r, refused = _chat_probe(url, model, key, timeout_s=remaining(15))
         e = r.get("system_fingerprint") if r else None
         res["fingerprint"] = {"raw": e if isinstance(e, str) else None,
                             "decoded": read_fingerprint(e),
                             "response": r is not None}
+        if refused:
+            res["fingerprint"]["unknown_model"] = refused
     return res
 
 
@@ -275,6 +307,8 @@ def summary(r):
                          + (" (or masked if --fingerprint-mode hash)" if dec["masking_possible"] else "")
                          if dec else "")
                       + ("" if r["fingerprint"].get("response") else " (no response: check the model, key or target)"))
+        if r["fingerprint"].get("unknown_model"):
+            rows.append(f"[config] ERROR: the server does not know the model: {r['fingerprint']['unknown_model']}")
     n, expl, masked = deduced_gpus(r)
     if n:
         rows.append(f"[config] GPUs deduced: {expl}" + ("; 1 GPU per server unless --fingerprint-mode hash hides "

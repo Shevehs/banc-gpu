@@ -1,5 +1,6 @@
 """tools/server_config.py: fingerprint decoding, configuration extraction, summary and collection against a stub."""
 import json
+import urllib.error
 
 import pytest
 
@@ -358,3 +359,55 @@ def test_main_check_model_needs_a_model(stub):
     r = helpers.run([helpers.sys.executable, "-B", "tools/server_config.py", "--check-model", "--url", s.url])
     assert r.returncode == 2 and "--check-model needs --model" in r.stderr
 
+
+@pytest.mark.parametrize("answer,expected", [
+    ((400, {"error": {"message": "Tokenizer for model x not found"}}, {}), None),      # a 400 that names a model for another reason
+    ((400, {"error": {"message": "Chat template for model x does not exist"}}, {}), None),
+    ((400, {"error": {"message": "unknown", "code": "model_not_found"}}, {}), "unknown"),   # the code is enough, with a 400 or a 404
+    ((404, {"error": {"message": "gone", "code": "model_not_found"}}, {}), "gone"),
+    ((500, {"error": {"message": "gone", "code": "model_not_found"}}, {}), None),
+    ((404, {"error": "model bench not found"}, {}), "model bench not found"),          # error given as a plain string
+    ((404, {"error": ["model bench not found"]}, {}), '{"error": ["model bench not found"]}'),   # another shape: the text
+    ((404, {"error": ["something else"]}, {}), None),
+    ((404, "model bench not found", {}), "model bench not found"),                     # not JSON at all, but it says so
+])
+def test_unknown_model_message_edge_cases(stub, answer, expected):
+    s = stub(routes(**{"/v1/chat/completions": answer}))
+    assert server_config.unknown_model_message(s.url, "bench") == expected
+
+
+def test_unknown_model_message_fits_on_one_line(stub):
+    message = "The model `bench`\n\tdoes not exist.   " + "x" * 1000
+    s = stub(routes(**{"/v1/chat/completions": (404, {"error": {"message": message, "param": "model"}}, {})}))
+    result = server_config.unknown_model_message(s.url, "bench")
+    assert result.startswith("The model `bench` does not exist. xxx") and len(result) == 300
+    assert "\n" not in result and "\t" not in result
+
+
+def test_unknown_model_message_survives_an_error_body_that_cannot_be_read(monkeypatch):
+    class Broken:
+        def read(self, *a):
+            raise OSError("connection reset")
+
+        def close(self):
+            pass
+
+    def refuse(*a, **k):
+        raise urllib.error.HTTPError("http://x", 404, "Not Found", {}, Broken())
+    monkeypatch.setattr(server_config, "_request", refuse)
+    assert server_config.unknown_model_message("http://x", "bench") is None
+
+
+def test_collect_records_a_refused_model_and_the_summary_says_so(stub):
+    s = stub(routes(**{"/v1/chat/completions": UNKNOWN_VLLM}))
+    r = collect(s.url, [s.url + "/metrics"], model="bench")
+    assert r["fingerprint"]["response"] is False
+    assert r["fingerprint"]["unknown_model"] == UNKNOWN_VLLM[1]["error"]["message"]
+    assert "[config] ERROR: the server does not know the model: The model `bench` does not exist." in summary(r)
+    assert len([x for x in s.seen if x["method"] == "POST"]) == 1                 # the same single request
+
+
+def test_collect_of_an_accepted_model_has_no_refusal(stub):
+    s = stub(routes())
+    r = collect(s.url, [s.url + "/metrics"], model="bench")
+    assert "unknown_model" not in r["fingerprint"] and "ERROR" not in summary(r)

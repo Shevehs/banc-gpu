@@ -6,6 +6,7 @@ the AIPERF_* variables it receives and exits."""
 import json
 import os
 import shutil
+import sys
 
 import pytest
 
@@ -312,10 +313,47 @@ def test_unknown_model_keeps_existing_results_even_with_overwrite(sandbox, stub,
     assert r.returncode == 1 and (old / "old.txt").read_text() == "kept"
 
 
-def test_agentx_a_model_the_server_accepts_goes_on(agentx_run, stub):
-    s = stub({"/v1/chat/completions": (200, {"system_fingerprint": None}, {}), "/v1/models": SERVED})
-    result, seen, _ = agentx_run(BENCH_URL=s.url, BENCH_MODEL="served-one")
-    assert result.returncode == 0, result.stdout + result.stderr
-    assert seen is not None                                                # aiperf was reached
-    assert "does not know" not in result.stderr
+@pytest.fixture
+def aiperf_reached(tmp_path):
+    """run(script, **env) -> (result, whether aiperf was called). The checks before aiperf run for real; the fake aiperf
+    fails at once. A fake python3 makes the model check (--check-model) exit with the code FAKE_CHECK_EXIT, when set."""
+    bin_dir, work = tmp_path / "bin", tmp_path / "work"
+    bin_dir.mkdir()
+    work.mkdir()
+    marker = tmp_path / "aiperf-was-called"
+    fake = bin_dir / "aiperf"
+    fake.write_text(f"#!/bin/sh\ntouch '{marker}'\nexit 1\n")
+    fake.chmod(0o755)
+    shim = bin_dir / "python3"
+    shim.write_text('#!/bin/sh\ncase " $* " in *" --check-model "*) [ -n "$FAKE_CHECK_EXIT" ] && exit "$FAKE_CHECK_EXIT" ;; '
+                    f'esac\nexec "{sys.executable}" "$@"\n')
+    shim.chmod(0o755)
 
+    def run(script, **env):
+        environment = helpers.clean_environment(**{"PATH": f"{bin_dir}:{os.environ['PATH']}", "BENCH_ROOT_DIR": str(work / "results"),
+                                                    "BENCH_URL": "http://127.0.0.1:1", **env})
+        result = helpers.run([BASH, str(helpers.ROOT / script), "lbl"], cwd=work, env=environment, timeout=120)
+        return result, marker.exists()
+    return run
+
+
+@pytest.mark.parametrize("script", [SWEEP, AGENTX])
+def test_a_model_the_server_accepts_goes_on(aiperf_reached, stub, script):
+    s = stub({"/v1/chat/completions": (200, {"system_fingerprint": None}, {}), "/v1/models": SERVED})
+    result, reached = aiperf_reached(script, BENCH_URL=s.url, BENCH_MODEL="served-one")
+    assert reached and "does not know" not in result.stderr
+
+
+@pytest.mark.parametrize("script", [SWEEP, AGENTX])
+@pytest.mark.parametrize("code,stops", [("0", False), ("1", False), ("2", False), ("127", False), ("3", True)])
+def test_only_exit_code_3_of_the_model_check_stops_the_script(aiperf_reached, script, code, stops):
+    result, reached = aiperf_reached(script, FAKE_CHECK_EXIT=code)
+    assert reached is not stops
+    assert ("Stopped before any measurement" in result.stdout) is stops
+
+
+@pytest.mark.parametrize("script", [SWEEP, AGENTX])
+def test_the_key_of_the_shell_reaches_the_model_check(sandbox, stub, script):
+    s = stub({"/v1/chat/completions": VLLM_UNKNOWN_MODEL, "/v1/models": SERVED})
+    sandbox(script, "lbl", BENCH_URL=s.url, BENCH_API_KEY="sk-x")
+    assert {r["headers"].get("Authorization") for r in s.seen} == {"Bearer sk-x"}
