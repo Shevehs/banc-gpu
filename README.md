@@ -629,7 +629,9 @@ The full measurement is therefore done on GPU servers. On a small model (Mac, 32
 - no truncation of inputs;
 - delays between turns replayed;
 - first-turn prefix scrambled, so that a run does not benefit from the previous run's cache;
-- trace set **pinned** (`semianalysisai/cc-traces-weka-062126`) so that the run is marked valid.
+- the trace set is one of the published versions that AIPerf accepts (the bench uses `semianalysisai/cc-traces-weka-062126`,
+  the most recent in AIPerf 0.12.0). A run on another set, or on a local copy AIPerf cannot check, is marked
+  `submission_valid=false` and is not comparable.
 
 The traces are published on Hugging Face. By default, `agentx.sh` **downloads them itself** on the first run (about
 1.85 GB, Internet access required), and the run is marked valid. Without Internet access, see
