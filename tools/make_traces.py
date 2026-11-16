@@ -222,16 +222,17 @@ def main(argv=None):
     parser.add_argument("--preset", choices=sorted(PRESETS), default="small",
                         help="size of the set: " + ", ".join(f"{p.name} (up to {p.max_context:,} tokens)"
                                                               for p in PRESETS.values()))
-    parser.add_argument("--output", required=True, help="folder to write (one JSON file per session)")
-    parser.add_argument("--sessions", type=int, default=30, help="number of sessions (default 30)")
+    parser.add_argument("--output", required=True,
+                        help="folder to write, created if missing (one trace-NNNN.json file per session)")
+    parser.add_argument("--sessions", type=int, default=30, help="number of sessions, at least 1 (default 30)")
     parser.add_argument("--seed", type=int, default=1, help="the same seed gives the same set (default 1)")
     parser.add_argument("--max-context", type=int, default=None,
-                        help="tokens: replaces the preset's longest call (input + output)")
+                        help="tokens (4,096 to 1,000,000): replaces the preset's limit for one call (input + output)")
     parser.add_argument("--no-subagents", action="store_true", help="sessions without sub-agents")
     parser.add_argument("--validate", action="store_true",
-                        help="check the traces with AIPerf's model before writing (needs AIPerf)")
+                        help="check the traces with AIPerf's model before writing; stops without writing if AIPerf is missing")
     parser.add_argument("--overwrite", action="store_true",
-                        help="replace the trace-*.json files of a folder that already holds traces")
+                        help="replace the trace-*.json files of the folder; without it, a folder with any .json file is refused")
     args = parser.parse_args(argv)
 
     preset = PRESETS[args.preset]
@@ -250,7 +251,8 @@ def main(argv=None):
         print("Traces validated with AIPerf's model.")
     out.mkdir(parents=True, exist_ok=True)
     for old in out.glob("trace-*.json"):                      # agentx.sh replays every .json of the folder
-        old.unlink()
+        if old.is_file():
+            old.unlink()
     others = [f.name for f in out.glob("*.json")]
     if others:
         print(f"Warning: {len(others)} other .json file(s) in {out} will be replayed too.", file=sys.stderr)
