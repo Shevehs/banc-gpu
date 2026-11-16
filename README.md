@@ -17,7 +17,7 @@ Two families of measurements:
 
 > **Status.** Written from the code of **vLLM at commit [`7f855f6`](https://github.com/vllm-project/vllm/tree/7f855f605892656ebf7265642e5d22a34a6ae731)**
 > and tested with **AIPerf 0.12.0** against a fake server ([Appendix E](#appendix-e-try-the-bench-without-a-gpu)).
-> Against a real vLLM it has only been tried on a Mac (vllm-metal, vLLM 0.33.0), **not yet on a GPU server**.
+> Against a real vLLM it has only been tried on a small local server (vllm-metal, vLLM 0.33.0), **not yet on a GPU server**.
 > On your first real run, compare your outputs with the example in [section 5.4](#54-test-the-connection).
 > Unfamiliar terms: see [Appendix G](#appendix-g-glossary). What is verified, documented or still unchecked is
 > listed in [Appendix F](#appendix-f-validation-status).
@@ -136,7 +136,7 @@ second one builds the report. The number of GPUs is deduced from the server's co
 python -m report aiperf results --target 30
 ```
 
-The report prints one line per level, then the selected point. This is a real output, from a small test on a Mac
+The report prints one line per level, then the selected point. This is a real output, from a small test on a small server
 (your figures will differ):
 
 ```
@@ -579,7 +579,7 @@ says so if it contradicts the fingerprint.
 
 - the fingerprint is missing (the report then stops with an error and the reason);
 - the fingerprint carries no parallelism degree while the server has several GPUs (`--fingerprint-mode hash` hides
-  them; a WARNING says so, and on a Mac this warning is expected);
+  them; a WARNING says so, and with a single GPU this warning is expected);
 - the replicas differ;
 - you use prefill context parallelism (PCP), which is absent from the fingerprint and read only when `/server_info`
   exists;
@@ -617,7 +617,7 @@ and hardware.
 
 Contexts are long (a median of about 142,000 input tokens, according to
 [InferenceX](https://inferencex.semianalysis.com/blog/agentic-benchmark-agent-benchmark-guide)) and are not truncated.
-The full measurement is therefore done on GPU servers. On a small model (Mac, 32,768 tokens), no trace fits
+The full measurement is therefore done on GPU servers. On a small server whose context is limited to 32,768 tokens, no trace fits
 ([section 6.5](#65-context-shorter-than-the-traces)).
 
 **What the scenario enforces** (documented in the AIPerf 0.12.0 code,
@@ -701,10 +701,10 @@ BENCH_MAX_CONTEXT=129024 BENCH_DURATION=1800 ./agentx.sh agentx-128k-r1 "1 2 4 8
 
 The filter applies to the **maximum** context of each session.
 
-**Not on a small model**: at 30,720 tokens (vLLM at 32,768), none of the 393 traces fits (observed during the trial on a
-Mac: "No eligible traces … scanned 393"). AIPerf then stops before the first level, and the script says so. On a Mac,
-measure agent load with the test agents ([section 6.6](#66-test-agents-stress-test)); AgentX is measured on GPU
-servers.
+**Not on a small server**: at 30,720 tokens (vLLM at 32,768), none of the 393 traces fits (observed during a trial on a
+small server: "No eligible traces … scanned 393"). AIPerf then stops before the first level, and the script says so. On a
+small server, measure agent load with the test agents ([section 6.6](#66-test-agents-stress-test)); AgentX is measured on
+GPU servers.
 
 **Leave a margin** below `--max-model-len` (here 2,048 tokens). The filter compares the lengths recorded in the traces,
 whereas the server also counts the chat template (roles, separators; inferred).
@@ -740,7 +740,7 @@ python -m report agents results-agents --target 30
 |---|---|
 | `--levels` | numbers of simultaneous tasks; each level holds for `--duration` seconds, alternating the three profiles |
 | `--warmup` | seconds excluded from the measurement at the start of a level (at least the duration of one task); must be < `--duration` |
-| `--scale` | multiplies all sizes: 1 = contexts up to about 135,000 tokens; 0.2 for a small model with 32,768 of context |
+| `--scale` | multiplies all sizes: 1 = contexts up to about 135,000 tokens; 0.2 for a small server with 32,768 tokens of context |
 | `--agents` | subset of `code_review,pentest,report` |
 | `--mode` | `scripted` (default, measurement: tools and lengths enforced) or `autonomous` (checks tool calling, does not measure) |
 | `--output` | results folder (default `results-agents`, relative to the current folder; runs started from the [interface](#9-interface) use `agents_test/results-agents`) |
@@ -1284,7 +1284,7 @@ durations), labels, agent names and error messages; no prompt or response conten
 | the interface says a run is in progress and so no one-token completion (no fingerprint) | connection test during a run | normal: a one-token completion would skew the measurement |
 | AgentX: "Scenario invariants violated" | `BENCH_DURATION` < 900 s, or AIPerf launched by hand on local traces | `BENCH_DURATION` ≥ 900 (or `BENCH_SHORT_RUN=1` for a simple check); go through `agentx.sh` |
 | AgentX: `err` > 0 in the report | requests longer than `--max-model-len` (AIPerf removes them from its metrics; the report counts them in `err`) | raise it; `BENCH_AGENTX_VARIANT=256k` for a model at about 256,000 tokens; or `BENCH_MAX_CONTEXT` about `--max-model-len` − 2,048 to discard traces that are too long ([section 6.5](#65-context-shorter-than-the-traces)) |
-| AgentX: no trace fits | `BENCH_MAX_CONTEXT` below the context of every trace | raise `BENCH_MAX_CONTEXT` and `--max-model-len`; on a small model AgentX is not feasible ([section 6.5](#65-context-shorter-than-the-traces)) |
+| AgentX: no trace fits | `BENCH_MAX_CONTEXT` below the context of every trace | raise `BENCH_MAX_CONTEXT` and `--max-model-len`; on a small server AgentX is not feasible ([section 6.5](#65-context-shorter-than-the-traces)) |
 | AgentX: `timed out waiting for dataset configuration` | loading the traces takes longer than AIPerf's timeout | raise `AIPERF_DATASET_CONFIGURATION_TIMEOUT` ([section 6.3](#63-agentx-stress-test)) |
 | `ERROR: number of GPUs unknown` from a report | fingerprint missing, or `BENCH_METRICS` did not point to vLLM during the run | `--gpu N` ("GPU" field of the interface) |
 | LiteLLM in Docker: connection error to vLLM | `127.0.0.1` refers to the container, not the machine | `api_base: http://host.docker.internal:<vLLM port>/v1` ([Docker Desktop](https://docs.docker.com/desktop/features/networking/networking-how-tos/)) |
@@ -1577,14 +1577,14 @@ When you are done, stop the two background processes (`jobs` lists them, then `k
 
 - The test agents, the two kinds of report and the test suite, against the fake server
   ([Appendix E](#appendix-e-try-the-bench-without-a-gpu)).
-- `sweep.sh` with AIPerf 0.12.0 and the AIPerf report, against a real vLLM 0.33.0 on a Mac (levels 1, 4 and 16, with
+- `sweep.sh` with AIPerf 0.12.0 and the AIPerf report, against a real vLLM 0.33.0 on a small local server (levels 1, 4 and 16, with
   the preemption counter read from `/metrics`). `agentx.sh` has not been run end to end with AIPerf since the latest
   changes to the scripts.
 - The observation against the fake server, with Prometheus 3.7.3 ([section 7.3](#73-query-the-observation)).
 - The per-agent view with a real LiteLLM 1.109.1: metric names, types and labels, and the Prisma and
   `prometheus_client` requirements ([section 7.5](#75-per-agent-view-through-litellm),
   [Appendix B](#appendix-b-litellm-per-key-setup-and-install-details)).
-- On a Mac with a real vLLM 0.33.0: the connection, the fingerprint, `/metrics` and the loading of the AgentX traces.
+- On a small local server with a real vLLM 0.33.0: the connection, the fingerprint, `/metrics` and the loading of the AgentX traces.
 
 **Documented** (in the code or the help text of the tools)
 
