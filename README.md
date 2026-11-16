@@ -286,7 +286,7 @@ In practice:
 | Mode | `--max-model-len` at least | Why |
 |---|---|---|
 | Synthetic | input + output + chat template (e.g. 2,048 + 256, plus a margin) | requests have a fixed length |
-| AgentX | the longest trace context: up to about 990,000 input tokens (full set), 256,000 (`256k` variant); otherwise set `BENCH_MAX_CONTEXT` ([section 7.5](#75-context-shorter-than-the-traces)) | AIPerf does not truncate AgentX traces |
+| AgentX | the longest trace context, input **plus output**: up to about 990,000 input tokens (full set), 256,000 (`256k` variant), plus the output and a margin for the chat template; otherwise set `BENCH_MAX_CONTEXT` ([section 7.5](#75-context-shorter-than-the-traces)) | AIPerf does not truncate AgentX traces |
 | Test agents | about 135,000 x `--scale`, plus the output | contexts reach about 135,000 tokens at scale 1 (estimated with the Qwen vocabulary) |
 | Observation | not applicable | the bench sends nothing |
 
