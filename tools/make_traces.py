@@ -2,12 +2,12 @@
 
 The sets published by SemiAnalysis hold sessions of up to about one million tokens, which a small server cannot
 serve. This script writes sessions of a size you choose, shaped like the real ones, so that the same AgentX-style
-replay runs on any machine.
+replay can run on a small server and on a large one.
 
-What a session looks like (measured on the published set `cc-traces-weka-062126`):
+What a session looks like (the shape of the published set `cc-traces-weka-062126`):
 - a very small first call, then a jump to the working context, then calls that each extend the previous context
   with new cache blocks (about 90% of consecutive calls repeat the whole list of hash IDs of the previous one);
-- `in` is always 64 x the number of hash IDs (the loader counts input tokens in cache blocks of 64 tokens);
+- `in` is 64 x the number of hash IDs, as in the published set (AIPerf also accepts other values);
 - most calls are streaming, with a client think time between calls (a median of a few seconds, long tail);
 - some sessions spawn sub-agents, which start from a shared prefix and run their own short calls.
 
@@ -19,8 +19,10 @@ Usage:
     python tools/make_traces.py --preset small --output traces-small
     BENCH_AGENTX_DIR=traces-small ./agentx.sh small-r1 "1 2 4"
 
-Note: from 8 traces on, AIPerf rebuilds the prompts with several processes. On some machines this step stays idle
-forever. If the run never starts, stop it and set AIPERF_DATASET_WEKA_PARALLEL_WORKERS=1 (serial loading).
+Note: from 8 traces on, AIPerf rebuilds the prompts with several processes, and this step can hang. If the run never
+starts, kill the AIPerf processes and set AIPERF_DATASET_WEKA_PARALLEL_WORKERS=1 (serial loading).
+
+The format, and how to build traces from your own logs, are described in tools/traces.md.
 """
 import argparse
 import json
