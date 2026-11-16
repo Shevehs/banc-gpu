@@ -3,7 +3,7 @@
 # with AIPerf's locked scenario (--scenario inferencex-agentx-mvp), one trial per concurrency level
 # (number of sessions replayed at the same time). Analysis: python -m report aiperf results-agentx ...
 # Usage: ./agentx.sh LABEL "1 2 4 8"
-# Settings via environment variables (README, section 7.3). Same connection fields as sweep.sh.
+# Settings via environment variables (README, section 6.3). Same connection fields as sweep.sh.
 # Written for bash 3.2 (macOS) and later; tested with bash 5.
 set -euo pipefail
 LABEL="${1:?give a label, e.g. agentx-r1}"
