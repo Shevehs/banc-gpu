@@ -141,9 +141,9 @@ function Configuration({ c, setC, prom, setProm, test, setTest, defaults }) {
   // BENCH_API_KEY of the terminal never reaches this page: the server uses it, but only for the target BENCH_URL.
   const keyFromTerminal = !!(defaults?.api_key_set && defaults.api_key_url);
   const keyHelp = keyFromTerminal
-    ? `optional; never written to the logs. Left empty, the key of the terminal (BENCH_API_KEY) is used while the target URL is ${defaults.api_key_url}`
-    : defaults?.api_key_set ? "optional; never written to the logs. BENCH_API_KEY is set in the terminal but BENCH_URL is not: that key is not used"
-    : "optional; never written to the logs";
+    ? `key of the target (vLLM or LiteLLM), optional; never written to the logs. Left empty, BENCH_API_KEY is used while the target URL is ${defaults.api_key_url}`
+    : defaults?.api_key_set ? "key of the target (vLLM or LiteLLM), optional; never written to the logs. BENCH_API_KEY is set but BENCH_URL is not: that key is not used"
+    : "key of the target (vLLM or LiteLLM), optional; never written to the logs";
   const testConnection = async () => {
     setTest({ pending: true });
     try {

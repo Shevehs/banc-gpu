@@ -1,6 +1,6 @@
 """Read the bench's environment settings. Only BENCH_<NAME> variables are read.
 
-Names: BENCH_URL, BENCH_MODEL, BENCH_METRICS, BENCH_API_KEY, BENCH_TOKENIZER, BENCH_LITELLM_KEY,
+Names: BENCH_URL, BENCH_MODEL, BENCH_METRICS, BENCH_API_KEY (the key of the target), BENCH_TOKENIZER,
 BENCH_AGENT_KEYS (and, for the shell scripts, BENCH_ISL, BENCH_OSL, BENCH_DURATION, ...).
 Variables from older versions or with generic names (API_KEY, URL, ...) are NOT read, because a generic
 name exported for another tool must never be sent to the target. `warn_ignored_settings` tells the user
@@ -15,7 +15,7 @@ IGNORED = {
     "URL": "BENCH_URL", "MODEL": "BENCH_MODEL", "METRICS": "BENCH_METRICS", "API_KEY": "BENCH_API_KEY",
     "TOKENIZER": "BENCH_TOKENIZER", "MODELE": "BENCH_MODEL", "METRIQUES": "BENCH_METRICS", "CLE_API": "BENCH_API_KEY",
     "BANC_URL": "BENCH_URL", "BANC_MODELE": "BENCH_MODEL", "BANC_METRIQUES": "BENCH_METRICS",
-    "BANC_CLE_API": "BENCH_API_KEY", "BANC_TOKENIZER": "BENCH_TOKENIZER", "BANC_CLE_LITELLM": "BENCH_LITELLM_KEY",
+    "BANC_CLE_API": "BENCH_API_KEY", "BANC_TOKENIZER": "BENCH_TOKENIZER",
     "BANC_CLES_AGENTS": "BENCH_AGENT_KEYS", "BANC_JETON": "BENCH_TOKEN",
     "ISL": "BENCH_ISL", "OSL": "BENCH_OSL", "DUREE": "BENCH_DURATION", "DURATION": "BENCH_DURATION",
     "TEMPERATURE": "BENCH_TEMPERATURE", "RACINE": "BENCH_ROOT_DIR", "ROOT_DIR": "BENCH_ROOT_DIR",
