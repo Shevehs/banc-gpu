@@ -7,6 +7,7 @@ model outputs), the number of steps, the parallelism and the tool latencies matt
 Default sizes (ASSUMPTIONS, to adapt to the target workload): code review ≈ 135K tokens per
 sub-agent, 3 sub-agents; step-by-step pentest ≈ 69K, 1 thread; report ≈ 135K, 1 thread
 (estimated with the Qwen vocabulary).
+The sizes of the profiles are in profiles.py.
 All sizes are multiplied by the scale factor (--scale, e.g. 0.2 on a small server).
 """
 import random

@@ -881,7 +881,7 @@ python -m report agents results-agents --target 30
 | `--warmup` | seconds excluded from the measurement at the start of a level (at least the duration of one task); must be < `--duration` |
 | `--scale` | multiplies all sizes: 1 = contexts up to about 135,000 tokens; 0.2 for a small server with 32,768 tokens of context |
 | `--agents` | subset of `code_review,pentest,report` |
-| `--mode` | `scripted` (default, measurement: tools and lengths enforced) or `autonomous` (checks tool calling, does not measure: the model decides whether to call a tool, and an agent stops at the first call without one; `python -m report agents` warns when agents made far fewer calls than their profile) |
+| `--mode` | `scripted` (default, measurement: tools and lengths enforced) or `autonomous` (checks tool calling, does not measure: the model decides whether to call a tool, so an agent can stop early) |
 | `--output` | results folder (default `results-agents`, relative to the current folder; runs started from the [interface](#9-interface) use `agents_test/results-agents`) |
 | `--label-agents` | adds `metadata.agent` = profile name to each request (per-agent view through LiteLLM, [section 7.5](#75-per-agent-view-through-litellm)) |
 
@@ -899,6 +899,10 @@ launcher sends the placeholder `bench`, which is fine for a vLLM started without
 The report gives an "all" row per level, then one row per profile (tasks, err, tput/GPU, inter P10, TTFT P95 in
 seconds, cache share, task duration, preemptions, MTP, maximum KV cache), and the selected level. The full table is
 `results-agents/table_agents.csv`. The report accepts `--require-metrics` but not `--ttft-max`.
+
+For a run in `autonomous` mode, the report prints a `WARNING` when an agent made less than half the calls of its
+profile. The model then stopped calling tools, and the contexts are shorter than the profile. Use `scripted` mode to
+measure.
 
 **To check**: the cache column should be clearly above 0 for `pentest` and `report`.
 
@@ -1414,6 +1418,7 @@ of the chosen view.
 | `observation/query.py`, `analysis.py` | observation mode: Prometheus queries (`python -m observation.query`), indicators and verdicts (windows, periods, agents) |
 | `tools/prometheus.yml.example`, `prometheus-fake.yml` | Prometheus configuration (production; check without a GPU) |
 | `agents_test/agents.py` | the three test agents and their simulated tools |
+| `agents_test/profiles.py` | sizes of the three profiles, and the number of calls of one task |
 | `agents_test/launcher.py` | launch by levels |
 | `agents_test/common.py`, `metrics.py` | measured model call (streaming), `/metrics` reading |
 | `tools/server_config.py` | reading of the vLLM servers' configuration, GPU count deduced from the fingerprint, check that the model name is known |
@@ -1445,6 +1450,7 @@ durations), labels, agent names and error messages; no prompt or response conten
 | `err` > 0 | requests refused or timed out | key, model name, `--max-model-len`, `--max-num-seqs` |
 | agent throughput "—" | empty measurement window | `--warmup` shorter than `--duration`, levels long enough |
 | cache about 0 for the agents | prefix cache disabled | restart vLLM without `--no-enable-prefix-caching` |
+| `WARNING … autonomous mode … made N calls per task instead of M` (`report agents`) | the model stopped calling tools: output cap too small for a tool call at this scale, or vLLM started without `--enable-auto-tool-choice --tool-call-parser <parser>` | add the options ([section 4](#4-requirements-and-installation), optional options), or use `scripted` mode |
 | TP/PP/DP "n/a" in the interface | no fingerprint | correct model and key; default `--fingerprint-mode`; through a gateway, vLLM's address in `BENCH_METRICS`; or target vLLM directly |
 | the interface says a run is in progress and so no one-token completion (no fingerprint) | connection test during a run | normal: a one-token completion would skew the measurement |
 | AgentX: "Scenario invariants violated" | `BENCH_DURATION` < 900 s, or AIPerf launched by hand on local traces | `BENCH_DURATION` ≥ 900 (or `BENCH_SHORT_RUN=1` for a simple check); go through `agentx.sh` |
