@@ -197,9 +197,9 @@ def same_url(a, b):
 def target_key(p):
     """The API key to use for the target of the form `p`.
 
-    The key typed in the form wins. Otherwise BENCH_API_KEY of the terminal that started the interface is used, but only
-    when the form's target URL is the BENCH_URL of that terminal: a key meant for one server must never go to another.
-    The key never goes to the browser. An unusable key in the terminal is ignored."""
+    The key typed in the form wins. Otherwise BENCH_API_KEY (the terminal that started the interface, else target.env) is used, but only
+    when the form's target URL is the BENCH_URL from the same place: a key meant for one server must never go to
+    another. The key never goes to the browser. An unusable key is ignored."""
     key = valid_key(p.get("api_key"))
     if key:
         return key
@@ -645,7 +645,7 @@ async def observation(req):
 
 async def defaults(req):
     """GET /api/defaults: the starting values of the form, from the BENCH_* variables of the terminal that started the
-    interface (the same variables as target.env).
+    interface, completed at start-up by the plain `export BENCH_*=value` lines of target.env.
 
     Only what is not secret is returned: the target, the model, the metrics URLs and the tokenizer. The keys never go to
     the browser: `api_key_set` only says that BENCH_API_KEY exists, and `api_key_url` which target it applies to."""
@@ -742,6 +742,7 @@ def main():
     a = argparse.ArgumentParser(); a.add_argument("--port", type=int, default=8765)
     p = a.parse_args()
     PORT[0] = p.port
+    settings.load_target_env(ROOT / "target.env")   # the form starts with target.env, loaded or not in this terminal
     app = web.Application(middlewares=[guard])
     app.on_shutdown.append(clean_shutdown)
     app.add_routes([web.post("/api/runs", launch), web.get("/api/runs", list_runs),

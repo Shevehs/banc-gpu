@@ -386,6 +386,7 @@ cp tools/target.env.example target.env     # target.env is ignored by git: it co
 ```
 
 Fill in `target.env` (keep the `export`s), then load it in each new terminal: `source target.env`.
+The interface ([section 9](#9-interface)) also reads this file when it starts, so it does not need the `source`.
 
 **Why `BENCH_METRICS` must point to vLLM**
 
@@ -1337,9 +1338,11 @@ Open **the exact address printed** (it contains an access token). On a remote VM
   - The ranges of the runs started from the interface (plus one minute) are discarded ("run in progress"). Those of
     runs started by hand are only discarded if you give them to `observation.query --exclude`.
 
-The fields are not saved. They start with the values of the terminal that started the interface (`BENCH_URL`,
-`BENCH_MODEL`, `BENCH_METRICS`, `BENCH_TOKENIZER`): load `target.env` before starting it. Keys never go to the page.
-`BENCH_API_KEY` is used when the API key field is empty, and only while the target URL is the `BENCH_URL` one. The
+The fields are not saved. They start with `BENCH_URL`, `BENCH_MODEL`, `BENCH_METRICS` and `BENCH_TOKENIZER`, taken
+from the terminal that started the interface or, for what the terminal does not set, from `target.env` at the root
+of the repository. The file is read when the interface starts, never run: only plain `export BENCH_NAME=value`
+lines count (no `$`, no backticks, no empty value). Restart the interface after editing it. Keys never go to the page.
+`BENCH_API_KEY` (terminal or `target.env`) is used when the API key field is empty, and only while the target URL is the `BENCH_URL` one. The
 runs themselves do not inherit the other variables of the terminal.
 
 It accepts only:
@@ -1426,6 +1429,7 @@ durations), labels, agent names and error messages; no prompt or response conten
 | Symptom | Likely cause | What to do |
 |---|---|---|
 | `ERROR: the server does not know the model` (`sweep.sh` / `agentx.sh` stop at once) | `BENCH_MODEL` is not set (so it is `bench`), or is not a name the server serves | set `BENCH_MODEL` to a name the message lists, for example by loading `target.env` ([section 5.2](#52-set-the-connection)) |
+| the interface form starts empty although `target.env` is filled in | the interface reads only plain `export BENCH_NAME=value` lines (`$`, backticks and empty values are skipped), once, when it starts | write plain values, then restart the interface |
 | failure at concurrency N (`sweep.sh` / `agentx.sh` stop) | see `results/<label>/c<N>.log` | often tokenizer not found ([section 5.3](#53-copy-the-tokenizer)) or target unreachable ([section 5.4](#54-test-the-connection)) |
 | `HFValidationError` or tokenizer not found in the AIPerf log | AIPerf launched by hand with `HF_HUB_OFFLINE=1`, or `BENCH_TOKENIZER` = a Hugging Face name absent from the local cache | go through `sweep.sh` with the tokenizer in `tools/tokenizer/` ([section 5.3](#53-copy-the-tokenizer)) |
 | preempt / cache / MTP columns empty | `/metrics` not read, or not vLLM's | check `BENCH_METRICS`: vLLM's address, required through LiteLLM (launch warning, [section 5.4](#54-test-the-connection)) |
