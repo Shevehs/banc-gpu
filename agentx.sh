@@ -88,6 +88,19 @@ if [ -n "$TOKENIZER" ] && [ -d "$TOKENIZER" ] && [ -z "${AIPERF_DATASET_WEKA_PAR
   export AIPERF_DATASET_WEKA_PARALLEL_WORKERS=1
   echo "   Local tokenizer folder: the traces are loaded in a single process (AIPerf's parallel loading cannot use it)."
 fi
+# AIPerf older than 0.13 loses the results of every level after the first when the levels share a dataset: it reads its
+# dataset cache so fast that the process which records the results is not yet listening, and that process then waits for an
+# announcement that never comes (it gives up after AIPERF_DATASET_CONFIGURATION_TIMEOUT). Fixed in AIPerf 0.13.0. With an
+# older version and several levels, turn the cache off (each level then rebuilds its dataset), unless the variable is set
+# in the terminal.
+LEVELS_COUNT="$(printf '%s\n' $CONCURRENCIES | grep -c .)"
+if [ "$LEVELS_COUNT" -gt 1 ] && [ -z "${AIPERF_DATASET_MMAP_CACHE_ENABLED:-}" ]; then
+  case "$(aiperf --version 2>/dev/null | tail -n 1 | tr -d '[:space:]')" in
+    0.[0-9].*|0.1[0-2].*)
+      export AIPERF_DATASET_MMAP_CACHE_ENABLED=false
+      echo "   AIPerf older than 0.13: its dataset cache is turned off, because it loses the results of the levels after the first (fixed in 0.13.0)." ;;
+  esac
+fi
 # Loading the 393 traces (download included on the first run) takes several minutes, more than the 300 s
 # AIPerf allows by default (AIPERF_DATASET_CONFIGURATION_TIMEOUT; the profile configuration timeout,
 # AIPERF_SERVICE_PROFILE_CONFIGURE_TIMEOUT, must be at least equal). Values set in the terminal are respected.

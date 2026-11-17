@@ -187,23 +187,25 @@ TIMEOUTS = ("AIPERF_DATASET_CONFIGURATION_TIMEOUT", "AIPERF_SERVICE_PROFILE_CONF
 
 @pytest.fixture
 def agentx_run(tmp_path):
-    """run(**env) -> (result, {AIPERF_* variable: value seen by aiperf}, results dir); the fake aiperf exits with 0."""
+    """run(levels="1", **env) -> (result, {AIPERF_* variable: value seen by aiperf}, results dir); the fake aiperf exits
+    with 0 and answers --version with FAKE_AIPERF_VERSION (default 0.13.0; an empty value means no answer)."""
     bin_dir, work = tmp_path / "bin", tmp_path / "work"
     bin_dir.mkdir()
     work.mkdir()
     dump = tmp_path / "aiperf-env"
     fake = bin_dir / "aiperf"
-    fake.write_text(f"#!/bin/sh\nenv | grep '^AIPERF_' | sort > '{dump}'\nexit 0\n")
+    fake.write_text('#!/bin/sh\nif [ "$1" = "--version" ]; then echo "${FAKE_AIPERF_VERSION-0.13.0}"; exit 0; fi\n'
+                    f"env | grep '^AIPERF_' | sort > '{dump}'\nexit 0\n")
     fake.chmod(0o755)
     system = bin_dir / "uname"                      # the operating system is chosen by the test: FAKE_UNAME (default Darwin)
     system.write_text('#!/bin/sh\necho "${FAKE_UNAME:-Darwin}"\n')
     system.chmod(0o755)
 
-    def run(*, script=None, **env):
+    def run(*, script=None, levels="1", **env):
         environment = helpers.clean_environment(**{"PATH": f"{bin_dir}:{os.environ['PATH']}", "BENCH_ROOT_DIR": str(work / "results"),
                                                     "BENCH_URL": "http://127.0.0.1:1", "BENCH_SHORT_RUN": "1",
                                                     "BENCH_DURATION": "5", **env})
-        result = helpers.run([BASH, str(script or helpers.ROOT / AGENTX), "lbl", "1"], cwd=work, env=environment, timeout=120)
+        result = helpers.run([BASH, str(script or helpers.ROOT / AGENTX), "lbl", levels], cwd=work, env=environment, timeout=120)
         seen = dict(x.split("=", 1) for x in dump.read_text().splitlines()) if dump.exists() else None
         return result, seen, work / "results" / "lbl"
     return run
@@ -357,3 +359,35 @@ def test_the_key_of_the_shell_reaches_the_model_check(sandbox, stub, script):
     s = stub({"/v1/chat/completions": VLLM_UNKNOWN_MODEL, "/v1/models": SERVED})
     sandbox(script, "lbl", BENCH_URL=s.url, BENCH_API_KEY="sk-x")
     assert {r["headers"].get("Authorization") for r in s.seen} == {"Bearer sk-x"}
+
+
+# ---------------------------------------------------------------- AIPerf older than 0.13 loses the levels after the first
+CACHE = "AIPERF_DATASET_MMAP_CACHE_ENABLED"
+
+
+@pytest.mark.parametrize("version,levels,terminal,expected", [
+    ("0.12.0", "1 2 4", None, "false"),           # an old AIPerf and several levels: the dataset cache is turned off
+    ("0.12.3", "1 2", None, "false"),
+    ("0.12.0.dev20261001", "1 2", None, "false"),
+    ("0.10.0", "1 2", None, "false"),
+    ("0.9.1", "1 2", None, "false"),
+    ("0.12.0", "1", None, None),                  # a single level is not affected
+    ("0.12.0", "  4  ", None, None),
+    ("0.13.0", "1 2 4", None, None),              # fixed in 0.13.0: nothing is changed
+    ("0.13.0.dev20261113", "1 2", None, None),
+    ("0.14.0", "1 2", None, None),
+    ("1.0.0", "1 2", None, None),
+    ("", "1 2", None, None),                      # AIPerf does not say its version: nothing is changed
+    ("not a version", "1 2", None, None),
+    ("0.12.0", "1 2", "true", "true"),            # a value set in the terminal is kept, whatever it is
+    ("0.12.0", "1 2", "false", "false"),
+])
+def test_agentx_turns_the_dataset_cache_off_for_aiperf_older_than_0_13(agentx_run, monkeypatch, version, levels, terminal, expected):
+    monkeypatch.delenv(CACHE, raising=False)
+    env = {"FAKE_AIPERF_VERSION": version}
+    if terminal is not None:
+        env[CACHE] = terminal
+    result, seen, _ = agentx_run(levels=levels, **env)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert seen.get(CACHE) == expected
+    assert ("older than 0.13" in result.stdout) is (expected == "false" and terminal is None)
