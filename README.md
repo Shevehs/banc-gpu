@@ -881,7 +881,7 @@ python -m report agents results-agents --target 30
 | `--warmup` | seconds excluded from the measurement at the start of a level (at least the duration of one task); must be < `--duration` |
 | `--scale` | multiplies all sizes: 1 = contexts up to about 135,000 tokens; 0.2 for a small server with 32,768 tokens of context |
 | `--agents` | subset of `code_review,pentest,report` |
-| `--mode` | `scripted` (default, measurement: tools and lengths enforced) or `autonomous` (checks tool calling, does not measure) |
+| `--mode` | `scripted` (default, measurement: tools and lengths enforced) or `autonomous` (checks tool calling, does not measure: the model decides whether to call a tool, and an agent stops at the first call without one; `python -m report agents` warns when agents made far fewer calls than their profile) |
 | `--output` | results folder (default `results-agents`, relative to the current folder; runs started from the [interface](#9-interface) use `agents_test/results-agents`) |
 | `--label-agents` | adds `metadata.agent` = profile name to each request (per-agent view through LiteLLM, [section 7.5](#75-per-agent-view-through-litellm)) |
 

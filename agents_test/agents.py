@@ -14,16 +14,8 @@ import threading
 import time
 
 from agents_test.common import tool_definitions, make_text
+from agents_test.profiles import PROFILES
 
-PROFILES = {
-    "code_review": dict(name="Code review", system=3000, tools=4, tokens_per_tool=300,
-                list_files=1500, plan=300, sub_agents=3, sub_agent_system=2000,
-                steps=6, read=22000, analysis=400, summary=1500, tool_latency_s=5.0),
-    "pentest": dict(name="Step-by-step pentest", system=3000, tools=6, tokens_per_tool=300,
-                steps=15, tool_result=4000, thinking=250, report=800, tool_latency_s=8.0),
-    "report": dict(name="Report writing", system=2000, notes=125000, plan=800,
-                 writing=4000, tool_latency_s=2.0),
-}
 # Fixed seeds: the system prompt and the tool definitions are identical from one task to the
 # next (as with a real agent), so the prefix cache can reuse them.
 FIXED_SEEDS = {"code_review": 3_000_000, "pentest": 2_000_000, "report": 9_000_000}
