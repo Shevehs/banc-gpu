@@ -1337,8 +1337,12 @@ Open **the exact address printed** (it contains an access token). On a remote VM
   - The result is a chart, drawn as soon as a field changes (no button). A checkbox refreshes it every minute.
   - Choose what is shown: "x" (the date by default) and "y" (throughput per GPU, concurrency, TTFT, preemptions, ...).
     By window, the bars are green when the window holds the target, red when it does not, grey when there is no
-    verdict or the window is not counted (the reason is in the tooltip); with another variable on x, each window is
-    a dot. By period and by agent, the bars show the variable chosen on y.
+    verdict or the window is not counted. With another variable on x, each window is a dot.
+    By period and by agent, the bars show the variable chosen on y.
+  - Hover a bar or a dot for details. By window and by period, the tooltip lists:
+    - why the target is not held: failed requests, preemptions, too few requests at the target (under 90 %), P95 TTFT
+      above the maximum;
+    - a warning when there are fewer than 50 completed requests (the figures are unreliable).
   - "Download CSV" saves the rows of the chart.
   - The ranges of the runs started from the interface (plus one minute) are discarded ("run in progress"). Those of
     runs started by hand are only discarded if you give them to `observation.query --exclude`.
