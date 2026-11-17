@@ -354,21 +354,20 @@ source .venv-aiperf/bin/activate
 pip install aiperf==0.13.0 "openai>=1.40" httpx
 ```
 
+If the environment holds an older AIPerf, upgrade it:
+
+```bash
+pip install aiperf==0.13.0
+```
+
+An AIPerf older than 0.13 loses the results of every AgentX level after the first. `agentx.sh` works around it by itself
+([section 6.3](#63-agentx-stress-test)), and 0.13.0 has a fix for it.
+
 Check the installation:
 
 ```bash
 aiperf --version && python -c "import openai, aiohttp; print('ok')"
 ```
-
-If the environment holds an older AIPerf, upgrade it:
-
-```bash
-pip install --upgrade aiperf==0.13.0
-```
-
-AIPerf 0.12.x loses the results of every AgentX level after the first. `agentx.sh` works around it by itself with an
-older version ([section 6.3](#63-agentx-stress-test)), and 0.13.0 fixes it. Compare only runs made with the same AIPerf
-version.
 
 AIPerf also installs `aiohttp` (interface) and the `hf` command (tokenizer). Without Internet access, `pip` and `uv`
 (which downloads Python) must point to a mirror.
@@ -682,7 +681,7 @@ python -m report aiperf results-agentx --target 30
 | `BENCH_SHORT_RUN` | empty | `1` = levels shorter than 900 s, to check the pipeline only (not comparable) |
 | `BENCH_MAX_CONTEXT` | empty | tokens; AIPerf discards traces whose peak context exceeds this value (`--max-context-length`) |
 | `AIPERF_DATASET_CONFIGURATION_TIMEOUT` | 1800 | seconds allowed for loading the traces |
-| `AIPERF_DATASET_MMAP_CACHE_ENABLED` | `false` with AIPerf older than 0.13 and several levels, otherwise AIPerf's own choice (`true`) | reuse of the dataset that the previous level built |
+| `AIPERF_DATASET_MMAP_CACHE_ENABLED` | `false` if AIPerf is older than 0.13 and there are several levels, otherwise not set | reuse of the dataset that the previous level built |
 | `AIPERF_DATASET_WEKA_PARALLEL_WORKERS` | 1 with a local tokenizer folder (outside Linux), otherwise AIPerf's own choice | number of processes that load the traces; 1 = a single process |
 
 Notes on these variables:
@@ -697,15 +696,16 @@ Notes on these variables:
 - **`AIPERF_DATASET_WEKA_PARALLEL_WORKERS`**: with a local tokenizer folder, `agentx.sh` sets it to 1 (outside Linux),
   because AIPerf's loading processes cannot use a folder ([section 6.5](#65-agentx-with-generated-or-your-own-traces)). A value set in the
   terminal is kept. Loading in a single process is slower than in parallel for a large set; this was not measured.
-- **`AIPERF_DATASET_MMAP_CACHE_ENABLED`**: AIPerf 0.12.x loses the results of every level after the first, because it reads
-  its dataset cache before the process that records the results is listening. With an older AIPerf and several levels,
-  `agentx.sh` sets it to `false`: each level then rebuilds its dataset. A value set in the terminal is kept. AIPerf 0.13.0
-  fixes the problem, and the script changes nothing.
+- **`AIPERF_DATASET_MMAP_CACHE_ENABLED`**: an AIPerf older than 0.13 loses the results of every level after the first.
+  The process that records them gives up after `AIPERF_DATASET_CONFIGURATION_TIMEOUT`, and the run never ends. With such a
+  version and several levels, `agentx.sh` sets the variable to `false`: each level then rebuilds its dataset, which takes
+  longer. A value set in the terminal is kept. With AIPerf 0.13.0 or later, the script changes nothing.
 
 The levels are numbers of **sessions replayed at the same time** (AIPerf's `--concurrency`). The report is the one
 described in [section 6.2](#62-reading-the-aiperf-report-synthetic-and-agentx).
 
 Duration: one test of 5 levels x 30 min takes about 2 h 30 (about 1 h 15 at 15 min per level). The measurement protocol ([section 8](#8-measurement-protocol)) recommends three repetitions, which makes about 7 h 30 per configuration (about 3 h 45 at 15 min per level).
+With an AIPerf older than 0.13, add the time to rebuild the traces to each level (not measured).
 
 ### 6.4 AgentX without Internet access
 
@@ -1276,6 +1276,9 @@ curl -s -H "Authorization: Bearer <key>" http://<vm>:4000/metrics/ | grep -E '^l
 
 ## 8. Measurement protocol
 
+Use the same AIPerf version for all the runs you compare: the files and some metrics differ from one version to
+another.
+
 A single short pass is not enough to settle on a figure. For each server configuration to measure:
 
 1. **Coarse pass** (synthetic load): wide levels, 2 min each, to locate the knee:
@@ -1437,7 +1440,7 @@ durations), labels, agent names and error messages; no prompt or response conten
 | AgentX: "Scenario invariants violated" | `BENCH_DURATION` < 900 s, or AIPerf launched by hand on local traces | `BENCH_DURATION` ≥ 900 (or `BENCH_SHORT_RUN=1` for a simple check); go through `agentx.sh` |
 | AgentX: `err` > 0 in the report | requests longer than `--max-model-len` (AIPerf removes them from its metrics; the report counts them in `err`) | raise it; `BENCH_AGENTX_VARIANT=256k` for a model at about 256,000 tokens; or `BENCH_MAX_CONTEXT` about `--max-model-len` − 2,048 to discard traces that are too long ([section 6.6](#66-context-shorter-than-the-traces)) |
 | AgentX: no trace fits | `BENCH_MAX_CONTEXT` below the context of every trace | raise `BENCH_MAX_CONTEXT` and `--max-model-len`; with the published traces, AgentX is not feasible on a small server ([section 6.6](#66-context-shorter-than-the-traces)) |
-| AgentX: from the second level on, the run waits for ever, `c<N>/profile_export.jsonl` stays empty, the AIPerf log says `Dataset configuration not received` | AIPerf older than 0.13 reuses a dataset cache that the process recording the results has not heard about | `pip install --upgrade aiperf==0.13.0`; `agentx.sh` turns the cache off by itself with an older version, so a run started by hand or with `AIPERF_DATASET_MMAP_CACHE_ENABLED=true` is the one that hangs |
+| AgentX: the levels after the first have no results (`results-agentx/<label>/c<N>/profile_export.jsonl` is empty), the AIPerf log says `Dataset configuration not received`, and the run never ends | an AIPerf older than 0.13 reuses a dataset cache that the process recording the results does not know about | `pip install aiperf==0.13.0`. `agentx.sh` turns the cache off for an older AIPerf, so this only happens if `aiperf` is run by hand or the variable is set to `true`. Not to be confused with the next row but one, `timed out waiting for dataset configuration` |
 | AgentX: the run never starts, `results-agentx/<label>/c<N>/logs/aiperf.log` stops at `spawning N worker process(es)` | the loading processes cannot load the tokenizer: an uncached Hugging Face name, or `AIPERF_DATASET_WEKA_PARALLEL_WORKERS` set to another value than 1 with a local folder | `pkill -9 -f aiperf`, check with `pgrep -fl aiperf`, then relaunch with `AIPERF_DATASET_WEKA_PARALLEL_WORKERS=1` ([details](tools/traces.md#good-to-know)) |
 | AgentX: `timed out waiting for dataset configuration` | loading the traces takes longer than AIPerf's timeout | raise `AIPERF_DATASET_CONFIGURATION_TIMEOUT` ([section 6.3](#63-agentx-stress-test)) |
 | `ERROR: number of GPUs unknown` from a report | fingerprint missing, or `BENCH_METRICS` did not point to vLLM during the run | `--gpu N` ("GPU" field of the interface) |
@@ -1734,11 +1737,15 @@ When you are done, stop the two background processes (`jobs` lists them, then `k
   ([Appendix E](#appendix-e-try-the-bench-without-a-gpu)).
 - `sweep.sh` with AIPerf 0.12.0 and the AIPerf report, against a real vLLM 0.33.0 on a small local server (levels 1, 4
   and 16, with the preemption counter read from `/metrics`).
-- AIPerf 0.13.0, against the fake server: `sweep.sh` and `agentx.sh` (one and two levels), both AIPerf reports and the whole
-  test suite, including the tests that need AIPerf. The files AIPerf 0.13.0 writes hold everything 0.12.0 wrote, plus
-  new fields. The AgentX scenario, the trace model, the tokenizer loading and the list of public datasets are
-  identical in the two versions (compared in the code). The two-level AgentX run loses its second level with 0.12.0
-  and not with 0.13.0.
+- `sweep.sh` and `agentx.sh` with AIPerf 0.13.0, against the fake server:
+  - one-level and two-level runs, both AIPerf reports, and the whole test suite, including the tests that need AIPerf;
+  - the files AIPerf 0.13.0 writes hold everything 0.12.0 wrote, plus new fields;
+  - the code of the two versions was compared: the AgentX scenario, the trace model, the tokenizer loading and the list
+    of public datasets are identical.
+- A two-level AgentX run against the fake server (one run per version):
+  - with AIPerf 0.12.0 and the cache left on, the second level loses its results;
+  - with 0.12.0 and `agentx.sh` turning the cache off, both levels finish;
+  - with 0.13.0, both levels finish through the cache.
 - The test agents' launcher taking its target from `BENCH_URL`, `BENCH_MODEL` and `BENCH_METRICS`: unit tests of the
   options, and a short run against the fake server with only these variables set and no `--url` or `--model`.
 - The model-name check, against a real vLLM 0.33.0 and a real LiteLLM 1.106.10: a wrong name stops the script with the

@@ -89,16 +89,18 @@ if [ -n "$TOKENIZER" ] && [ -d "$TOKENIZER" ] && [ -z "${AIPERF_DATASET_WEKA_PAR
   echo "   Local tokenizer folder: the traces are loaded in a single process (AIPerf's parallel loading cannot use it)."
 fi
 # AIPerf older than 0.13 loses the results of every level after the first when the levels share a dataset: it reads its
-# dataset cache so fast that the process which records the results is not yet listening, and that process then waits for an
-# announcement that never comes (it gives up after AIPERF_DATASET_CONFIGURATION_TIMEOUT). Fixed in AIPerf 0.13.0. With an
-# older version and several levels, turn the cache off (each level then rebuilds its dataset), unless the variable is set
-# in the terminal.
-LEVELS_COUNT="$(printf '%s\n' $CONCURRENCIES | grep -c .)"
+# dataset cache so fast that the process which records the results is not yet listening. That process gives up after
+# AIPERF_DATASET_CONFIGURATION_TIMEOUT and the run never ends. AIPerf 0.13.0 has a fix. With an older version and several
+# levels, turn the cache off (each level then rebuilds its dataset), unless the variable is set in the terminal.
+LEVELS_COUNT="$(printf '%s\n' $CONCURRENCIES | grep -c . || true)"
 if [ "$LEVELS_COUNT" -gt 1 ] && [ -z "${AIPERF_DATASET_MMAP_CACHE_ENABLED:-}" ]; then
-  case "$(aiperf --version 2>/dev/null | tail -n 1 | tr -d '[:space:]')" in
-    0.[0-9].*|0.1[0-2].*)
+  AIPERF_VERSION="$(aiperf --version 2>/dev/null | tail -n 1 | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -n 1 || true)"
+  case "$AIPERF_VERSION" in
+    0.[0-9]|0.[0-9].*|0.1[0-2]|0.1[0-2].*)
       export AIPERF_DATASET_MMAP_CACHE_ENABLED=false
-      echo "   AIPerf older than 0.13: its dataset cache is turned off, because it loses the results of the levels after the first (fixed in 0.13.0)." ;;
+      echo "   AIPerf older than 0.13: its dataset cache is turned off, because it loses the results of the levels after the first." ;;
+    "")
+      echo "   AIPerf's version could not be read. If the levels after the first have no results, set AIPERF_DATASET_MMAP_CACHE_ENABLED=false (AIPerf older than 0.13)." ;;
   esac
 fi
 # Loading the 393 traces (download included on the first run) takes several minutes, more than the 300 s

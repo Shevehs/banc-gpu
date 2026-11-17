@@ -194,7 +194,10 @@ def agentx_run(tmp_path):
     work.mkdir()
     dump = tmp_path / "aiperf-env"
     fake = bin_dir / "aiperf"
-    fake.write_text('#!/bin/sh\nif [ "$1" = "--version" ]; then echo "${FAKE_AIPERF_VERSION-0.13.0}"; exit 0; fi\n'
+    calls = tmp_path / "aiperf-calls"
+    fake.write_text(f"#!/bin/sh\necho \"$1\" >> '{calls}'\n"
+                    'if [ "$1" = "--version" ]; then printf "%s\\n" "${FAKE_AIPERF_VERSION-0.13.0}"; '
+                    'exit "${FAKE_AIPERF_VERSION_EXIT:-0}"; fi\n'
                     f"env | grep '^AIPERF_' | sort > '{dump}'\nexit 0\n")
     fake.chmod(0o755)
     system = bin_dir / "uname"                      # the operating system is chosen by the test: FAKE_UNAME (default Darwin)
@@ -208,6 +211,7 @@ def agentx_run(tmp_path):
         result = helpers.run([BASH, str(script or helpers.ROOT / AGENTX), "lbl", levels], cwd=work, env=environment, timeout=120)
         seen = dict(x.split("=", 1) for x in dump.read_text().splitlines()) if dump.exists() else None
         return result, seen, work / "results" / "lbl"
+    run.calls = lambda: calls.read_text().splitlines() if calls.exists() else []
     return run
 
 
@@ -324,7 +328,7 @@ def aiperf_reached(tmp_path):
     work.mkdir()
     marker = tmp_path / "aiperf-was-called"
     fake = bin_dir / "aiperf"
-    fake.write_text(f"#!/bin/sh\ntouch '{marker}'\nexit 1\n")
+    fake.write_text(f'#!/bin/sh\nif [ "$1" = "--version" ]; then echo 0.13.0; exit 0; fi\ntouch \'{marker}\'\nexit 1\n')
     fake.chmod(0o755)
     shim = bin_dir / "python3"
     shim.write_text('#!/bin/sh\ncase " $* " in *" --check-model "*) [ -n "$FAKE_CHECK_EXIT" ] && exit "$FAKE_CHECK_EXIT" ;; '
@@ -379,6 +383,11 @@ CACHE = "AIPERF_DATASET_MMAP_CACHE_ENABLED"
     ("1.0.0", "1 2", None, None),
     ("", "1 2", None, None),                      # AIPerf does not say its version: nothing is changed
     ("not a version", "1 2", None, None),
+    ("aiperf 0.12.0", "1 2", None, "false"),      # the version may come with a name, a prefix or a banner line before it
+    ("v0.12.0", "1 2", None, "false"),
+    ("0.12", "1 2", None, "false"),
+    ("0.13", "1 2", None, None),
+    ("Loading the plugins...\n0.12.0", "1 2", None, "false"),
     ("0.12.0", "1 2", "true", "true"),            # a value set in the terminal is kept, whatever it is
     ("0.12.0", "1 2", "false", "false"),
 ])
@@ -390,4 +399,35 @@ def test_agentx_turns_the_dataset_cache_off_for_aiperf_older_than_0_13(agentx_ru
     result, seen, _ = agentx_run(levels=levels, **env)
     assert result.returncode == 0, result.stdout + result.stderr
     assert seen.get(CACHE) == expected
-    assert ("older than 0.13" in result.stdout) is (expected == "false" and terminal is None)
+    assert ("its dataset cache is turned off" in result.stdout) is (expected == "false" and terminal is None)
+
+
+def test_agentx_asks_aiperf_for_its_version_once(agentx_run, monkeypatch):
+    monkeypatch.delenv(CACHE, raising=False)
+    result, _, _ = agentx_run(levels="1 2 4", FAKE_AIPERF_VERSION="0.12.0")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert agentx_run.calls().count("--version") == 1
+
+
+def test_agentx_does_not_ask_for_the_version_with_a_single_level_or_a_value_set_in_the_terminal(agentx_run, monkeypatch):
+    monkeypatch.delenv(CACHE, raising=False)
+    agentx_run(levels="4")
+    assert "--version" not in agentx_run.calls()
+
+
+@pytest.mark.parametrize("env", [{"FAKE_AIPERF_VERSION": "", "FAKE_AIPERF_VERSION_EXIT": "1"},    # --version fails
+                                 {"FAKE_AIPERF_VERSION": "not a version"}, {"FAKE_AIPERF_VERSION": ""}])
+def test_agentx_says_when_it_cannot_read_the_aiperf_version(agentx_run, monkeypatch, env):
+    monkeypatch.delenv(CACHE, raising=False)
+    result, seen, _ = agentx_run(levels="1 2", **env)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert CACHE not in seen
+    assert "version could not be read" in result.stdout
+
+
+def test_agentx_a_levels_list_of_blanks_does_not_stop_the_script_silently(agentx_run, monkeypatch):
+    """`grep -c .` finds nothing in a blank list and exits 1: that must not stop a script run with `set -e`."""
+    monkeypatch.delenv(CACHE, raising=False)
+    result, _, _ = agentx_run(levels="   ")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "Done" in result.stdout
