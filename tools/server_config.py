@@ -7,14 +7,18 @@ Reads, without modifying anything:
     it gives the parallelism without dev mode; the hash changes with the configuration.
     In --fingerprint-mode hash, the degrees are masked: the fingerprint then looks like that of a
     server without parallelism ("1 or masked").
+  - if the target gives no fingerprint (a gateway such as LiteLLM does not pass it on): the same one-token
+    completion, sent to the vLLM servers of the metrics URLs, with the model each lists in /v1/models (its served
+    name, not the gateway's alias). No key is sent. A server that protects /v1 with its own key is not read. The
+    result carries "source": the vLLM address it was read from.
   - on each vLLM server (metrics URL without /metrics): /version; in /metrics, vllm:cache_config_info
     (prefix cache, cache type and size) and the number of positions of
     vllm:spec_decode_num_accepted_tokens_per_pos (= speculative tokens per step); /server_info, which exists
     only if vLLM was started with VLLM_SERVER_DEV_MODE=1 (speculative decoding method, scheduler, etc.).
 A time budget (45 s by default) caps the timeout of each request and stops the following ones once
 exhausted; a server that answers drip by drip can still exceed it. The one-token completion comes
-last, so that a slow target does not prevent the rest of the snapshot.
-The API key is sent only to the target: /metrics, /version and /server_info do not require it
+last (the target's, then the vLLM fallback if needed), so that a slow target does not prevent the rest of the snapshot.
+The API key is sent only to the target (the fallback request to vLLM carries no key): /metrics, /version and /server_info do not require it
 (vLLM only protects /v1, /v2, /inference and /cohere). Redirects are not followed.
 
 With --check-model, the script sends only the one-token completion. If the server refuses the model as unknown, it
@@ -139,9 +143,9 @@ def unknown_model_message(url, model, key=None, timeout_s=15):
     return _chat_probe(url, model, key, timeout_s)[1]
 
 
-def served_model_ids(url, key=None):
+def served_model_ids(url, key=None, timeout_s=5):
     """Ids listed by the target's /v1/models; empty if it cannot say."""
-    models = _get_json(url.rstrip("/") + "/v1/models", key, timeout_s=5)
+    models = _get_json(url.rstrip("/") + "/v1/models", key, timeout_s=timeout_s)
     data = models.get("data") if models else None
     return [m["id"] for m in data if isinstance(m, dict) and isinstance(m.get("id"), str)] if isinstance(data, list) else []
 
@@ -252,27 +256,31 @@ def collect(url, metrics=None, key=None, model=None, budget_s=45):
         if refused:
             res["fingerprint"]["unknown_model"] = refused
         if res["fingerprint"]["decoded"] is None and not refused:
-            _fingerprint_from_vllm(res, remaining)
+            _fingerprint_from_vllm(res, remaining, end)
     return res
 
 
-def _fingerprint_from_vllm(res, remaining):
+def _fingerprint_from_vllm(res, remaining, end):
     """When the target gives no fingerprint (a gateway such as LiteLLM does not pass it on), ask a vLLM server itself.
 
-    The one-token completion goes to the first vLLM server found in the metrics URLs, with the model it lists in
-    /v1/models (its served name, which may differ from the gateway's alias). No key is sent: this is not the target.
-    A server that protects /v1 with its own key is left alone. Fills res["fingerprint"] (with "source") on success."""
+    The one-token completion goes to the vLLM servers found in the metrics URLs, one after the other until one
+    answers (and while the time budget `end` lasts), with the model each lists in /v1/models (its served name, which
+    may differ from the gateway's alias). No key is sent: this is not the target. A server that protects /v1 with its
+    own key, and the target itself, are left alone. On success, res["fingerprint"] takes raw, decoded and "source"
+    (the vLLM address); "response" stays what the target answered."""
     for srv in res["servers"]:
-        if not (srv.get("vllm_lines") or 0):
-            continue
+        if time.time() >= end:
+            return
         base = srv["metrics"][: -len("/metrics")] if srv["metrics"].endswith("/metrics") else srv["metrics"]
-        ids = served_model_ids(base)
+        if not (srv.get("vllm_lines") or 0) or base.rstrip("/") == res["target"]:
+            continue
+        ids = served_model_ids(base, timeout_s=remaining(5))
         if not ids:
             continue
         r, _ = _chat_probe(base, ids[0], None, timeout_s=remaining(15))
         e = r.get("system_fingerprint") if r else None
         if isinstance(e, str) and read_fingerprint(e):
-            res["fingerprint"] = {"raw": e, "decoded": read_fingerprint(e), "response": True, "source": base}
+            res["fingerprint"].update({"raw": e, "decoded": read_fingerprint(e), "source": base})
             return
 
 
@@ -323,7 +331,8 @@ def summary(r):
     if (r.get("fingerprint") or {}).get("budget_exhausted"):
         rows.append("[config] fingerprint not collected: time budget exhausted (slow servers)")
     elif r.get("fingerprint"):
-        rows.append(f"[config] {'vLLM' if r['fingerprint'].get('source') else 'target'} fingerprint: {r['fingerprint'].get('raw') or 'absent'}"
+        which = "vLLM" if r["fingerprint"].get("source") else "target"
+        rows.append(f"[config] {which} fingerprint: {r['fingerprint'].get('raw') or 'absent'}"
                       + (f" -> TP {dec['tensor_parallel_size']}, PP {dec['pipeline_parallel_size']}, "
                          f"DP {dec['data_parallel_size']}, EP {'yes' if dec['enable_expert_parallel'] else 'no'}"
                          + (" (or masked if --fingerprint-mode hash)" if dec["masking_possible"] else "")

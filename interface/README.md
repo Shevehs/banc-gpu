@@ -51,7 +51,7 @@ The interface never starts vLLM: it measures the one that is running. Options to
   response only says whether `BENCH_API_KEY` exists and for which target. When the API key field is empty, the server
   uses `BENCH_API_KEY` for the run, but only if the form's target URL is the `BENCH_URL` of the terminal (same scheme,
   host, port and path, case and a trailing slash ignored). A key meant for one server never goes to another.
-- The API key goes to the target; no key is sent to vLLM's `/metrics`. In observation, only the "Prometheus key"
+- The API key goes to the target; no key is sent to vLLM: neither to its `/metrics` nor, for the fingerprint through a gateway, to its `/v1`. In observation, only the "Prometheus key"
   (if filled in, `BENCH_PROMETHEUS_KEY`) is sent, to Prometheus; LiteLLM's key belongs in Prometheus's configuration,
   not in the interface.
 
@@ -59,7 +59,7 @@ The interface never starts vLLM: it measures the one that is running. Options to
 
 - **Configuration**: the target (the `BENCH_*` variables of `target.env`, repository README section 5.2), with a "Test
   connection" button (which also shows the vLLM server configuration: version, prefix cache, number of speculative tokens,
-  TP/PP/DP/EP parallelism read from the response fingerprint, the number of GPUs deduced from it, a warning when a
+  TP/PP/DP/EP parallelism read from the fingerprint (the target's, or vLLM's when the target is a gateway that gives none), the number of GPUs deduced from it, a warning when a
   metrics URL is not vLLM's `/metrics` and, only if vLLM is started with `VLLM_SERVER_DEV_MODE=1`, the speculative
   decoding method and the scheduler); the number of GPUs behind the target (filled in by the connection test when
   empty); and Prometheus (URL, key, vLLM and LiteLLM selectors, the label that tells agents apart; the scrape interval is

@@ -439,3 +439,47 @@ def test_collect_leaves_a_vllm_protected_by_its_own_key_alone(stub):
     r = collect(gateway.url, [vllm.url + "/metrics"], key="k", model="alias")
     assert r["fingerprint"]["raw"] is None and "source" not in r["fingerprint"]
 
+
+def test_vllm_fingerprint_does_not_hide_a_target_that_did_not_answer(stub):
+    gateway = stub(routes(**{"/v1/chat/completions": (401, {"error": "key"}, {})}))
+    vllm = stub(routes(**{"/v1/models": (200, {"data": [{"id": "served-name"}]}, {})}))
+    r = collect(gateway.url, [vllm.url + "/metrics"], key="wrong", model="alias")
+    assert r["fingerprint"]["raw"] and r["fingerprint"]["response"] is False
+    assert "no response: check the model, key or target" in summary(r)
+
+
+def test_vllm_fingerprint_tries_the_next_server_when_the_first_does_not_answer(stub):
+    gateway = stub(routes(**{"/v1/chat/completions": (200, {"choices": []}, {})}))
+    dead = stub(routes(**{"/v1/models": (500, {}, {})}))
+    alive = stub(routes(**{"/v1/models": (200, {"data": [{"id": "served-name"}]}, {})}))
+    r = collect(gateway.url, [dead.url + "/metrics", alive.url + "/metrics"], model="alias")
+    assert r["fingerprint"]["source"] == alive.url
+
+
+def test_vllm_fingerprint_is_not_asked_when_the_target_refuses_the_model(stub):
+    gateway = stub(routes(**{"/v1/chat/completions": (404, {"error": {"message": "The model `alias` does not exist."}}, {})}))
+    vllm = stub(routes())
+    r = collect(gateway.url, [vllm.url + "/metrics"], model="alias")
+    assert r["fingerprint"].get("unknown_model") and "source" not in r["fingerprint"]
+    assert not [x for x in vllm.seen if x["method"] == "POST"]
+
+
+def test_vllm_fingerprint_is_not_asked_from_the_target_itself(stub):
+    s = stub(routes(**{"/v1/chat/completions": (200, {"choices": []}, {})}))
+    r = collect(s.url, [s.url + "/metrics"], model="bench")
+    assert r["fingerprint"]["raw"] is None and len([x for x in s.seen if x["method"] == "POST"]) == 1
+
+
+def test_vllm_fingerprint_stops_when_the_time_budget_is_spent(stub):
+    gateway = stub(routes(**{"/v1/chat/completions": (200, {"choices": []}, {})}))
+    vllm = stub(routes())
+    from tools import server_config
+    times = iter([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] + [1000] * 50)
+    real = server_config.time.time
+    server_config.time.time = lambda: next(times, 1000)
+    try:
+        r = collect(gateway.url, [vllm.url + "/metrics"], model="alias", budget_s=45)
+    finally:
+        server_config.time.time = real
+    assert "source" not in (r["fingerprint"] or {})
+

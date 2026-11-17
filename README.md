@@ -474,6 +474,8 @@ Example for a TP 8 server with expert parallelism and 3 speculative tokens:
 [config] http://10.0.0.5:8000/metrics : vLLM <version>; prefix cache False; speculative tokens (metrics) 3; /server_info absent or not read (VLLM_SERVER_DEV_MODE not enabled?)
 ```
 
+Through a gateway, the first word of the fingerprint line is `vLLM` instead of `target`: the fingerprint was read from vLLM.
+
 Check that the **prefix cache** and the **parallelism** are those of the measurement you are about to make.
 
 The GPU count is the TP x PP x DP of the fingerprint, times the number of vLLM servers recognised in `BENCH_METRICS`
@@ -1388,7 +1390,7 @@ of the chosen view.
 `server_config.json` contains:
 
 - the vLLM version, the model and its maximum context, the cache configuration;
-- the fingerprint and the decoded parallelism;
+- the fingerprint and the decoded parallelism (with the vLLM address it was read from, when it did not come from the target);
 - the number of speculative tokens (counted in `/metrics`);
 - for each `/metrics` URL, the number of `vllm:` lines read (`vllm_lines`) and the HTTP status (`metrics_status`), from
   which the reports and the launch warning tell vLLM's address from another one;
@@ -1435,7 +1437,7 @@ durations), labels, agent names and error messages; no prompt or response conten
 | `err` > 0 | requests refused or timed out | key, model name, `--max-model-len`, `--max-num-seqs` |
 | agent throughput "—" | empty measurement window | `--warmup` shorter than `--duration`, levels long enough |
 | cache about 0 for the agents | prefix cache disabled | restart vLLM without `--no-enable-prefix-caching` |
-| TP/PP/DP "n/a" in the interface | no fingerprint | correct model and key; default `--fingerprint-mode`; target vLLM directly |
+| TP/PP/DP "n/a" in the interface | no fingerprint | correct model and key; default `--fingerprint-mode`; through a gateway, vLLM's address in `BENCH_METRICS`; or target vLLM directly |
 | the interface says a run is in progress and so no one-token completion (no fingerprint) | connection test during a run | normal: a one-token completion would skew the measurement |
 | AgentX: "Scenario invariants violated" | `BENCH_DURATION` < 900 s, or AIPerf launched by hand on local traces | `BENCH_DURATION` ≥ 900 (or `BENCH_SHORT_RUN=1` for a simple check); go through `agentx.sh` |
 | AgentX: `err` > 0 in the report | requests longer than `--max-model-len` (AIPerf removes them from its metrics; the report counts them in `err`) | raise it; `BENCH_AGENTX_VARIANT=256k` for a model at about 256,000 tokens; or `BENCH_MAX_CONTEXT` about `--max-model-len` − 2,048 to discard traces that are too long ([section 6.6](#66-context-shorter-than-the-traces)) |

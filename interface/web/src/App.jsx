@@ -75,7 +75,7 @@ function ServerConfig({ config }) {
       <h4>Server configuration</h4>
       {targetModels && <p>Target models: {targetModels}</p>}
       {fp && (
-        <p>Target fingerprint: <code>{fp.raw || "absent"}</code>
+        <p>{fp.source ? "vLLM" : "Target"} fingerprint: <code>{fp.raw || "absent"}</code>
           {dec ? ` → TP ${dec.tensor_parallel_size}, PP ${dec.pipeline_parallel_size}, DP ${dec.data_parallel_size}, EP ${dec.enable_expert_parallel ? "yes" : "no"}`
                : fp.raw ? " (unrecognized format: --fingerprint-mode custom?)" : fp.budget_exhausted ? " (not read: time budget exhausted, slow servers)" : fp.response ? "" : " (no response: check the model, key or target)"}
           {dec?.masking_possible && " (or masked if vLLM runs with --fingerprint-mode hash)"}
@@ -98,8 +98,8 @@ function ServerConfig({ config }) {
         <tbody>
           {servers.map((s) => {
             const cf = s.configuration || {};
-            // Parallelism: /server_info, otherwise the fingerprint if this server is the target itself.
-            const fromFp = !s.configuration && dec && base(s.metrics) === base(config.target) ? dec : null;
+            // Parallelism: /server_info, otherwise the fingerprint if it was read from this server (or this server is the target).
+            const fromFp = !s.configuration && dec && (base(s.metrics) === base(config.target) || (fp.source && base(s.metrics) === base(fp.source))) ? dec : null;
             const par = s.configuration ? (cf.parallelism || {}) : fromFp || {};
             const sp = cf.speculative_decoding;
             const sched = cf.scheduler || {};
