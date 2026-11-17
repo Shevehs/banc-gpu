@@ -4,6 +4,7 @@ The server metrics (preemptions, server-side prefix cache, MTP acceptance, maxim
 /metrics reading done by the launcher (level.json); they appear on the "all" row.
 Window used: from the level start + warmup to the planned end of the level; only calls completed within this
 window count (the tail, where concurrency drops, is excluded).
+In autonomous mode, a warning is printed for each agent that made far fewer calls than its profile.
 Selected level: the largest number of simultaneous tasks whose P10 interactivity (all agents) reaches
 the target, with no error or preemption -- median of the repetitions (runs <conf>-rN).
 --gpu is optional: without it, the GPU count is deduced from the server_config.json of each run
@@ -152,6 +153,44 @@ def print_selected_points(rows, args):
         warn_saturation(choice.rows)
 
 
+def early_stop_warnings(files):
+    """Warnings for the runs in autonomous mode whose agents stopped far short of their steps.
+
+    In autonomous mode the model decides whether to call a tool, and an agent stops at the first call without one.
+    For each run and agent, the mean number of calls per finished task is compared with the number the profile
+    makes when it goes through all its steps; under half of it gives a warning (the contexts are then much shorter
+    than the profile). Runs in scripted mode, where the tool is forced, are not concerned.
+
+    Args:
+        files: the level.json paths of the run folders.
+
+    Returns:
+        The warnings, as a list of text lines (empty when there is nothing to say)."""
+    from collections import Counter
+
+    from agents_test.profiles import PROFILES, calls_per_task
+    seen, messages = {}, []
+    for f in files:
+        meta = json.loads(f.read_text())
+        if meta.get("mode") != "autonomous":
+            continue
+        per_task = Counter(c.get("task") for c in read_jsonl(f.parent / "calls.jsonl"))
+        for task in read_jsonl(f.parent / "tasks.jsonl"):
+            if task.get("error") or task.get("agent") not in PROFILES:
+                continue
+            total = seen.setdefault((f.parent.parent.name, task["agent"]), [0, 0])
+            total[0] += per_task[task.get("task")]
+            total[1] += 1
+    for (run, agent), (n_calls, n_tasks) in sorted(seen.items()):
+        expected = calls_per_task(agent)
+        if expected > 2 and n_calls / n_tasks < expected / 2:
+            messages.append(f"WARNING: {run}: autonomous mode, {agent} made {n_calls / n_tasks:.0f} calls per task instead of "
+                            f"{expected}: the model stopped calling tools (output cap too small for a tool call at this "
+                            "scale, or the server does not parse tool calls). Contexts are shorter than the profile; "
+                            "use scripted mode for a stress test.")
+    return messages
+
+
 def execute(args):
     """Entry point of `report agents`: read the levels under args.root, write table_agents.csv, print the table
     and the selected levels.
@@ -172,4 +211,6 @@ def execute(args):
         raise SystemExit(f"No level under {args.root}/<run>/n<N>/")
     write_csv(root / "table_agents.csv", rows)
     print_table(rows)
+    for message in early_stop_warnings(files):
+        print(f"   {message}")
     print_selected_points(rows, args)
