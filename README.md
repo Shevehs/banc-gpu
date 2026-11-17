@@ -386,6 +386,7 @@ cp tools/target.env.example target.env     # target.env is ignored by git: it co
 ```
 
 Fill in `target.env` (keep the `export`s), then load it in each new terminal: `source target.env`.
+The interface ([section 9](#9-interface)) also reads this file when it starts, so it does not need the `source`.
 
 **Why `BENCH_METRICS` must point to vLLM**
 
@@ -460,7 +461,8 @@ python tools/server_config.py --url "$BENCH_URL" --model "$BENCH_MODEL" --metric
 
 The `[config]` lines give:
 
-- the target's fingerprint (vLLM version, decoded TP / PP / DP / EP);
+- the fingerprint (vLLM version, decoded TP / PP / DP / EP), from the target or, when the target is a gateway that
+  does not pass it on, from the first vLLM server of `BENCH_METRICS`;
 - the number of GPUs deduced from it;
 - then, for each `/metrics` URL: the vLLM version, whether the prefix cache is on, and the number of speculative
   tokens read from the metrics (0 = no speculative decoding).
@@ -472,6 +474,8 @@ Example for a TP 8 server with expert parallelism and 3 speculative tokens:
 [config] GPUs deduced: 8 (TP 8 × PP 1 × DP 1 × 1 vLLM server(s))
 [config] http://10.0.0.5:8000/metrics : vLLM <version>; prefix cache False; speculative tokens (metrics) 3; /server_info absent or not read (VLLM_SERVER_DEV_MODE not enabled?)
 ```
+
+Through a gateway, the first word of the fingerprint line is `vLLM` instead of `target`: the fingerprint was read from vLLM.
 
 Check that the **prefix cache** and the **parallelism** are those of the measurement you are about to make.
 
@@ -492,8 +496,10 @@ The GPU count is the TP x PP x DP of the fingerprint, times the number of vLLM s
   address in `BENCH_METRICS` ([section 5.2](#52-set-the-connection)).
 - **No fingerprint, and the output says the server did not respond**: the key or the target is wrong, or the model
   name (the `ERROR` line above names it when the server refuses it). Fix it before going on.
-- **No fingerprint and no other message**: the vLLM version does not produce it, `--fingerprint-mode none` is set, or a
-  gateway drops the field. Target vLLM directly, or note the launch command with your results.
+- **No fingerprint and no other message**: the vLLM version does not produce it, `--fingerprint-mode none` is set, or
+  the target is a gateway that drops the field and vLLM could not be asked. vLLM is asked directly (one token, with
+  the model it lists, and no key) when `BENCH_METRICS` points at it; if vLLM has its own `--api-key`, target vLLM
+  directly, or note the launch command with your results.
 - **"TP 1, PP 1, DP 1, EP no (or hidden…)"**: this is true for a server without parallelism, but it is also what a
   server launched with `--fingerprint-mode hash` shows. Check the launch command.
 
@@ -1337,9 +1343,11 @@ Open **the exact address printed** (it contains an access token). On a remote VM
   - The ranges of the runs started from the interface (plus one minute) are discarded ("run in progress"). Those of
     runs started by hand are only discarded if you give them to `observation.query --exclude`.
 
-The fields are not saved. They start with the values of the terminal that started the interface (`BENCH_URL`,
-`BENCH_MODEL`, `BENCH_METRICS`, `BENCH_TOKENIZER`): load `target.env` before starting it. Keys never go to the page.
-`BENCH_API_KEY` is used when the API key field is empty, and only while the target URL is the `BENCH_URL` one. The
+The fields are not saved. They start with `BENCH_URL`, `BENCH_MODEL`, `BENCH_METRICS` and `BENCH_TOKENIZER`, taken
+from the terminal that started the interface or, for what the terminal does not set, from `target.env` at the root
+of the repository. The file is read when the interface starts, never run: only plain `export BENCH_NAME=value`
+lines count (no `$`, no backticks, no empty value). Restart the interface after editing it. Keys never go to the page.
+`BENCH_API_KEY` (terminal or `target.env`) is used when the API key field is empty, and only while the target URL is the `BENCH_URL` one. The
 runs themselves do not inherit the other variables of the terminal.
 
 It accepts only:
@@ -1385,7 +1393,7 @@ of the chosen view.
 `server_config.json` contains:
 
 - the vLLM version, the model and its maximum context, the cache configuration;
-- the fingerprint and the decoded parallelism;
+- the fingerprint and the decoded parallelism (with the vLLM address it was read from, when it did not come from the target);
 - the number of speculative tokens (counted in `/metrics`);
 - for each `/metrics` URL, the number of `vllm:` lines read (`vllm_lines`) and the HTTP status (`metrics_status`), from
   which the reports and the launch warning tell vLLM's address from another one;
@@ -1426,13 +1434,14 @@ durations), labels, agent names and error messages; no prompt or response conten
 | Symptom | Likely cause | What to do |
 |---|---|---|
 | `ERROR: the server does not know the model` (`sweep.sh` / `agentx.sh` stop at once) | `BENCH_MODEL` is not set (so it is `bench`), or is not a name the server serves | set `BENCH_MODEL` to a name the message lists, for example by loading `target.env` ([section 5.2](#52-set-the-connection)) |
+| the interface form starts empty although `target.env` is filled in | the interface reads only plain `export BENCH_NAME=value` lines (`$`, backticks and empty values are skipped), once, when it starts | write plain values, then restart the interface |
 | failure at concurrency N (`sweep.sh` / `agentx.sh` stop) | see `results/<label>/c<N>.log` | often tokenizer not found ([section 5.3](#53-copy-the-tokenizer)) or target unreachable ([section 5.4](#54-test-the-connection)) |
 | `HFValidationError` or tokenizer not found in the AIPerf log | AIPerf launched by hand with `HF_HUB_OFFLINE=1`, or `BENCH_TOKENIZER` = a Hugging Face name absent from the local cache | go through `sweep.sh` with the tokenizer in `tools/tokenizer/` ([section 5.3](#53-copy-the-tokenizer)) |
 | preempt / cache / MTP columns empty | `/metrics` not read, or not vLLM's | check `BENCH_METRICS`: vLLM's address, required through LiteLLM (launch warning, [section 5.4](#54-test-the-connection)) |
 | `err` > 0 | requests refused or timed out | key, model name, `--max-model-len`, `--max-num-seqs` |
 | agent throughput "—" | empty measurement window | `--warmup` shorter than `--duration`, levels long enough |
 | cache about 0 for the agents | prefix cache disabled | restart vLLM without `--no-enable-prefix-caching` |
-| TP/PP/DP "n/a" in the interface | no fingerprint | correct model and key; default `--fingerprint-mode`; target vLLM directly |
+| TP/PP/DP "n/a" in the interface | no fingerprint | correct model and key; default `--fingerprint-mode`; through a gateway, vLLM's address in `BENCH_METRICS`; or target vLLM directly |
 | the interface says a run is in progress and so no one-token completion (no fingerprint) | connection test during a run | normal: a one-token completion would skew the measurement |
 | AgentX: "Scenario invariants violated" | `BENCH_DURATION` < 900 s, or AIPerf launched by hand on local traces | `BENCH_DURATION` ≥ 900 (or `BENCH_SHORT_RUN=1` for a simple check); go through `agentx.sh` |
 | AgentX: `err` > 0 in the report | requests longer than `--max-model-len` (AIPerf removes them from its metrics; the report counts them in `err`) | raise it; `BENCH_AGENTX_VARIANT=256k` for a model at about 256,000 tokens; or `BENCH_MAX_CONTEXT` about `--max-model-len` − 2,048 to discard traces that are too long ([section 6.6](#66-context-shorter-than-the-traces)) |

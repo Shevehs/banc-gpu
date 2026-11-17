@@ -6,6 +6,8 @@ Variables from older versions or with generic names (API_KEY, URL, ...) are NOT 
 name exported for another tool must never be sent to the target. `warn_ignored_settings` tells the user
 when such a variable is set (it never prints values). Run `python3 tools/settings.py` to see the warnings."""
 import os
+import pathlib
+import re
 import sys
 
 # variable that is no longer read -> variable to use instead
@@ -28,6 +30,35 @@ IGNORED = {
 def read_setting(name, default=None):
     """Value of BENCH_<name> without surrounding white space, else `default` (an empty value counts as absent)."""
     return (os.environ.get("BENCH_" + name) or "").strip() or default
+
+
+# What the interface takes from target.env: the target and what the form starts with. Nothing else, so that the file
+# cannot change the interface's own guards (BENCH_ALLOW_PUBLIC_URLS, BENCH_ALLOWED_DIRS, ...).
+TARGET_ENV_NAMES = ("BENCH_URL", "BENCH_MODEL", "BENCH_METRICS", "BENCH_TOKENIZER", "BENCH_API_KEY")
+
+
+def load_target_env(path):
+    """Take BENCH_URL, BENCH_MODEL, BENCH_METRICS, BENCH_TOKENIZER and BENCH_API_KEY from the `export NAME=value`
+    lines of the file `path` (target.env) as settings, without replacing a variable that is already set.
+
+    A value is plain, "double-quoted" or 'single-quoted'; a `#` after a space starts a comment. A missing or
+    unreadable file, other lines, empty values and anything else (`$`, backticks, `;`) are skipped. The file is read,
+    never run. Returns the names taken."""
+    taken = []
+    try:
+        lines = pathlib.Path(path).read_text(encoding="utf-8-sig").splitlines()
+    except (OSError, UnicodeDecodeError):
+        return taken
+    for line in lines:
+        m = re.match(r"""\s*(?:export\s+)?(BENCH_[A-Z0-9_]+)=(?:"([^"$`\\]*)"|'([^']*)'|([^\s"'$`\\;]*))(?:\s+#.*)?\s*$""", line)
+        if not m or m.group(1) not in TARGET_ENV_NAMES:
+            continue
+        name = m.group(1)
+        value = next(g for g in m.groups()[1:] if g is not None)
+        if value.strip() and not os.environ.get(name):
+            os.environ[name] = value
+            taken.append(name)
+    return taken
 
 
 def api_key():
