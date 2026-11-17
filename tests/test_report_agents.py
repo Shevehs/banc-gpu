@@ -45,3 +45,43 @@ def test_summary_empty_window():
 def test_summary_speed_ignores_short_responses():
     calls = [call(1.0, output=8, speed=999.0), call(2.0, output=64, speed=40.0)]
     assert summary(calls, 0.0, 10.0, n_gpu=1)["interactivity_p50"] == 40.0
+
+
+# ---------------------------------------------------------------- autonomous agents that stop early
+def level(tmp_path, run, mode, tasks):
+    """A level folder with `tasks` = [(agent, number of calls, error)]; returns its level.json."""
+    import json
+    d = tmp_path / run / "n1"
+    d.mkdir(parents=True)
+    (d / "level.json").write_text(json.dumps({"mode": mode, "concurrent_tasks": 1}))
+    task_rows, call_rows = [], []
+    for i, (agent, n, error) in enumerate(tasks):
+        task_rows.append({"agent": agent, "task": f"t{i}", "error": error})
+        call_rows += [{"task": f"t{i}", "agent": agent} for _ in range(n)]
+    (d / "tasks.jsonl").write_text("\n".join(json.dumps(x) for x in task_rows))
+    (d / "calls.jsonl").write_text("\n".join(json.dumps(x) for x in call_rows))
+    return d / "level.json"
+
+
+def test_early_stop_warns_when_autonomous_agents_stop_after_one_step(tmp_path):
+    from report.agents import early_stop_warnings
+    f = level(tmp_path, "r2", "autonomous", [("code_review", 5, None), ("pentest", 2, None), ("report", 2, None)])
+    messages = early_stop_warnings([f])
+    assert len(messages) == 2 and "code_review made 5 calls per task instead of 20" in messages[0]
+    assert "pentest made 2 calls per task instead of 16" in messages[1] and "scripted mode" in messages[1]
+    assert not any("report" in m.split(":")[2] for m in messages)      # the report profile makes no tool call
+
+
+def test_early_stop_is_silent_for_scripted_runs_and_for_complete_autonomous_runs(tmp_path):
+    from report.agents import early_stop_warnings
+    assert early_stop_warnings([level(tmp_path, "s", "scripted", [("pentest", 2, None)])]) == []
+    assert early_stop_warnings([level(tmp_path, "a", "autonomous", [("pentest", 16, None), ("code_review", 20, None)])]) == []
+
+
+def test_early_stop_ignores_failed_tasks_and_old_level_files(tmp_path):
+    from report.agents import early_stop_warnings
+    assert early_stop_warnings([level(tmp_path, "e", "autonomous", [("pentest", 1, "boom")])]) == []
+    d = tmp_path / "old" / "n1"
+    d.mkdir(parents=True)
+    (d / "level.json").write_text("{}")      # no "mode": a run from before the mode was recorded
+    assert early_stop_warnings([d / "level.json"]) == []

@@ -304,7 +304,7 @@ function Launch({ onLaunched, c, params, setParams, kind, setKind }) {
                 ))}
               </div>
             </Field>
-            <Field label="Mode" help="scripted = measurement; autonomous = checks tool calling">
+            <Field label="Mode" help="scripted = measurement; autonomous = checks tool calling (the model decides: agents may stop early, the report warns)">
               <select value={p.mode} onChange={set("mode")}>
                 <option value="scripted">scripted</option><option value="autonomous">autonomous</option>
               </select>
