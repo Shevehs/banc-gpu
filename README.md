@@ -16,8 +16,8 @@ Two families of measurements:
   installation **sustains the real load**, per window, per period and per agent, over any past range.
 
 > **Status.** Written from the code of **vLLM at commit [`7f855f6`](https://github.com/vllm-project/vllm/tree/7f855f605892656ebf7265642e5d22a34a6ae731)**
-> and tested with **AIPerf 0.12.0** against a fake server ([Appendix E](#appendix-e-try-the-bench-without-a-gpu)).
-> Against a real vLLM it has only been tried on a small local server (vLLM 0.33.0), **not yet on a GPU server**.
+> and tested with **AIPerf 0.13.0** against a fake server ([Appendix E](#appendix-e-try-the-bench-without-a-gpu)).
+> Against a real vLLM it has only been tried on a small local server (vLLM 0.33.0, with AIPerf 0.12.0), **not yet on a GPU server**.
 > On your first real run, compare your outputs with the example in [section 5.4](#54-test-the-connection).
 > Unfamiliar terms: see [Appendix G](#appendix-g-glossary). What is verified, documented or still unchecked is
 > listed in [Appendix F](#appendix-f-validation-status).
@@ -103,7 +103,7 @@ installs the right Python for the bench ([how to install it](#43-install-the-ben
 ```bash
 git clone https://github.com/Shevehs/banc-gpu.git ~/banc-gpu && cd ~/banc-gpu
 uv venv --seed --python 3.12 .venv-aiperf && source .venv-aiperf/bin/activate
-pip install aiperf==0.12.0 "openai>=1.40" httpx
+pip install aiperf==0.13.0 "openai>=1.40" httpx
 ```
 
 ### 2.2 Point the bench at your vLLM
@@ -250,7 +250,7 @@ expose them. A launch warning says so if it points elsewhere.
 | **vLLM's `/metrics` reachable** from the client machine | Enabled by default; it provides preemptions, cache, speculative decoding, KV cache occupancy. It does **not** require the API key (see [Appendix A](#appendix-a-security-notes)). | `curl -s http://<host>:8000/metrics \| grep -c '^vllm:'` prints a number greater than 0 |
 | **LiteLLM installed** (optional) | To measure through the gateway, or to follow the agents separately in observation ([section 7.5](#75-per-agent-view-through-litellm)): LiteLLM sees which agent sends each request, vLLM does not. Your vLLM declared as a model of LiteLLM, with its key if it has one ([LiteLLM, vLLM](https://docs.litellm.ai/docs/providers/vllm); [configuration](https://docs.litellm.ai/docs/proxy/configs)). | `curl -s -H "Authorization: Bearer <key>" http://<vm>:4000/v1/models` |
 | **Prometheus** (observation only) | A separate server that scrapes vLLM's `/metrics` (and LiteLLM's) and keeps the history; vLLM does not provide one. A single binary ([download](https://prometheus.io/download/)), or the `prom/prometheus` Docker image. Configuration provided: `tools/prometheus.yml.example` ([section 7.2](#72-install-and-start-prometheus-once)). | `curl -s http://<host>:9090/-/ready` |
-| **uv** on the client machine | Installs the Python that AIPerf 0.12 requires (3.11 to 3.13) for the bench's environment; see [section 4.3](#43-install-the-bench-dependencies). | `uv --version` |
+| **uv** on the client machine | Installs the Python that AIPerf 0.13 requires (3.11 to 3.13) for the bench's environment; see [section 4.3](#43-install-the-bench-dependencies). | `uv --version` |
 | **bash** | Tested with bash 5; written to also run on the old bash 3.2, verified only with a bash 3.2 built on Linux. | `bash --version` |
 | **Network** | The client machine reaches vLLM (and LiteLLM). No Internet access is needed once the tokenizer is copied into `tools/tokenizer/` ([section 5.3](#53-copy-the-tokenizer)). | — |
 
@@ -351,7 +351,7 @@ Create the environment (`--seed` puts pip in it) and install the dependencies in
 ```bash
 uv venv --seed --python 3.12 .venv-aiperf
 source .venv-aiperf/bin/activate
-pip install aiperf==0.12.0 "openai>=1.40" httpx
+pip install aiperf==0.13.0 "openai>=1.40" httpx
 ```
 
 Check the installation:
@@ -359,6 +359,16 @@ Check the installation:
 ```bash
 aiperf --version && python -c "import openai, aiohttp; print('ok')"
 ```
+
+If the environment holds an older AIPerf, upgrade it:
+
+```bash
+pip install --upgrade aiperf==0.13.0
+```
+
+AIPerf 0.12.x loses the results of every AgentX level after the first. `agentx.sh` works around it by itself with an
+older version ([section 6.3](#63-agentx-stress-test)), and 0.13.0 fixes it. Compare only runs made with the same AIPerf
+version.
 
 AIPerf also installs `aiohttp` (interface) and the `hf` command (tokenizer). Without Internet access, `pip` and `uv`
 (which downloads Python) must point to a mirror.
@@ -422,7 +432,7 @@ Settings are read from the `BENCH_*` variables.
   authority, give the file of that authority: `export SSL_CERT_FILE=/path/ca.pem` (read by AIPerf, the scripts and the
   test agents).
 
-Do not put `HF_HUB_OFFLINE=1` in this file: with a local tokenizer, AIPerf 0.12 fails when this
+Do not put `HF_HUB_OFFLINE=1` in this file: with a local tokenizer, AIPerf 0.12 and 0.13 fail when this
 variable is set (`sweep.sh` removes it for AIPerf anyway).
 
 ### 5.3 Copy the tokenizer
@@ -636,7 +646,7 @@ On a small server whose context is limited to 32,768 tokens, no trace of the pub
 ([section 6.6](#66-context-shorter-than-the-traces)). You can generate shorter traces, or use your own
 ([section 6.5](#65-agentx-with-generated-or-your-own-traces)).
 
-**What the scenario enforces** (documented in the AIPerf 0.12.0 code,
+**What the scenario enforces** (documented in the AIPerf 0.13.0 code, the same in 0.12.0,
 `aiperf/common/scenario/inferencex_agentx_mvp.py`, and in AIPerf's message at run time):
 
 - streaming;
@@ -646,7 +656,7 @@ On a small server whose context is limited to 32,768 tokens, no trace of the pub
 - delays between turns replayed;
 - first-turn prefix scrambled, so that a run does not benefit from the previous run's cache;
 - the trace set is one of the published versions that AIPerf accepts (the bench uses `semianalysisai/cc-traces-weka-062126`,
-  the most recent in AIPerf 0.12.0). A run on another set, or on a local copy AIPerf cannot check, is marked
+  the most recent in AIPerf 0.13.0). A run on another set, or on a local copy AIPerf cannot check, is marked
   `submission_valid=false` and is not comparable.
 
 The traces are published on Hugging Face. By default, `agentx.sh` **downloads them itself** on the first run (about
@@ -672,6 +682,7 @@ python -m report aiperf results-agentx --target 30
 | `BENCH_SHORT_RUN` | empty | `1` = levels shorter than 900 s, to check the pipeline only (not comparable) |
 | `BENCH_MAX_CONTEXT` | empty | tokens; AIPerf discards traces whose peak context exceeds this value (`--max-context-length`) |
 | `AIPERF_DATASET_CONFIGURATION_TIMEOUT` | 1800 | seconds allowed for loading the traces |
+| `AIPERF_DATASET_MMAP_CACHE_ENABLED` | `false` with AIPerf older than 0.13 and several levels, otherwise AIPerf's own choice (`true`) | reuse of the dataset that the previous level built |
 | `AIPERF_DATASET_WEKA_PARALLEL_WORKERS` | 1 with a local tokenizer folder (outside Linux), otherwise AIPerf's own choice | number of processes that load the traces; 1 = a single process |
 
 Notes on these variables:
@@ -686,6 +697,10 @@ Notes on these variables:
 - **`AIPERF_DATASET_WEKA_PARALLEL_WORKERS`**: with a local tokenizer folder, `agentx.sh` sets it to 1 (outside Linux),
   because AIPerf's loading processes cannot use a folder ([section 6.5](#65-agentx-with-generated-or-your-own-traces)). A value set in the
   terminal is kept. Loading in a single process is slower than in parallel for a large set; this was not measured.
+- **`AIPERF_DATASET_MMAP_CACHE_ENABLED`**: AIPerf 0.12.x loses the results of every level after the first, because it reads
+  its dataset cache before the process that records the results is listening. With an older AIPerf and several levels,
+  `agentx.sh` sets it to `false`: each level then rebuilds its dataset. A value set in the terminal is kept. AIPerf 0.13.0
+  fixes the problem, and the script changes nothing.
 
 The levels are numbers of **sessions replayed at the same time** (AIPerf's `--concurrency`). The report is the one
 described in [section 6.2](#62-reading-the-aiperf-report-synthetic-and-agentx).
@@ -1422,6 +1437,7 @@ durations), labels, agent names and error messages; no prompt or response conten
 | AgentX: "Scenario invariants violated" | `BENCH_DURATION` < 900 s, or AIPerf launched by hand on local traces | `BENCH_DURATION` ≥ 900 (or `BENCH_SHORT_RUN=1` for a simple check); go through `agentx.sh` |
 | AgentX: `err` > 0 in the report | requests longer than `--max-model-len` (AIPerf removes them from its metrics; the report counts them in `err`) | raise it; `BENCH_AGENTX_VARIANT=256k` for a model at about 256,000 tokens; or `BENCH_MAX_CONTEXT` about `--max-model-len` − 2,048 to discard traces that are too long ([section 6.6](#66-context-shorter-than-the-traces)) |
 | AgentX: no trace fits | `BENCH_MAX_CONTEXT` below the context of every trace | raise `BENCH_MAX_CONTEXT` and `--max-model-len`; with the published traces, AgentX is not feasible on a small server ([section 6.6](#66-context-shorter-than-the-traces)) |
+| AgentX: from the second level on, the run waits for ever, `c<N>/profile_export.jsonl` stays empty, the AIPerf log says `Dataset configuration not received` | AIPerf older than 0.13 reuses a dataset cache that the process recording the results has not heard about | `pip install --upgrade aiperf==0.13.0`; `agentx.sh` turns the cache off by itself with an older version, so a run started by hand or with `AIPERF_DATASET_MMAP_CACHE_ENABLED=true` is the one that hangs |
 | AgentX: the run never starts, `results-agentx/<label>/c<N>/logs/aiperf.log` stops at `spawning N worker process(es)` | the loading processes cannot load the tokenizer: an uncached Hugging Face name, or `AIPERF_DATASET_WEKA_PARALLEL_WORKERS` set to another value than 1 with a local folder | `pkill -9 -f aiperf`, check with `pgrep -fl aiperf`, then relaunch with `AIPERF_DATASET_WEKA_PARALLEL_WORKERS=1` ([details](tools/traces.md#good-to-know)) |
 | AgentX: `timed out waiting for dataset configuration` | loading the traces takes longer than AIPerf's timeout | raise `AIPERF_DATASET_CONFIGURATION_TIMEOUT` ([section 6.3](#63-agentx-stress-test)) |
 | `ERROR: number of GPUs unknown` from a report | fingerprint missing, or `BENCH_METRICS` did not point to vLLM during the run | `--gpu N` ("GPU" field of the interface) |
@@ -1586,7 +1602,7 @@ Each agent then uses its own key as the API key, and the metrics carry `api_key_
   - [`offset`](https://prometheus.io/docs/prometheus/latest/querying/basics/#offset-modifier)
   - [download](https://prometheus.io/download/); tested with Prometheus 3.7.3
 - AIPerf:
-  - [AIPerf 0.12.0](https://pypi.org/project/aiperf/0.12.0/)
+  - [AIPerf 0.13.0](https://pypi.org/project/aiperf/0.13.0/)
   - [concurrency sweep (NVIDIA)](https://docs.nvidia.com/nim/benchmarking/llm/latest/step-by-step.html)
 - LiteLLM:
   - [vLLM provider](https://docs.litellm.ai/docs/providers/vllm)
@@ -1718,6 +1734,11 @@ When you are done, stop the two background processes (`jobs` lists them, then `k
   ([Appendix E](#appendix-e-try-the-bench-without-a-gpu)).
 - `sweep.sh` with AIPerf 0.12.0 and the AIPerf report, against a real vLLM 0.33.0 on a small local server (levels 1, 4
   and 16, with the preemption counter read from `/metrics`).
+- AIPerf 0.13.0, against the fake server: `sweep.sh` and `agentx.sh` (one and two levels), both AIPerf reports and the whole
+  test suite, including the tests that need AIPerf. The files AIPerf 0.13.0 writes hold everything 0.12.0 wrote, plus
+  new fields. The AgentX scenario, the trace model, the tokenizer loading and the list of public datasets are
+  identical in the two versions (compared in the code). The two-level AgentX run loses its second level with 0.12.0
+  and not with 0.13.0.
 - The test agents' launcher taking its target from `BENCH_URL`, `BENCH_MODEL` and `BENCH_METRICS`: unit tests of the
   options, and a short run against the fake server with only these variables set and no `--url` or `--model`.
 - The model-name check, against a real vLLM 0.33.0 and a real LiteLLM 1.106.10: a wrong name stops the script with the
@@ -1769,6 +1790,7 @@ See [section 4.2](#42-check-the-vllm-in-place), [section 6.6](#66-context-shorte
 - That LiteLLM forwards `min_tokens` and `ignore_eos`.
 - Prometheus versions newer than 3.7.3.
 - `agentx.sh` with AIPerf on the published trace set, since the latest changes to the scripts.
+- `sweep.sh` and `agentx.sh` with AIPerf 0.13.0 against a real vLLM (the real-vLLM runs above used 0.12.0).
 - A test-agents run that takes its target from the variables, on a real vLLM or LiteLLM.
 - `agentx.sh` with a local tokenizer folder on Linux, where AIPerf starts its loading processes differently
   ([section 6.5](#65-agentx-with-generated-or-your-own-traces)).

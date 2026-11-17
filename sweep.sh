@@ -43,7 +43,7 @@ mkdir -p "$ROOT_DIR/$LABEL"
 # Snapshot of the server configuration (version, cache, parallelism from the response fingerprint).
 BENCH_API_KEY="$API_KEY" python3 "$HERE/tools/server_config.py" --url "$URL" --model "$MODEL" --metrics "$METRICS" \
   --output "$ROOT_DIR/$LABEL/server_config.json" || echo "   (server configuration not collected)"
-# Local tokenizer: AIPerf 0.12 looks for it in the Hugging Face cache if HF_HUB_OFFLINE is set, and fails.
+# Local tokenizer: AIPerf (0.12 and 0.13) looks for it in the Hugging Face cache if HF_HUB_OFFLINE is set, and fails.
 # So these variables are unset for AIPerf only; a local folder triggers no download.
 OFFLINE_UNSET=()
 [ -n "$TOKENIZER" ] && [ -d "$TOKENIZER" ] && OFFLINE_UNSET=(env -u HF_HUB_OFFLINE -u TRANSFORMERS_OFFLINE)

@@ -72,11 +72,11 @@ fi
 [ -n "$MAX_CONTEXT" ] && echo "   BENCH_MAX_CONTEXT=$MAX_CONTEXT: only the traces that fit are replayed (subset, not comparable)."
 VALID=yes; { [ -n "$AGENTX_DIR" ] || [ "$SHORT_RUN" = "1" ]; } && VALID=no
 printf 'dataset=%s\ndirectory=%s\nduration=%s\nshort_run=%s\nmax_context=%s\nsubmission_valid=%s\n' "$DATASET" "$AGENTX_DIR" "$DURATION" "$SHORT_RUN" "$MAX_CONTEXT" "$VALID" > "$ROOT_DIR/$LABEL/agentx.txt"
-# Local tokenizer: AIPerf 0.12 looks for it in the Hugging Face cache if HF_HUB_OFFLINE is set, and fails
+# Local tokenizer: AIPerf (0.12 and 0.13) looks for it in the Hugging Face cache if HF_HUB_OFFLINE is set, and fails
 # (same workaround as sweep.sh). The online traces can still be downloaded.
 OFFLINE_UNSET=()
 [ -n "$TOKENIZER" ] && [ -d "$TOKENIZER" ] && OFFLINE_UNSET=(env -u HF_HUB_OFFLINE -u TRANSFORMERS_OFFLINE)
-# The same folder also breaks the worker processes that AIPerf 0.12 starts to rebuild the prompts (from 8 traces on):
+# The same folder also breaks the worker processes that AIPerf (0.12 and 0.13) starts to rebuild the prompts (from 8 traces on):
 # they switch to offline mode themselves and cannot load a folder, so each one fails at start-up, is replaced, and
 # AIPerf waits for results forever. A single process loads the folder without trouble: do that, unless the variable
 # is set in the terminal. This only concerns systems other than Linux: there, AIPerf preloads the tokenizer in a helper
