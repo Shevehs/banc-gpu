@@ -68,8 +68,8 @@ The interface never starts vLLM: it measures the one that is running. Options to
   (repository README, section 6). For the test agents, "Label the agents" and "Per-agent keys" give every
   request the identity of its profile, for the per-agent view through LiteLLM (repository README, section 7.5).
 - **Runs**: the runs started since the interface server was started, a live log, and stop. Logs are kept in `interface/logs/`.
-- **Results**: analysis of a results directory (table, selected point, warnings, throughput-per-GPU vs.
-  interactivity curve with the target). The "GPUs" field is optional: empty, the count of each run is deduced
+- **Results**: analysis of a results directory, shown as soon as a field changes (table, selected point, warnings,
+  throughput-per-GPU vs. interactivity curve with the target). The "GPUs" field is optional: empty, the count of each run is deduced
   from its fingerprint (`server_config.json`).
 - **Observation**: nothing to start. Prometheus and the GPUs come from Configuration; range ("Since", or start
   and end), window length: a chart (no button), with the choice of the variables on x (the date by default) and y,

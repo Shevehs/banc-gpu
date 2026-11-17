@@ -491,7 +491,13 @@ async def read_results(req):
     if q.get("require") == "1":
         cmd.append("--require-metrics")
     proc = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
-    output = (await proc.communicate())[0].decode("utf-8", "replace")
+    try:
+        output = (await proc.communicate())[0].decode("utf-8", "replace")
+    finally:
+        # the page asked again while the report ran (the request is cancelled): no report left running
+        if proc.returncode is None:
+            proc.kill()
+            await proc.wait()
     file = ROOT / root / table
     rows = []
     if proc.returncode == 0 and file.exists():

@@ -929,3 +929,27 @@ def test_observation_cancelled_kills_the_query_and_leaves_no_file(monkeypatch, t
     monkeypatch.setattr(server, "RUNS", {})
     asyncio.run(scenario())
     assert procs[0].killed and not list((tmp_path / "logs").glob("observation-*"))
+
+
+def test_results_cancelled_kills_the_report(monkeypatch):
+    """The page asks again while a report runs: the handler is cancelled and the process killed."""
+    procs = []
+
+    class Hanging(FakeQuery):
+        def __init__(self, cmd, kw):
+            super().__init__(cmd, kw, hang=True)
+            self.returncode = None      # still running
+
+    async def fake_exec(*cmd, **kw):
+        procs.append(Hanging(cmd, kw))
+        return procs[-1]
+
+    async def scenario():
+        task = asyncio.ensure_future(server.read_results(FakeGet(type="synthetic", root="results", target="30")))
+        await asyncio.sleep(0.05)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+    monkeypatch.setattr(server.asyncio, "create_subprocess_exec", fake_exec)
+    asyncio.run(scenario())
+    assert procs[0].killed

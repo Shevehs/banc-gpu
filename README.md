@@ -1322,7 +1322,7 @@ Open **the exact address printed** (it contains an access token). On a remote VM
     interval is read from Prometheus.
 - **Launch stress tests**: one of the three stress tests: synthetic, AgentX or test agents.
 - **Runs**: live log, stop.
-- **Results**: tables, selected point, curve of the stress tests; the "GPU" field is optional (deduced from the
+- **Results**: tables, selected point, curve of the stress tests, shown as soon as a field changes (no button); the "GPU" field is optional (deduced from the
   fingerprint when empty).
 - **Observation** (own tab): nothing to start. Prometheus and the GPUs come from Configuration (the GPUs are required,
   as on the command line).

@@ -625,13 +625,21 @@ function Results() {
   }).catch(() => {});
   useEffect(() => { loadRoots(); }, [kind]);
 
-  const analyze = async () => {
-    setErr(null); setRes(null);
-    try {
-      const q = new URLSearchParams({ type: kind, root, target, gpu, require: require ? "1" : "0" });
-      setRes(await api(`/api/results?${q}`));
-    } catch (e) { setErr(e.message); }
-  };
+  // The results follow the form: shown as soon as a field changes (after a short pause for typing); an answer that
+  // arrives late is dropped.
+  useEffect(() => {
+    if (!root) { setRes(null); return undefined; }
+    const controller = new AbortController();
+    const t = setTimeout(async () => {
+      try {
+        const q = new URLSearchParams({ type: kind, root, target, gpu, require: require ? "1" : "0" });
+        setRes(await api(`/api/results?${q}`, { signal: controller.signal })); setErr(null);
+      } catch (e) {
+        if (e.name !== "AbortError") { setErr(e.message); setRes(null); }
+      }
+    }, 500);
+    return () => { clearTimeout(t); controller.abort(); };
+  }, [kind, root, target, gpu, require]);
 
   const agents = kind === "agents";
   const rows = (res?.rows || []).filter((l) => !agents || l.agent === "all");
@@ -664,8 +672,8 @@ function Results() {
           <input type="checkbox" checked={require} onChange={(e) => setRequire(e.target.checked)} />
         </Field>
       </div>
-      <div className="row"><button className="primary" onClick={analyze} disabled={!root}>Analyze</button>
-        {err && <span className="error">{err}</span>}</div>
+      {err && <div className="row"><span className="error">{err}</span></div>}
+      {!root && <p className="note">No results directory of this type yet: run a stress test, or refresh the list.</p>}
 
       {res && (
         <>
