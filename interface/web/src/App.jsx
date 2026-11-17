@@ -425,9 +425,16 @@ const reasonsNotHolding = (r, o) => {
   if (num(r.failed_requests) > 0) out.push(`${shown(num(r.failed_requests), false)} failed request(s)`);
   if (num(r.preemptions) > 0) out.push(`${shown(num(r.preemptions), false)} preemption(s)`);
   const share = num(r.share_of_requests_at_target);
-  if (share !== null && share < 0.9) out.push(`only ${shown(share, true)} of the requests reach ${o.target} tokens/s (90 % needed)`);
-  const ttft = num(r.estimated_ttft_p95_ms), max = num(o.ttft_max);
-  if (max !== null && ttft !== null && ttft > max) out.push(`TTFT P95 ${shown(ttft, false)} ms is above ${max} ms`);
+  if (share !== null && share < 0.9) {
+    const percent = Math.round(100 * share) === 90 ? (100 * share).toFixed(1) : (100 * share).toFixed(0);
+    out.push(`only ${percent} % of the requests reach ${o.target} tokens/s (90 % needed)`);
+  }
+  // with a maximum TTFT, a window also fails when the P95 is unknown or beyond the last histogram bucket
+  const ttft = num(r.estimated_ttft_p95_ms), max = num(o.ttft_max), beyond = r.ttft_p95_beyond === "True";
+  if (max !== null && (ttft === null || beyond || ttft > max)) {
+    out.push(ttft === null ? "TTFT P95 unknown"
+      : `TTFT P95 ${beyond ? "above " : ""}${shown(ttft, false)} ms, over the ${max} ms maximum`);
+  }
   return out;
 };
 const csvOf = (rows) => {
@@ -467,7 +474,7 @@ function ObservationChart({ rows, view, o, setO }) {
         {view === "period" && <div>{r.windows} window(s), {r.verdict}</div>}
         {view !== "agents" && r.discarded !== "True" && r.verdict === "does not hold" &&
           reasonsNotHolding(r, o).map((m, i) => <div key={i}>· {m}</div>)}
-        {view !== "agents" && r.discarded !== "True" && num(r.completed_requests) !== null && num(r.completed_requests) < 50 &&
+        {view !== "agents" && r.discarded !== "True" && num(r.completed_requests) > 0 && num(r.completed_requests) < 50 &&
           <div>· only {shown(num(r.completed_requests), false)} completed request(s): fewer than 50, the figures are unreliable</div>}
       </div>
     );
