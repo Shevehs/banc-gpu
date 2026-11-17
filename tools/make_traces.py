@@ -18,6 +18,8 @@ machines and configurations with each other, not with the published results.
 Usage:
     python tools/make_traces.py --preset small --output traces-small
     BENCH_AGENTX_DIR=traces-small ./agentx.sh small-r1 "1 2 4"
+The interface runs this script for you when you pick a generated set in the AgentX launch (folder traces-<preset>,
+default options).
 
 Note: from 8 traces on, AIPerf rebuilds the prompts with several processes, and this step can hang when they cannot
 load the tokenizer (outside Linux: a local folder, or a Hugging Face name that is not cached). agentx.sh loads in a

@@ -286,17 +286,45 @@ def local_path(v, field_name):
     return str(c)
 
 
+TRACE_PRESETS = ("tiny", "small", "medium", "large")      # the presets of tools/make_traces.py
+# Writes the traces of a preset unless the folder already holds some, then replays them with agentx.sh. The values
+# come as arguments ($1 folder, $2 python, $3 preset, then the agentx.sh command), never inside the script text.
+GENERATE_THEN_AGENTX = (
+    'dir="$1"; py="$2"; preset="$3"; shift 3; '
+    'if ls "$dir"/trace-*.json >/dev/null 2>&1; then echo "Traces: reusing $dir (preset $preset)"; '
+    'else echo "Traces: generating $dir (preset $preset)"; rm -rf "$dir.tmp"; '
+    # written aside and moved at the end: a generation that is stopped leaves no half set in $dir
+    'if ! "$py" tools/make_traces.py --preset "$preset" --output "$dir.tmp"; then rm -rf "$dir.tmp"; exit 1; fi; '
+    'mkdir -p "$dir" && mv "$dir.tmp"/* "$dir"/ && rmdir "$dir.tmp" || exit $?; fi; '
+    'echo; exec "$@"')
+
+
+def display_command(cmd):
+    """The command as shown in the log: for a generated set, what it does in words, then the agentx.sh command."""
+    if len(cmd) > 7 and cmd[1:3] == ["-c", GENERATE_THEN_AGENTX]:
+        return [f"[writes {cmd[4]} with the {cmd[6]} preset unless it already holds traces, then]"] + cmd[7:]
+    return cmd
+
+
 def agentx_command(p):
-    """AgentX stress test (agentx.sh); all its variables are set here."""
+    """AgentX stress test (agentx.sh); all its variables are set here.
+
+    Where the traces come from: `generate` (a preset of tools/make_traces.py) writes `traces-<preset>` in the
+    repository, unless it already holds traces, then replays it; otherwise `traces_dir` (your own folder) or, with
+    neither, the published set (`variant` "256k" for its 256k version)."""
+    generate = p.get("generate") or ""
+    if generate and generate not in TRACE_PRESETS:
+        raise Refusal("generated traces: " + ", ".join(TRACE_PRESETS))
     short = bool(p.get("short_run"))
     duration = valid_number(p.get("duration", 1800), "duration per level", 30 if short else 900, 7200, True)
     env = {"BENCH_URL": valid_local_url(p.get("url")), "BENCH_MODEL": valid_model(p.get("model")),
            "BENCH_METRICS": " ".join(valid_metrics_urls(p.get("metrics"))), "BENCH_API_KEY": target_key(p),
            "BENCH_DURATION": str(duration), "BENCH_ROOT_DIR": results_dir(p.get("root") or "results-agentx"),
-           "BENCH_AGENTX_DIR": local_path(p.get("traces_dir"), "traces directory") if p.get("traces_dir") else "",
+           "BENCH_AGENTX_DIR": f"traces-{generate}" if generate
+           else local_path(p.get("traces_dir"), "traces directory") if p.get("traces_dir") else "",
            "BENCH_SHORT_RUN": "1" if short else "", "BENCH_OVERWRITE": "", "BENCH_SEED": "", "BENCH_TOKENIZER": "",
            "BENCH_MAX_CONTEXT": str(valid_number(p.get("max_context"), "max context", 1024, 10_000_000, True)) if p.get("max_context") else "",
-           "BENCH_AGENTX_VARIANT": "256k" if p.get("variant") == "256k" else ""}
+           "BENCH_AGENTX_VARIANT": "256k" if p.get("variant") == "256k" and not generate else ""}
     tok = str(p.get("tokenizer") or "").strip()
     if tok:
         if tok.startswith("-") or not re.match(r"^[A-Za-z0-9._/@:~-]{1,300}$", tok):
@@ -306,6 +334,8 @@ def agentx_command(p):
     if not LEVELS_OK.match(levels):
         raise Refusal("levels: integers separated by spaces")
     cmd = ["bash", str(ROOT / "agentx.sh"), valid_name(p.get("label"), "label"), " ".join(levels.split())]
+    if generate:
+        cmd = ["bash", "-c", GENERATE_THEN_AGENTX, "generate-traces", env["BENCH_AGENTX_DIR"], sys.executable, generate, *cmd]
     return cmd, env, ROOT
 
 
@@ -423,7 +453,7 @@ async def launch(req):
     log = LOGS_DIR / f"{eid}.log"
     f = open(log, "w", encoding="utf-8")
     display = " ".join(f"{k}={'***' if k in SECRETS else repr(v) if ' ' in v else v}" for k, v in env.items()) \
-        + (" " if env else "") + " ".join(f"'{c}'" if " " in c else c for c in cmd)
+        + (" " if env else "") + " ".join(f"'{c}'" if " " in c and not c.startswith("[writes") else c for c in display_command(cmd))
     f.write(f"$ cd {cwd}\n$ {display}\n\n"); f.flush()
     proc = await asyncio.create_subprocess_exec(*cmd, cwd=str(cwd), env={**base_environment(), **env, "PYTHONUNBUFFERED": "1"},
                                                 stdout=f, stderr=asyncio.subprocess.STDOUT, start_new_session=True)
