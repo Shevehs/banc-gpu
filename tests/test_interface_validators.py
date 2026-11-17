@@ -929,3 +929,70 @@ def test_observation_cancelled_kills_the_query_and_leaves_no_file(monkeypatch, t
     monkeypatch.setattr(server, "RUNS", {})
     asyncio.run(scenario())
     assert procs[0].killed and not list((tmp_path / "logs").glob("observation-*"))
+
+
+def test_results_cancelled_kills_the_report(monkeypatch):
+    """The page asks again while a report runs: the handler is cancelled and the process killed."""
+    procs = []
+
+    class Hanging(FakeQuery):
+        def __init__(self, cmd, kw):
+            super().__init__(cmd, kw, hang=True)
+            self.returncode = None      # still running
+
+    async def fake_exec(*cmd, **kw):
+        procs.append(Hanging(cmd, kw))
+        return procs[-1]
+
+    async def scenario():
+        task = asyncio.ensure_future(server.read_results(FakeGet(type="synthetic", root="results", target="30")))
+        await asyncio.sleep(0.05)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+    monkeypatch.setattr(server.asyncio, "create_subprocess_exec", fake_exec)
+    asyncio.run(scenario())
+    assert procs[0].killed
+
+
+def test_results_of_the_same_folder_run_one_at_a_time(monkeypatch):
+    """Two reports on one results folder must not overlap: `python -m report` rewrites table.csv there."""
+    running, peak = [0], [0]
+
+    class Slow(FakeQuery):
+        async def communicate(self):
+            running[0] += 1
+            peak[0] = max(peak[0], running[0])
+            await asyncio.sleep(0.05)
+            running[0] -= 1
+            return await super().communicate()
+
+    async def fake_exec(*cmd, **kw):
+        return Slow(cmd, kw)
+
+    async def scenario():
+        await asyncio.gather(*(server.read_results(FakeGet(type="synthetic", root="results", target=str(t)))
+                               for t in (30, 31, 32)))
+    monkeypatch.setattr(server.asyncio, "create_subprocess_exec", fake_exec)
+    monkeypatch.setattr(server, "REPORT_LOCKS", {})
+    asyncio.run(scenario())
+    assert peak[0] == 1
+
+
+def test_shielded_handler_finishes_even_if_the_client_goes_away():
+    done = []
+
+    async def handler(req):
+        await asyncio.sleep(0.05)
+        done.append(True)
+        return "ok"
+
+    async def scenario():
+        task = asyncio.ensure_future(server.shielded(handler)(None))
+        await asyncio.sleep(0.01)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        await asyncio.sleep(0.1)
+    asyncio.run(scenario())
+    assert done == [True]

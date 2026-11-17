@@ -372,6 +372,19 @@ async def follow(eid, proc, f):
     RUNS[eid].update(end=time.time(), code=code)
 
 
+def shielded(handler):
+    """The handler runs to its end even if the client goes away (the server cancels handlers when a client
+    disconnects): for what starts something, such as a run, that must not be left half done."""
+    async def wrapper(req):
+        return await asyncio.shield(handler(req))
+    return wrapper
+
+
+# One report at a time per results folder: `python -m report` rewrites table.csv there, and two reports at once
+# (the page asks again after each change) would read each other's half-written file.
+REPORT_LOCKS = {}
+
+
 async def read_body(req):
     """JSON object of the request body.
 
@@ -490,13 +503,20 @@ async def read_results(req):
         cmd += ["--gpu", str(gpu)]
     if q.get("require") == "1":
         cmd.append("--require-metrics")
-    proc = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
-    output = (await proc.communicate())[0].decode("utf-8", "replace")
     file = ROOT / root / table
     rows = []
-    if proc.returncode == 0 and file.exists():
-        with open(file, newline="", encoding="utf-8") as fh:
-            rows = list(csv.DictReader(fh))
+    async with REPORT_LOCKS.setdefault(root, asyncio.Lock()):
+        proc = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
+        try:
+            output = (await proc.communicate())[0].decode("utf-8", "replace")
+        finally:
+            # the page asked again while the report ran (the request is cancelled): no report left running
+            if proc.returncode is None:
+                proc.kill()
+                await proc.wait()
+        if proc.returncode == 0 and file.exists():
+            with open(file, newline="", encoding="utf-8") as fh:
+                rows = list(csv.DictReader(fh))
     # Keep in sync with the wording printed by report/*: "selected ...", "that holds", "WARNING", "no ...",
     # "GPUs: <run>: ... deduced from the fingerprint", "ERROR: ..."
     messages = [l for l in output.splitlines() if "selected" in l or "WARNING" in l or "that holds" in l
@@ -745,7 +765,7 @@ def main():
     settings.load_target_env(ROOT / "target.env")   # the form starts with target.env, loaded or not in this terminal
     app = web.Application(middlewares=[guard])
     app.on_shutdown.append(clean_shutdown)
-    app.add_routes([web.post("/api/runs", launch), web.get("/api/runs", list_runs),
+    app.add_routes([web.post("/api/runs", shielded(launch)), web.get("/api/runs", list_runs),
                     web.get("/api/runs/{eid}/log", run_log), web.post("/api/runs/{eid}/stop", stop_run),
                     web.get("/api/roots", list_roots), web.get("/api/defaults", defaults), web.get("/api/results", read_results),
                     web.post("/api/test-connection", test_connection), web.post("/api/observation", observation),
@@ -753,7 +773,7 @@ def main():
     if (DIST / "assets").exists():
         app.router.add_static("/assets", DIST / "assets")
     print(f"Bench interface: http://127.0.0.1:{p.port}/?token={TOKEN}\n(open this exact address; Ctrl-C stops the interface and the runs in progress)")
-    web.run_app(app, host="127.0.0.1", port=p.port, print=None)
+    web.run_app(app, host="127.0.0.1", port=p.port, print=None, handler_cancellation=True)
 
 
 if __name__ == "__main__":

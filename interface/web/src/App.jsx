@@ -639,6 +639,7 @@ function Results() {
   const [require, setRequire] = useState(false);
   const [res, setRes] = useState(null);
   const [err, setErr] = useState(null);
+  const [busy, setBusy] = useState(false);
 
   const loadRoots = () => api("/api/roots").then((r) => {
     setRoots(r);
@@ -647,13 +648,25 @@ function Results() {
   }).catch(() => {});
   useEffect(() => { loadRoots(); }, [kind]);
 
-  const analyze = async () => {
-    setErr(null); setRes(null);
-    try {
-      const q = new URLSearchParams({ type: kind, root, target, gpu, require: require ? "1" : "0" });
-      setRes(await api(`/api/results?${q}`));
-    } catch (e) { setErr(e.message); }
-  };
+  // The results follow the form: shown as soon as a field changes (after a short pause for typing); an answer that
+  // arrives late is dropped.
+  useEffect(() => {
+    if (!root) { setRes(null); return undefined; }
+    const controller = new AbortController();
+    setErr(null);
+    const t = setTimeout(async () => {
+      setBusy(true);
+      try {
+        const q = new URLSearchParams({ type: kind, root, target, gpu, require: require ? "1" : "0" });
+        const r = await api(`/api/results?${q}`, { signal: controller.signal });
+        if (!controller.signal.aborted) { setRes(r); setBusy(false); }
+      } catch (e) {
+        // a value being typed can be refused for a moment: the last results stay on screen with the message
+        if (!controller.signal.aborted) { setErr(e.message); setBusy(false); }
+      }
+    }, 500);
+    return () => { clearTimeout(t); controller.abort(); };
+  }, [kind, root, target, gpu, require]);
 
   const agents = kind === "agents";
   const rows = (res?.rows || []).filter((l) => !agents || l.agent === "all");
@@ -669,7 +682,7 @@ function Results() {
     <section>
       <div className="grid">
         <Field label="Type">
-          <select value={kind} onChange={(e) => { setKind(e.target.value); setRes(null); }}>
+          <select value={kind} onChange={(e) => { setKind(e.target.value); setRoot(""); setRes(null); }}>
             {KINDS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
           </select>
         </Field>
@@ -686,8 +699,9 @@ function Results() {
           <input type="checkbox" checked={require} onChange={(e) => setRequire(e.target.checked)} />
         </Field>
       </div>
-      <div className="row"><button className="primary" onClick={analyze} disabled={!root}>Analyze</button>
-        {err && <span className="error">{err}</span>}</div>
+      {(err || busy) && <div className="row">{busy && !err && <span className="note">loading…</span>}
+        {err && <span className="error">{err}</span>}</div>}
+      {!root && <p className="note">No results directory of this type yet: run a stress test, or refresh the list.</p>}
 
       {res && (
         <>
