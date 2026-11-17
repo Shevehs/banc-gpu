@@ -8,7 +8,8 @@ Example (small model, 32,768-token context):
 cache, speculative decoding, KV cache) are read from --metrics: by default <url>/metrics, which
 is right when --url is vLLM; with a gateway, give the vLLM /metrics URLs (one per replica).
 --url, --model and --metrics default to the variables BENCH_URL, BENCH_MODEL and BENCH_METRICS (as for sweep.sh
-and agentx.sh); an option given on the command line wins.
+and agentx.sh); an option given on the command line wins. BENCH_METRICS goes with BENCH_URL: it is used only when
+--url is not given, so that a run aimed at another URL never reads the metrics of the server of target.env.
 API key: environment variable BENCH_API_KEY (never as an argument, so it does not appear in
 logs or in the process list).
 
@@ -36,16 +37,18 @@ from tools import settings
 from tools.server_config import collect as collect_server_config, summary
 
 
-def build_parser():
-    """The command-line parser.
+DEFAULT_URL, DEFAULT_MODEL = "http://127.0.0.1:8000", "bench"
 
-    --url, --model and --metrics default to the variables BENCH_URL, BENCH_MODEL and BENCH_METRICS, like the shell
-    scripts (an empty variable counts as not set), then to the values below. An option given on the command line wins."""
+
+def build_parser():
+    """The command-line parser. --url, --model and --metrics have no default here: parse_args fills them in.
+
+    Returns:
+        argparse.ArgumentParser."""
     a = argparse.ArgumentParser()
-    a.add_argument("--url", default=settings.read_setting("URL", "http://127.0.0.1:8000"),
-                   help="target (default: BENCH_URL, else http://127.0.0.1:8000)")
-    a.add_argument("--model", default=settings.read_setting("MODEL", "bench"),
-                   help="served model name, --served-model-name (default: BENCH_MODEL, else bench)")
+    a.add_argument("--url", default=None, help=f"target (default: BENCH_URL, else {DEFAULT_URL})")
+    a.add_argument("--model", default=None,
+                   help=f"served model name, --served-model-name (default: BENCH_MODEL, else {DEFAULT_MODEL})")
     a.add_argument("--agents", default="code_review,pentest,report")
     a.add_argument("--levels", default="1 2 4 8", help="concurrent tasks, separated by spaces")
     a.add_argument("--duration", type=float, default=900, help="seconds per level")
@@ -55,8 +58,9 @@ def build_parser():
     a.add_argument("--scale", type=float, default=1.0, help="multiplies all sizes (0.2 for a model with a 32,768-token context)")
     a.add_argument("--mode", choices=["scripted", "autonomous"], default="scripted")
     a.add_argument("--latency-factor", type=float, default=1.0, help="multiplies the simulated tool latencies")
-    a.add_argument("--metrics", default=settings.read_setting("METRICS"),
-                   help="vLLM /metrics URLs, separated by spaces (default: BENCH_METRICS, else <url>/metrics)")
+    a.add_argument("--metrics", default=None,
+                   help="vLLM /metrics URLs, separated by spaces (default: BENCH_METRICS if --url is not given, "
+                        "else <url>/metrics)")
     a.add_argument("--no-metrics", action="store_true", help="do not read /metrics")
     a.add_argument("--output", default="results-agents")
     a.add_argument("--label", required=True)
@@ -64,6 +68,28 @@ def build_parser():
     a.add_argument("--label-agents", action="store_true",
                    help="add metadata.agent=<profile> to each request (per-agent view via LiteLLM)")
     return a
+
+
+def parse_args(argv=None):
+    """Parse the command line, then fill --url, --model and --metrics from BENCH_URL, BENCH_MODEL and BENCH_METRICS (an
+    empty variable counts as not set), then from the built-in defaults. An option given on the command line wins.
+
+    BENCH_METRICS goes with BENCH_URL: it is used only when --url is not given. A run aimed at another URL (the fake
+    server of Appendix E, for example) then never reads the metrics of the server of target.env."""
+    p = build_parser().parse_args(argv)
+    url_given = bool(p.url)
+    p.url = p.url or settings.read_setting("URL", DEFAULT_URL)
+    p.model = p.model or settings.read_setting("MODEL", DEFAULT_MODEL)
+    if not p.metrics and not url_given:
+        p.metrics = settings.read_setting("METRICS")
+    return p
+
+
+def metrics_urls(p):
+    """The /metrics URLs to read: none with --no-metrics, else --metrics (URLs separated by spaces), else <url>/metrics."""
+    if p.no_metrics:
+        return []
+    return p.metrics.split() if p.metrics and p.metrics.strip() else [p.url.rstrip("/") + "/metrics"]
 
 
 def main():
@@ -74,7 +100,7 @@ def main():
     Raises:
         SystemExit: on invalid options or an existing label without --overwrite (exit code 130 on Ctrl-C)."""
     settings.warn_ignored_settings()
-    p = build_parser().parse_args()
+    p = parse_args()
     module_agents.LATENCY_FACTOR = p.latency_factor
     key = settings.api_key()
     # One key per profile (LiteLLM virtual keys, per-agent view by api_key_alias):
@@ -87,7 +113,7 @@ def main():
     if p.warmup >= p.duration:
         raise SystemExit(f"--warmup ({p.warmup:.0f} s) must be less than --duration ({p.duration:.0f} s): "
                          "otherwise the measurement window is empty.")
-    urls_metrics = [] if p.no_metrics else (p.metrics.split() if p.metrics else [p.url.rstrip("/") + "/metrics"])
+    urls_metrics = metrics_urls(p)
     agents = [x.strip() for x in p.agents.split(",") if x.strip()]
     unknown = [x for x in agents if x not in AGENTS]
     if unknown:
