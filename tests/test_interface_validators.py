@@ -1040,3 +1040,26 @@ def test_generate_then_agentx_script_stops_when_the_generation_fails(tmp_path):
     out = subprocess.run(["bash", "-c", server.GENERATE_THEN_AGENTX, "generate-traces", str(tmp_path / "t"), sys.executable,
                           "nonexistent-preset", "bash", str(fake), "l", "1"], cwd=server.ROOT, capture_output=True, text=True, timeout=60)
     assert out.returncode != 0 and "AGENTX" not in out.stdout
+
+
+def test_generate_then_agentx_script_ignores_a_stale_half_written_folder(tmp_path):
+    """A generation that was stopped leaves at most a `.tmp` folder: the next run starts again and the final folder is whole."""
+    import subprocess
+    fake = tmp_path / "agentx.sh"
+    fake.write_text('echo "AGENTX"\n')
+    folder = tmp_path / "traces-tiny"
+    (tmp_path / "traces-tiny.tmp").mkdir()
+    (tmp_path / "traces-tiny.tmp" / "trace-0001.json").write_text("{}")
+    out = subprocess.run(["bash", "-c", server.GENERATE_THEN_AGENTX, "generate-traces", str(folder), sys.executable, "tiny",
+                          "bash", str(fake), "l", "1"], cwd=server.ROOT, capture_output=True, text=True, timeout=120)
+    assert out.returncode == 0 and "AGENTX" in out.stdout
+    assert len(list(folder.glob("trace-*.json"))) == 30 and not (tmp_path / "traces-tiny.tmp").exists()
+
+
+def test_display_command_says_what_a_generated_run_does():
+    cmd, _, _ = server.agentx_command({**AGENTX, "generate": "small"})
+    shown = server.display_command(cmd)
+    assert shown[0].startswith("[writes traces-small with the small preset") and shown[1:] == cmd[7:]
+    plain, _, _ = server.agentx_command(AGENTX)
+    assert server.display_command(plain) == plain
+

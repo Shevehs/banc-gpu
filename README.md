@@ -739,7 +739,11 @@ This writes 30 sessions whose longest call is about 28,000 tokens (preset `small
 python tools/make_traces.py --preset small --output traces-small
 ```
 
-The interface does the same from the "Trace set" list of the AgentX launch ([section 9](#9-interface)).
+The interface does the same from the "Trace set" list of the AgentX launch ([section 9](#9-interface)):
+
+- it writes `traces-<preset>` the first time and reuses the folder afterwards;
+- it uses the default options (30 sessions, seed 1): for anything else, run the script yourself;
+- to generate a set again, delete its folder.
 
 The presets are `tiny`, `small`, `medium` and `large`: the longest call is 8,000, 28,000, 120,000 and 250,000 tokens.
 The script prints the `--max-model-len` that vLLM needs for your set.
@@ -1434,7 +1438,7 @@ of the chosen view.
 | `pyproject.toml` | dependency groups (`runtime`, `dev` with `pytest` and `ruff`, `tokenizer` with the `tokenizers` library), pytest and ruff configuration; the repository is run from its root, not pip-installed |
 | `tests/` | tests (`python -m pytest`): golden reference outputs of the two report kinds and of the observation views (`tests/golden/`), validators, round-trip tests; lint with `ruff check .` |
 
-`.gitignore` also keeps out of the repository `target.env`, the AgentX traces folders (`traces-agentx*/`), `prometheus.yml`,
+`.gitignore` also keeps out of the repository `target.env`, the AgentX traces folders (`traces-agentx*/`, and `traces-tiny/`, `traces-small/`, `traces-medium/`, `traces-large/` for generated sets), `prometheus.yml`,
 `litellm.key`, `prometheus-data/`, `data/`, `/*.csv` and the results folders (`results*/`, `agents_test/results*/`).
 
 The test agents use no internal data. The logs contain numbers (times, tokens,
@@ -1446,6 +1450,7 @@ durations), labels, agent names and error messages; no prompt or response conten
 |---|---|---|
 | `ERROR: the server does not know the model` (`sweep.sh` / `agentx.sh` stop at once) | `BENCH_MODEL` is not set (so it is `bench`), or is not a name the server serves | set `BENCH_MODEL` to a name the message lists, for example by loading `target.env` ([section 5.2](#52-set-the-connection)) |
 | the interface form starts empty although `target.env` is filled in | the interface reads only plain `export BENCH_NAME=value` lines (`$`, backticks and empty values are skipped), once, when it starts | write plain values, then restart the interface |
+| AgentX: a generated set is not the one I expected (old size or options) | the interface reuses an existing `traces-<preset>` folder | delete the folder and launch again, or generate it yourself with `tools/make_traces.py --overwrite` |
 | failure at concurrency N (`sweep.sh` / `agentx.sh` stop) | see `results/<label>/c<N>.log` | often tokenizer not found ([section 5.3](#53-copy-the-tokenizer)) or target unreachable ([section 5.4](#54-test-the-connection)) |
 | `HFValidationError` or tokenizer not found in the AIPerf log | AIPerf launched by hand with `HF_HUB_OFFLINE=1`, or `BENCH_TOKENIZER` = a Hugging Face name absent from the local cache | go through `sweep.sh` with the tokenizer in `tools/tokenizer/` ([section 5.3](#53-copy-the-tokenizer)) |
 | preempt / cache / MTP columns empty | `/metrics` not read, or not vLLM's | check `BENCH_METRICS`: vLLM's address, required through LiteLLM (launch warning, [section 5.4](#54-test-the-connection)) |

@@ -292,7 +292,7 @@ function Launch({ onLaunched, c, params, setParams, kind, setKind }) {
               <input value={p.tokenizer} placeholder="tools/tokenizer" onChange={set("tokenizer")} />
             </Field>
             <Field label="Trace set" help={p.trace_set.startsWith("gen:")
-              ? "written to traces-<preset> in the repository the first time, then reused; the log gives the --max-model-len vLLM needs. Run marked unverified (submission_valid=false): comparable between your own runs only"
+              ? "written to traces-<preset> in the repository the first time, then reused; the log of the first run gives the --max-model-len vLLM needs. Run marked unverified (submission_valid=false): comparable between your own runs only"
               : p.trace_set === "local" ? "run marked unverified (submission_valid=false)"
               : "published sets are downloaded from Hugging Face; 256k: requests over 256,000 tokens removed (for --max-model-len ≈ 256,000)"}>
               <select value={p.trace_set} onChange={set("trace_set")}>

@@ -12,6 +12,7 @@ traces-tiny/
 traces-small/
 traces-medium/
 traces-large/
+traces-*.tmp/
 prometheus.yml
 litellm.key
 prometheus-data/

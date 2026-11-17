@@ -292,8 +292,18 @@ TRACE_PRESETS = ("tiny", "small", "medium", "large")      # the presets of tools
 GENERATE_THEN_AGENTX = (
     'dir="$1"; py="$2"; preset="$3"; shift 3; '
     'if ls "$dir"/trace-*.json >/dev/null 2>&1; then echo "Traces: reusing $dir (preset $preset)"; '
-    'else echo "Traces: generating $dir (preset $preset)"; "$py" tools/make_traces.py --preset "$preset" --output "$dir" || exit $?; fi; '
+    'else echo "Traces: generating $dir (preset $preset)"; rm -rf "$dir.tmp"; '
+    # written aside and moved at the end: a generation that is stopped leaves no half set in $dir
+    'if ! "$py" tools/make_traces.py --preset "$preset" --output "$dir.tmp"; then rm -rf "$dir.tmp"; exit 1; fi; '
+    'mkdir -p "$dir" && mv "$dir.tmp"/* "$dir"/ && rmdir "$dir.tmp" || exit $?; fi; '
     'echo; exec "$@"')
+
+
+def display_command(cmd):
+    """The command as shown in the log: for a generated set, what it does in words, then the agentx.sh command."""
+    if len(cmd) > 7 and cmd[1:3] == ["-c", GENERATE_THEN_AGENTX]:
+        return [f"[writes {cmd[4]} with the {cmd[6]} preset unless it already holds traces, then]"] + cmd[7:]
+    return cmd
 
 
 def agentx_command(p):
@@ -443,7 +453,7 @@ async def launch(req):
     log = LOGS_DIR / f"{eid}.log"
     f = open(log, "w", encoding="utf-8")
     display = " ".join(f"{k}={'***' if k in SECRETS else repr(v) if ' ' in v else v}" for k, v in env.items()) \
-        + (" " if env else "") + " ".join(f"'{c}'" if " " in c else c for c in cmd)
+        + (" " if env else "") + " ".join(f"'{c}'" if " " in c and not c.startswith("[writes") else c for c in display_command(cmd))
     f.write(f"$ cd {cwd}\n$ {display}\n\n"); f.flush()
     proc = await asyncio.create_subprocess_exec(*cmd, cwd=str(cwd), env={**base_environment(), **env, "PYTHONUNBUFFERED": "1"},
                                                 stdout=f, stderr=asyncio.subprocess.STDOUT, start_new_session=True)
