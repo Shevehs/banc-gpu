@@ -646,7 +646,6 @@ def common(prom_url, *extra):
 
 
 @pytest.mark.parametrize("extra,message", [
-    (["--window", "59s"], "--window must be at least 4 x --scrape (60 s)"),
     (["--window", "1m", "--scrape", "30s"], "--window must be at least 4 x --scrape (120 s)"),
     (["--view", "agents"], "--view agents: give --litellm"),
     (["--vllm", "job=vllm"], "--vllm: label selector expected"),
@@ -664,6 +663,15 @@ def test_main_rejects_invalid_arguments_before_any_request(monkeypatch, stub, ut
     with pytest.raises(SystemExit) as e:
         run_main(monkeypatch, *common(s.url), *extra)
     assert message in str(e.value) and s.seen == []
+
+
+def test_main_refuses_a_short_window_after_asking_prometheus_for_its_interval(monkeypatch, stub, utc_timezone):
+    """Without --scrape the interval is read from Prometheus first, so this refusal comes after that one request."""
+    s = stub({})
+    with pytest.raises(SystemExit, match=r"4 x the scrape interval \(60 s, default: Prometheus did not say\)"):
+        run_main(monkeypatch, *common(s.url), "--window", "59s")
+    assert {r["path"].split("?")[0] for r in s.seen} <= {"/api/v1/targets", "/api/v1/status/config"}
+    assert not [r for r in s.seen if "query_range" in r["path"]]
 
 
 def test_main_requires_the_target_and_the_gpu(monkeypatch, capsys):
@@ -709,8 +717,9 @@ def test_main_windows_view_header_rows_and_verdict(monkeypatch, prom, capsys, ut
     run_main(monkeypatch, *common(s.url))
     lines = capsys.readouterr().out.splitlines()
     assert lines[0] == f'Prometheus {s.url}, vLLM {{job="vllm"}}; 2024-05-14 00:00 → 2024-05-14 00:15, windows of 300 s'
-    assert [l[:23] for l in lines[3:6]] == ["2024-05-14 00:00  00:05", "2024-05-14 00:05  00:10", "2024-05-14 00:10  00:15"]
-    assert all(l.endswith("  holds") for l in lines[3:6])
+    assert lines[1] == "Scrape interval: 15 s (default: Prometheus did not say)"
+    assert [l[:23] for l in lines[4:7]] == ["2024-05-14 00:00  00:05", "2024-05-14 00:05  00:10", "2024-05-14 00:10  00:15"]
+    assert all(l.endswith("  holds") for l in lines[4:7])
 
 
 def test_main_output_csv_has_one_row_per_window_even_when_discarded(monkeypatch, prom, tmp_path, utc_timezone):
@@ -800,7 +809,7 @@ def test_module_runs_as_a_program_and_reports_errors_on_stderr(prom, utc_timezon
     assert ok.returncode == 0 and "night (0-6 h)" in ok.stdout and ok.stderr == ""
     bad = helpers.run([helpers.sys.executable, "-B", "-m", "observation.query", *common(s.url), "--window", "10s"],
                       env=helpers.clean_environment(TZ="UTC"))
-    assert bad.returncode == 1 and "--window must be at least 4 x --scrape" in bad.stderr and bad.stdout == ""
+    assert bad.returncode == 1 and "--window must be at least 4 x the scrape interval" in bad.stderr and bad.stdout == ""
 
 
 def test_help_lists_the_options():
@@ -809,3 +818,220 @@ def test_help_lists_the_options():
     for option in ("--prometheus", "--target", "--gpu", "--vllm", "--litellm", "--by", "--since", "--start", "--end",
                    "--window", "--scrape", "--ttft-max", "--view", "--period", "--exclude", "--output"):
         assert option in r.stdout
+
+
+# ---------------------------------------------------------------- the scrape interval is read from Prometheus
+@pytest.mark.parametrize("text,seconds", [
+    ("15s", 15), ("1m", 60), ("1m30s", 90), ("500ms", 0.5), ("2h", 7200), ("1d", 86400), ("1w", 604800), ("0.5s", 0.5),
+    ("1h30m", 5400),
+])
+def test_parse_prometheus_duration(text, seconds):
+    assert query.parse_prometheus_duration(text) == seconds
+
+
+@pytest.mark.parametrize("text", ["", None, "15", "s", "1x", "1m 30s", "-5s", "fifteen", "15S"])
+def test_parse_prometheus_duration_refuses_what_prometheus_does_not_write(text):
+    assert query.parse_prometheus_duration(text) is None
+
+
+@pytest.mark.parametrize("selector,expected", [
+    ('job="vllm"', True), ('job="litellm"', False), ('job!="litellm"', True), ('job=~"vl.*"', True), ('job=~"vl"', False),
+    ('job!~"lite.*"', True), ('job="vllm",instance="h:8000"', True), ('job="vllm",instance="other"', False),
+    ('team="x"', False), ('team!="x"', True), ("", True),
+])
+def test_matches_selector(selector, expected):
+    assert query.matches_selector({"job": "vllm", "instance": "h:8000"}, selector) is expected
+
+
+def test_matches_selector_regex_must_match_the_whole_value():
+    assert query.matches_selector({"job": "vllm-2"}, 'job=~"vllm"') is False
+    assert query.matches_selector({"job": "vllm-2"}, 'job=~"vllm.*"') is True
+
+
+def targets(*pairs):
+    """The data of /api/v1/targets for (job, scrapeInterval) pairs."""
+    return {"activeTargets": [{"scrapePool": job, "labels": {"job": job, "instance": f"{job}:1"}, "scrapeInterval": every,
+                               "health": "up"} for job, every in pairs]}
+
+
+CONFIG = {"yaml": "global:\n  scrape_interval: 20s\n  scrape_timeout: 10s\nscrape_configs:\n- job_name: vllm\n"}
+
+
+def detect(prom, endpoints, selectors=('job="vllm"', None)):
+    s = prom(lambda *a: [], endpoints)
+    return query.detect_scrape_interval(query.Prometheus(s.url), list(selectors)), s
+
+
+def test_the_interval_of_the_matching_targets_is_used(prom):
+    (seconds, where), _ = detect(prom, {"/api/v1/targets": targets(("vllm", "5s"), ("litellm", "30s"))})
+    assert seconds == 5 and "targets" in where
+
+
+def test_with_a_litellm_selector_the_longest_interval_wins(prom):
+    (seconds, _), _ = detect(prom, {"/api/v1/targets": targets(("vllm", "5s"), ("litellm", "30s"))},
+                             ('job="vllm"', 'job="litellm"'))
+    assert seconds == 30
+
+
+def test_sub_second_and_fractional_intervals_round_up_to_whole_seconds(prom):
+    assert detect(prom, {"/api/v1/targets": targets(("vllm", "500ms"))})[0][0] == 1
+    assert detect(prom, {"/api/v1/targets": targets(("vllm", "1m30s"))})[0][0] == 90
+    assert detect(prom, {"/api/v1/targets": targets(("vllm", "2500ms"))})[0][0] == 3
+
+
+def test_when_no_target_matches_the_global_interval_is_used(prom):
+    (seconds, where), _ = detect(prom, {"/api/v1/targets": targets(("other", "5s")), "/api/v1/status/config": CONFIG})
+    assert seconds == 20 and "global" in where
+
+
+def test_without_the_targets_endpoint_the_global_interval_is_used(prom):
+    (seconds, where), _ = detect(prom, {"/api/v1/status/config": CONFIG})
+    assert seconds == 20 and "global" in where
+
+
+def test_the_global_interval_is_read_from_the_global_section_only(prom):
+    config = {"yaml": "scrape_configs:\n- job_name: x\n  scrape_interval: 1s\nglobal:\n  evaluation_interval: 1m\n"
+                      "  scrape_interval: 45s\n"}
+    assert detect(prom, {"/api/v1/status/config": config})[0][0] == 45
+
+
+@pytest.mark.parametrize("endpoints", [
+    {}, {"/api/v1/targets": {"activeTargets": []}, "/api/v1/status/config": {"yaml": "nothing useful"}},
+    {"/api/v1/targets": {"activeTargets": [{"scrapePool": "vllm", "scrapeInterval": "soon"}]}},
+    {"/api/v1/targets": "not an object"},
+])
+def test_when_prometheus_cannot_say_the_default_is_15_seconds(prom, endpoints):
+    (seconds, where), _ = detect(prom, endpoints)
+    assert seconds == query.DEFAULT_SCRAPE_S == 15 and "did not say" in where
+
+
+def test_an_unreachable_prometheus_gives_the_default():
+    assert query.detect_scrape_interval(query.Prometheus("http://127.0.0.1:1"), ['job="vllm"']) == (15, "default: Prometheus did not say")
+
+
+def test_the_prometheus_key_is_sent_to_the_targets_endpoint(prom):
+    s = prom(lambda *a: [], {"/api/v1/targets": targets(("vllm", "5s"))})
+    query.detect_scrape_interval(query.Prometheus(s.url, "sk-prom"), ['job="vllm"'])
+    assert s.gets and all(h.get("Authorization") == "Bearer sk-prom" for _, h in s.gets)
+
+
+def test_main_reads_the_interval_from_prometheus_and_says_so(monkeypatch, prom, capsys, utc_timezone):
+    s = prom(fixtures.prometheus_responder(DAY + 300, 300, [fixtures.prom_window(300, 100)] * 3),
+             {"/api/v1/targets": targets(("vllm", "30s"))})
+    run_main(monkeypatch, *common(s.url))
+    assert "Scrape interval: 30 s (read from Prometheus: the interval of the selected targets)" in capsys.readouterr().out
+
+
+def test_main_with_scrape_given_does_not_ask_prometheus(monkeypatch, prom, capsys, utc_timezone):
+    s = prom(fixtures.prometheus_responder(DAY + 300, 300, [fixtures.prom_window(300, 100)] * 3),
+             {"/api/v1/targets": targets(("vllm", "30s"))})
+    run_main(monkeypatch, *common(s.url, "--scrape", "10s"))
+    assert "Scrape interval: 10 s (given by --scrape)" in capsys.readouterr().out
+    assert s.gets == []
+
+
+def test_main_refuses_a_window_shorter_than_four_detected_scrapes(monkeypatch, prom):
+    s = prom(lambda *a: [], {"/api/v1/targets": targets(("vllm", "90s"))})
+    with pytest.raises(SystemExit, match=r"4 x the scrape interval \(360 s, read from Prometheus: the interval of the selected"):
+        run_main(monkeypatch, *common(s.url))
+
+
+# ---------------------------------------------------------------- the rows of each view, as data (--view-output)
+def read_csv(path):
+    return list(csv.DictReader(path.open(newline="", encoding="utf-8")))
+
+
+@pytest.mark.parametrize("label,mode,hour", [
+    ("night (0-6 h)", "range", 0), ("morning (6-12 h)", "range", 6), ("afternoon (12-18 h)", "range", 12),
+    ("evening (18-24 h)", "range", 18), ("00 h", "hour", 0), ("07 h", "hour", 7), ("23 h", "hour", 23),
+])
+def test_period_start_hour(label, mode, hour):
+    assert query.period_start_hour(label, mode) == hour
+
+
+def test_period_rows_are_in_the_order_of_the_day_with_the_merged_indicators(utc_timezone):
+    valid = [window(DAY + 13 * 3600), window(DAY + 2 * 3600, requests=10), window(DAY + 3 * 3600, requests=30)]
+    rows = query.period_rows(valid, arguments())
+    assert [r["period"] for r in rows] == ["night (0-6 h)", "afternoon (12-18 h)"]          # not alphabetical
+    assert [(r["start_hour"], r["windows"]) for r in rows] == [(0, 2), (12, 1)]
+    assert rows[0]["completed_requests"] == 40                                                # 10 + 30 merged
+    assert rows[0]["verdict"] == "holds" and "output_throughput_per_gpu" in rows[0]
+
+
+def test_period_rows_by_hour_and_without_any_usable_window(utc_timezone):
+    rows = query.period_rows([window(DAY + 14 * 3600), window(DAY + 13 * 3600), window(DAY + 13 * 3600 + 900)], arguments(period="hour"))
+    assert [(r["period"], r["windows"]) for r in rows] == [("13 h", 2), ("14 h", 1)]
+    assert query.period_rows([], arguments()) == []
+
+
+def test_period_rows_have_the_columns_of_the_windows_plus_three(utc_timezone):
+    valid = [window(DAY + 3 * 3600)]
+    window_columns = set(query.evaluate(valid[0], arguments()))
+    assert set(query.period_rows(valid, arguments())[0]) == window_columns | {"period", "start_hour", "windows"}
+
+
+def test_agent_rows_add_the_windows_and_name_the_missing_identity():
+    valid = [window(agents={"coder": agent(30), "": agent(2)}),
+             window(DAY + 300, agents={"coder": agent(30), "reviewer": agent(10, 100.0, False)}), window(DAY + 600, agents=None)]
+    rows = {r["agent"]: r for r in query.agent_rows(valid)}
+    assert set(rows) == {"coder", "reviewer", ""}
+    assert rows["coder"]["requests"] == 60 and rows["coder"]["agent_name"] == "coder"
+    assert rows[""]["agent_name"] == "(no identity)"
+    assert rows["reviewer"]["mean_speed"] is None                                              # not every request streamed
+    assert round(sum(r["output_token_share"] for r in rows.values()), 6) == 1.0
+    assert query.agent_rows([window(agents={}), window(agents=None)]) == []
+
+
+def test_the_text_views_are_unchanged_by_the_row_helpers(capsys, utc_timezone):
+    """period_view and agents_view print what they printed before (the golden tests hold the full text)."""
+    valid = [window(DAY + 13 * 3600), window(DAY + 2 * 3600, requests=10)]
+    query.period_view(valid, arguments())
+    assert [l.split()[0] for l in capsys.readouterr().out.splitlines()[1:3]] == ["afternoon", "night"]
+
+
+def test_main_view_output_for_the_windows_view_is_the_windows(monkeypatch, prom, tmp_path, utc_timezone):
+    out, view = tmp_path / "w.csv", tmp_path / "v.csv"
+    run_main(monkeypatch, *common(canned(prom).url, "--output", str(out), "--view-output", str(view)))
+    assert read_csv(view) == read_csv(out) and len(read_csv(view)) == 3
+
+
+def test_main_view_output_for_the_period_view_is_one_row_per_period(monkeypatch, prom, tmp_path, utc_timezone):
+    out, view = tmp_path / "w.csv", tmp_path / "v.csv"
+    run_main(monkeypatch, *common(canned(prom).url, "--view", "period", "--output", str(out), "--view-output", str(view)))
+    rows = read_csv(view)
+    assert [(r["period"], r["start_hour"], r["windows"]) for r in rows] == [("night (0-6 h)", "0", "3")]
+    assert len(read_csv(out)) == 3                                                            # --output still has the windows
+
+
+def test_main_view_output_for_the_agents_view_is_one_row_per_agent(monkeypatch, prom, tmp_path, utc_timezone):
+    view = tmp_path / "v.csv"
+    windows = [fixtures.prom_window(300, 100, agents={"coder": agent(80), "reviewer": agent(20)})] * 3
+    run_main(monkeypatch, *common(canned(prom, windows).url, "--litellm", 'job="litellm"', "--view", "agents", "--view-output", str(view)))
+    rows = read_csv(view)
+    assert [(r["agent"], r["requests"]) for r in rows] == [("coder", "240.0"), ("reviewer", "60.0")]
+    assert rows[0]["output_token_share"].startswith("0.8")
+
+
+def test_main_without_view_output_writes_no_view_file(monkeypatch, prom, tmp_path, utc_timezone):
+    run_main(monkeypatch, *common(canned(prom).url, "--view", "period"))
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_window_rows_say_why_a_window_was_discarded(monkeypatch, prom, tmp_path, utc_timezone):
+    out = tmp_path / "w.csv"
+    run_main(monkeypatch, *common(canned(prom).url, "--exclude", "2024-05-14 00:03/2024-05-14 00:07", "--output", str(out)))
+    rows = read_csv(out)
+    assert [r["discard_reason"] for r in rows] == ["excluded range (stress test)", "excluded range (stress test)", ""]
+    assert [r["discarded"] for r in rows] == ["True", "True", "False"]
+
+
+def test_get_data_gives_none_when_the_answer_is_cut_short(monkeypatch):
+    """A broken HTTP answer (not only an unreachable host) must not stop an optional probe."""
+    import http.client
+
+    class Opener:
+        def open(self, *a, **k):
+            raise http.client.IncompleteRead(b"")
+    monkeypatch.setattr(query, "_OPENER", Opener())
+    assert query.Prometheus("http://prom:9090").get_data("/api/v1/targets") is None
+

@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import {
-  CartesianGrid, Legend, Line, LineChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis,
+  Bar, BarChart, CartesianGrid, Cell, Legend, Line, LineChart, ReferenceLine, ResponsiveContainer, Scatter, ScatterChart,
+  Tooltip, XAxis, YAxis,
 } from "recharts";
 
 // Access token: it is part of the address printed when the server starts (?token=...).
@@ -21,7 +22,11 @@ const pct = (x) => (x === "" || x === undefined || x === null || isNaN(+x) ? "�
 
 // ------------------------------------------------------------------ initial values
 // Nothing is hard-wired: everything is entered in the form.
-const CONNECTION = { url: "http://127.0.0.1:8000", model: "bench", metrics: "", api_key: "" };
+// The target, and the GPUs behind it (empty: filled in from the fingerprint when the connection is tested).
+const CONNECTION = { url: "http://127.0.0.1:8000", model: "bench", metrics: "", api_key: "", gpu: "" };
+// Prometheus, for the observation (no load, nothing to start).
+const PROMETHEUS = { prometheus: "http://127.0.0.1:9090", prometheus_key: "", vllm: 'job="vllm"', litellm: "",
+  by: "metadata_agent" };
 const INITIAL = {
   synthetic: { tokenizer: "", isl: 2048, osl: 256, levels: "1 2 4 8 16", duration: "", requests_per_concurrency: 8,
     temperature: 0.7, root: "results", extra: "", label: "run-r1" },
@@ -31,10 +36,9 @@ const INITIAL = {
   agentx: { levels: "1 2 4 8", duration: 1800, tokenizer: "", traces_dir: "", short_run: false, max_context: "", variant: "",
     root: "results-agentx", label: "agentx-r1" },
 };
-// Observation: Prometheus only (no load, nothing to start). Fields are kept while the page stays open.
-const OBSERVATION = { prometheus: "http://127.0.0.1:9090", prometheus_key: "", vllm: 'job="vllm"', litellm: "",
-  by: "metadata_agent", since: "2h", start: "", end: "", window: "5m", scrape: "15s", target: 30, gpu: 1,
-  ttft_max: "", view: "windows", period: "range" };
+// Observation: what is asked of Prometheus. Fields are kept while the page stays open.
+const OBSERVATION = { since: "2h", start: "", end: "", window: "5m", target: 30, ttft_max: "", view: "windows",
+  period: "range", x: "", y: "" };
 const KINDS = [["synthetic", "Stress test: synthetic"], ["agentx", "Stress test: AgentX"],
   ["agents", "Stress test: test agents"]];
 const NOTES = {
@@ -80,7 +84,7 @@ function ServerConfig({ config }) {
       {config.deduced_gpus && (
         <p>{config.deduced_gpus.count
           ? `GPUs deduced: ${config.deduced_gpus.explanation}${config.deduced_gpus.masking_possible ? " (1 GPU per server assumed: --fingerprint-mode hash would hide the parallelism)" : ""}`
-          : `GPUs not deduced: ${config.deduced_gpus.explanation} (give the GPU count by hand in Results)`}</p>
+          : `GPUs not deduced: ${config.deduced_gpus.explanation} (give the GPU count by hand in the field above, or in Results)`}</p>
       )}
       {servers.filter(badMetrics).map((s) => (
         <p key={s.metrics} className="warning">{base(s.metrics)}: {s.vllm_lines === 0 ? "no vllm: metric" : s.metrics_status === "budget" ? "not read (time budget exhausted)"
@@ -129,32 +133,26 @@ function ServerConfig({ config }) {
   );
 }
 
-// ------------------------------------------------------------------ Launch tab
-function Launch({ onLaunched, c, setC, params, setParams, kind, setKind }) {
-  const [msg, setMsg] = useState(null);
-  const [test, setTest] = useState(null);
-  const p = params[kind];
+// ------------------------------------------------------------------ Configuration tab
+// Where the servers are: the target (vLLM, or a gateway) with the GPUs behind it, and Prometheus. The other tabs read it.
+function Configuration({ c, setC, prom, setProm, test, setTest, defaults }) {
   const setConn = (k) => (e) => setC({ ...c, [k]: e.target.value });
-  const set = (k) => (e) => setParams({ ...params, [kind]: { ...p, [k]: e.target.value } });
-  const check = (k) => (e) => setParams({ ...params, [kind]: { ...p, [k]: e.target.checked } });
-  const toggleAgent = (a) => setParams({ ...params, agents: { ...p,
-    agents: p.agents.includes(a) ? p.agents.filter((x) => x !== a) : [...p.agents, a] } });
-
+  const setP = (k) => (e) => setProm({ ...prom, [k]: e.target.value });
+  // BENCH_API_KEY of the terminal never reaches this page: the server uses it, but only for the target BENCH_URL.
+  const keyFromTerminal = !!(defaults?.api_key_set && defaults.api_key_url);
+  const keyHelp = keyFromTerminal
+    ? `optional; never written to the logs. Left empty, the key of the terminal (BENCH_API_KEY) is used while the target URL is ${defaults.api_key_url}`
+    : defaults?.api_key_set ? "optional; never written to the logs. BENCH_API_KEY is set in the terminal but BENCH_URL is not: that key is not used"
+    : "optional; never written to the logs";
   const testConnection = async () => {
     setTest({ pending: true });
     try {
-      setTest(await api("/api/test-connection", { method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(c) }));
+      const r = await api("/api/test-connection", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(c) });
+      setTest(r);
+      const n = r?.config?.deduced_gpus?.count;
+      if (n && !c.gpu) setC({ ...c, gpu: String(n) });   // a number typed by hand is never replaced
     } catch (e) { setTest({ error: e.message }); }
-  };
-  const submit = async () => {
-    setMsg(null);
-    try {
-      const r = await api("/api/runs", { method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ type: kind, ...c, ...p }) });
-      setMsg({ ok: true, text: `Run started: ${r.id}` });
-      onLaunched(r.id);
-    } catch (e) { setMsg({ ok: false, text: e.message }); }
   };
 
   return (
@@ -170,8 +168,12 @@ function Launch({ onLaunched, c, setC, params, setParams, kind, setKind }) {
         <Field label="vLLM metrics URL" help="optional; fill in if the target is a gateway, or one URL per replica (separated by spaces)">
           <input value={c.metrics} placeholder="http://vllm-host:8000/metrics" onChange={setConn("metrics")} />
         </Field>
-        <Field label="API key" help="optional; never written to the logs">
-          <input type="password" autoComplete="off" value={c.api_key} onChange={setConn("api_key")} />
+        <Field label="API key" help={keyHelp}>
+          <input type="password" autoComplete="off" value={c.api_key} placeholder={keyFromTerminal ? "key of the terminal" : ""}
+            onChange={setConn("api_key")} />
+        </Field>
+        <Field label="GPUs behind the target" help="all replicas; used by the observation. Filled in from the fingerprint when you test the connection, if you leave it empty">
+          <input type="number" min="1" value={c.gpu} placeholder="deduced by the test" onChange={setConn("gpu")} />
         </Field>
       </div>
       <div className="row">
@@ -194,7 +196,50 @@ function Launch({ onLaunched, c, setC, params, setParams, kind, setKind }) {
       {test?.run_in_progress && <p className="warning">A run is in progress: no one-token completion is sent, so the fingerprint is not read (it would fall inside the measurement).</p>}
       {test?.config && <ServerConfig config={test.config} />}
 
-      <h3>Run</h3>
+      <h3>Prometheus</h3>
+      <p className="note">The observation queries a Prometheus that scrapes vLLM's /metrics (and LiteLLM's for the per-agent view).
+        No load is generated. The scrape interval is read from Prometheus. Setup: README, section 7.</p>
+      <div className="grid">
+        <Field label="Prometheus URL"><input value={prom.prometheus} onChange={setP("prometheus")} /></Field>
+        <Field label="Prometheus key" help="optional; empty if Prometheus does not require a token">
+          <input type="password" autoComplete="off" value={prom.prometheus_key} onChange={setP("prometheus_key")} />
+        </Field>
+        <Field label="vLLM targets" help="selector on the target labels (job, instance); all replicas are added up">
+          <input value={prom.vllm} onChange={setP("vllm")} />
+        </Field>
+        <Field label="LiteLLM targets" help='optional, per-agent view: e.g. job="litellm"'>
+          <input value={prom.litellm} placeholder='job="litellm"' onChange={setP("litellm")} />
+        </Field>
+        <Field label="Agents distinguished by" help="metadata_agent (metadata.agent field) or api_key_alias (one key per agent)">
+          <input value={prom.by} onChange={setP("by")} />
+        </Field>
+      </div>
+    </section>
+  );
+}
+
+// ------------------------------------------------------------------ Launch stress tests tab
+function Launch({ onLaunched, c, params, setParams, kind, setKind }) {
+  const [msg, setMsg] = useState(null);
+  const p = params[kind];
+  const set = (k) => (e) => setParams({ ...params, [kind]: { ...p, [k]: e.target.value } });
+  const check = (k) => (e) => setParams({ ...params, [kind]: { ...p, [k]: e.target.checked } });
+  const toggleAgent = (a) => setParams({ ...params, agents: { ...p,
+    agents: p.agents.includes(a) ? p.agents.filter((x) => x !== a) : [...p.agents, a] } });
+
+  const submit = async () => {
+    setMsg(null);
+    try {
+      const r = await api("/api/runs", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ type: kind, ...c, ...p }) });
+      setMsg({ ok: true, text: `Run started: ${r.id}` });
+      onLaunched(r.id);
+    } catch (e) { setMsg({ ok: false, text: e.message }); }
+  };
+
+  return (
+    <section>
+      <p className="note">Target: <code>{c.url}</code>, model <code>{c.model}</code>. Change it in the Configuration tab.</p>
       <div className="row">
         <div className="segments">
           {KINDS.map(([k, l]) => (
@@ -344,56 +389,189 @@ function Runs({ selection, setSelection }) {
 
 // ------------------------------------------------------------------ Observation tab
 // Reads Prometheus (which scrapes vLLM's and LiteLLM's /metrics): nothing to start, no load generated.
-function Observation({ o, setO }) {
+// What can be put on an axis: [column of the rows, label, unit shown, is a share (0-1)].
+const WINDOW_VARIABLES = [
+  ["output_throughput_per_gpu", "Throughput per GPU (tokens/s)"], ["mean_concurrency", "Average concurrency"],
+  ["max_concurrency", "Peak concurrency"], ["completed_requests", "Completed requests"],
+  ["failed_requests", "Failed requests"], ["share_of_requests_at_target", "Share of requests at the target", true],
+  ["estimated_interactivity_p10", "Interactivity P10 (tokens/s)"], ["estimated_ttft_p50_ms", "TTFT P50 (ms)"],
+  ["estimated_ttft_p95_ms", "TTFT P95 (ms)"], ["preemptions", "Preemptions"], ["prefix_cache", "Prefix cache hit rate", true],
+  ["mtp_acceptance", "MTP acceptance", true], ["kv_cache_max_fraction", "KV cache, peak", true],
+  ["max_waiting_requests", "Requests waiting, peak"],
+];
+const AGENT_VARIABLES = [
+  ["requests", "Requests"], ["output_token_share", "Share of output tokens", true], ["input_tokens_per_request", "Input tokens per request"],
+  ["output_tokens_per_request", "Output tokens per request"], ["ttft_p50_s", "TTFT P50 (s)"], ["ttft_p95_s", "TTFT P95 (s)"],
+  ["latency_p95_s", "Latency P95 (s)"], ["mean_speed", "Average speed (tokens/s)"],
+];
+const VERDICT_COLORS = { holds: "#16a34a", "does not hold": "#dc2626" };
+const GREY = "#9ca3af";
+// Which variables the view offers on x and y, and what x is by default.
+function axesOf(view) {
+  if (view === "agents") return { ys: AGENT_VARIABLES, xs: [["agent_name", "Agent"]], defaultX: "agent_name", defaultY: "requests" };
+  const ys = WINDOW_VARIABLES;
+  if (view === "period") return { ys, xs: [["period", "Period"]], defaultX: "period", defaultY: "output_throughput_per_gpu" };
+  return { ys, xs: [["start", "Date"], ...ys], defaultX: "start", defaultY: "output_throughput_per_gpu" };
+}
+const labelOf = (list, key) => (list.find((v) => v[0] === key) || [key, key])[1];
+const num = (x) => (x === "" || x === undefined || x === null || isNaN(+x) ? null : +x);
+const shown = (v, share) => (v === null ? "—" : share ? `${(100 * v).toFixed(0)} %` : Math.abs(v) >= 100 ? v.toFixed(0) : v.toFixed(2).replace(/\.?0+$/, ""));
+// Where to draw the target as a line: only for the variables that have one.
+const limitOf = (y, o) => ({ estimated_interactivity_p10: num(o.target), estimated_ttft_p95_ms: num(o.ttft_max),
+  share_of_requests_at_target: 0.9 }[y] ?? null);
+const csvOf = (rows) => {
+  const cols = Object.keys(rows[0] || {});
+  // a text that a spreadsheet would read as a formula is shown as text
+  const cell = (v) => {
+    let s = String(v);
+    if (/^[=+\-@\t\r]/.test(s) && isNaN(+s)) s = `'${s}`;
+    return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  return [cols.join(","), ...rows.map((r) => cols.map((c) => cell(r[c] ?? "")).join(","))].join("\n");
+};
+
+function ObservationChart({ rows, view, o, setO }) {
+  const { ys, xs, defaultX, defaultY } = axesOf(view);
+  const x = xs.some((v) => v[0] === o.x) ? o.x : defaultX;
+  const y = ys.some((v) => v[0] === o.y) ? o.y : defaultY;
+  const share = !!(ys.find((v) => v[0] === y) || [])[2];
+  const xShare = !!(xs.find((v) => v[0] === x) || [])[2];
+  const yLabel = labelOf(ys, y);
+  const xIsVariable = view === "windows" && x !== "start";
+  const data = rows.map((r) => ({
+    ...r, xv: xIsVariable ? num(r[x]) : r[x], yv: num(r[y]),
+    // grey: the window does not count (discarded or run in progress), or its verdict cannot be given
+    color: view !== "windows" ? COLORS[0] : r.discarded === "True" ? GREY : VERDICT_COLORS[r.verdict] || GREY,
+  })).filter((r) => !xIsVariable || r.xv !== null);
+  const limit = limitOf(y, o);
+  const tooltip = ({ active, payload }) => {
+    if (!active || !payload?.length) return null;
+    const r = payload[0].payload;
+    return (
+      <div className="tooltip">
+        <div><b>{xIsVariable ? `${r.start} → ${r.end}` : view === "windows" ? `${r.start} → ${r.end}` : r[x]}</b></div>
+        <div>{yLabel}: {shown(r.yv, share)}</div>
+        {xIsVariable && <div>{labelOf(xs, x)}: {shown(r.xv, xShare)}</div>}
+        {view === "windows" && <div>{r.discarded === "True" ? `not counted: ${r.discard_reason}` : r.verdict}</div>}
+        {view === "period" && <div>{r.windows} window(s), {r.verdict}</div>}
+      </div>
+    );
+  };
+  const axisStyle = { fontSize: 12 };
+  return (
+    <>
+      <div className="row">
+        <Field label="x">
+          <select value={x} onChange={(e) => setO({ ...o, x: e.target.value })} disabled={xs.length < 2}>
+            {xs.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+          </select>
+        </Field>
+        <Field label="y">
+          <select value={y} onChange={(e) => setO({ ...o, y: e.target.value })}>
+            {ys.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+          </select>
+        </Field>
+        <button onClick={() => {
+          const link = document.createElement("a");
+          link.href = URL.createObjectURL(new Blob([csvOf(rows)], { type: "text/csv" }));
+          link.download = `observation-${view}.csv`;
+          link.click();
+          URL.revokeObjectURL(link.href);
+        }}>Download CSV</button>
+      </div>
+      <div className="chart">
+        <ResponsiveContainer width="100%" height={360}>
+          {xIsVariable ? (
+            <ScatterChart margin={{ top: 10, right: 20, bottom: 30, left: 10 }}>
+              <CartesianGrid strokeDasharray="3 3" />
+              <XAxis type="number" dataKey="xv" name={labelOf(xs, x)} tick={axisStyle} domain={["auto", "auto"]}
+                tickFormatter={(v) => shown(v, xShare)} label={{ value: labelOf(xs, x), position: "insideBottom", offset: -15 }} />
+              <YAxis type="number" dataKey="yv" name={yLabel} tick={axisStyle} domain={["auto", "auto"]}
+                tickFormatter={(v) => shown(v, share)} width={64} label={{ value: yLabel, angle: -90, position: "insideLeft", style: { textAnchor: "middle" }, offset: 4 }} />
+              <Tooltip content={tooltip} />
+              {limit !== null && <ReferenceLine y={limit} stroke="#dc2626" strokeDasharray="4 4" />}
+              <Scatter data={data} isAnimationActive={false}>
+                {data.map((d, i) => <Cell key={i} fill={d.color} />)}
+              </Scatter>
+            </ScatterChart>
+          ) : (
+            <BarChart data={data} margin={{ top: 10, right: 20, bottom: 30, left: 10 }}>
+              <CartesianGrid strokeDasharray="3 3" />
+              <XAxis dataKey={x} tick={axisStyle} interval="preserveStartEnd" minTickGap={24}
+                label={{ value: labelOf(xs, x), position: "insideBottom", offset: -15 }} />
+              <YAxis tick={axisStyle} tickFormatter={(v) => shown(v, share)}
+                width={64} label={{ value: yLabel, angle: -90, position: "insideLeft", style: { textAnchor: "middle" }, offset: 4 }} />
+              <Tooltip content={tooltip} cursor={{ fill: "rgba(0,0,0,0.06)" }} />
+              {limit !== null && <ReferenceLine y={limit} stroke="#dc2626" strokeDasharray="4 4" />}
+              <Bar dataKey="yv" isAnimationActive={false}>
+                {data.map((d, i) => <Cell key={i} fill={d.color} />)}
+              </Bar>
+            </BarChart>
+          )}
+        </ResponsiveContainer>
+      </div>
+      <p className="note">
+        {view === "windows" && "Green: the window holds the target; red: it does not; grey: no verdict, or the window is not counted (hover for the reason). "}
+        {limit !== null && "Dashed line: the target. "}
+        {view === "windows" && "The share at the target and the interactivity are interpolated when vLLM has no histogram bound at the target (README, section 7.1)."}
+      </p>
+    </>
+  );
+}
+
+function Observation({ o, setO, prom, gpu }) {
   const [res, setRes] = useState(null);
   const [err, setErr] = useState(null);
   const [busy, setBusy] = useState(false);
   const [auto, setAuto] = useState(false);
   const set = (k) => (e) => setO({ ...o, [k]: e.target.value });
-  const show = async () => {
-    setErr(null); setBusy(true);
+  // What is asked of Prometheus: the display choices (x, y) are not part of it.
+  const asked = { ...o, x: undefined, y: undefined };
+  const query = JSON.stringify({ ...prom, ...asked, gpu });
+  // The chart follows the form: it is drawn again when a field changes (after a short pause for typing) and every
+  // minute if asked; an answer that arrives late is dropped.
+  const controller = useRef(null);
+  const run = async (body) => {
+    controller.current?.abort();
+    const mine = new AbortController();
+    controller.current = mine;
+    setBusy(true);
     try {
-      setRes(await api("/api/observation", { method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(o) }));
-    } catch (e) { setErr(e.message); setRes(null); }
+      const r = await api("/api/observation", { method: "POST", headers: { "Content-Type": "application/json" },
+        body, signal: mine.signal });
+      setRes(r); setErr(null);
+    } catch (e) {
+      if (e.name === "AbortError") return;
+      setErr(e.message); setRes(null);
+    }
     setBusy(false);
   };
-  const latest = useRef(show);
-  latest.current = show;
   useEffect(() => {
-    if (!auto) return undefined;
-    const t = setInterval(() => latest.current(), 60_000);
+    if (!gpu) { controller.current?.abort(); setBusy(false); setRes(null); return undefined; }
+    const t = setTimeout(() => run(query), 600);
+    return () => clearTimeout(t);
+  }, [query]);
+  useEffect(() => () => controller.current?.abort(), []);
+  useEffect(() => {
+    if (!auto || !gpu) return undefined;
+    const t = setInterval(() => run(query), 60_000);
     return () => clearInterval(t);
-  }, [auto]);
+  }, [auto, query]);
   const rows = res?.rows || [];
   return (
     <section>
       <p className="note">Prometheus scrapes vLLM's /metrics (and LiteLLM's for the per-agent view) continuously; this tab queries it
         over the chosen range and gives a verdict per window. No load is generated. The ranges of the runs started from this interface
-        since it was launched are discarded ("run in progress"). Setup: README, section 7.</p>
+        since it was launched are not counted ("run in progress"). Prometheus and the GPUs are set in the Configuration tab.</p>
+      {!gpu && <p className="warning">Give the number of GPUs behind the target in the Configuration tab.</p>}
       <div className="grid">
-        <Field label="Prometheus URL"><input value={o.prometheus} onChange={set("prometheus")} /></Field>
-        <Field label="Prometheus key" help="optional; empty if Prometheus does not require a token">
-          <input type="password" autoComplete="off" value={o.prometheus_key} onChange={set("prometheus_key")} />
-        </Field>
-        <Field label="vLLM targets" help="selector on the target labels (job, instance); all replicas are added up">
-          <input value={o.vllm} onChange={set("vllm")} />
-        </Field>
-        <Field label="LiteLLM targets" help='optional, per-agent view: e.g. job="litellm"'>
-          <input value={o.litellm} placeholder='job="litellm"' onChange={set("litellm")} />
-        </Field>
-        <Field label="Agents distinguished by" help="metadata_agent (metadata.agent field) or api_key_alias (one key per agent)">
-          <input value={o.by} onChange={set("by")} />
-        </Field>
         <Field label="Since" help="range ending now: 30m, 2h, 1d; ignored if a start is given">
           <input value={o.since} onChange={set("since")} />
         </Field>
         <Field label="Start" help="optional, local time"><input type="datetime-local" value={o.start} onChange={set("start")} /></Field>
         <Field label="End" help="optional; empty = now"><input type="datetime-local" value={o.end} onChange={set("end")} /></Field>
-        <Field label="Window length" help="e.g. 5m, 15m, 1h; at least 4 scrapes"><input value={o.window} onChange={set("window")} /></Field>
-        <Field label="Scrape interval" help="scrape_interval of prometheus.yml (15s by default)"><input value={o.scrape} onChange={set("scrape")} /></Field>
+        <Field label="Window length" help="e.g. 5m, 15m, 1h; at least 4 scrapes of Prometheus"><input value={o.window} onChange={set("window")} /></Field>
         <Field label="Target interactivity (tokens/s per request)"><input type="number" value={o.target} onChange={set("target")} /></Field>
-        <Field label="GPUs behind the vLLM targets"><input type="number" value={o.gpu} onChange={set("gpu")} /></Field>
         <Field label="Max TTFT P95 (ms)" help="optional"><input type="number" value={o.ttft_max} onChange={set("ttft_max")} /></Field>
         <Field label="View">
           <select value={o.view} onChange={set("view")}>
@@ -409,37 +587,19 @@ function Observation({ o, setO }) {
         )}
       </div>
       <div className="row">
-        <button className="primary" onClick={show} disabled={busy}>{busy ? "…" : "Show"}</button>
         <label><input type="checkbox" checked={auto} onChange={(e) => setAuto(e.target.checked)} /> refresh every minute</label>
+        {busy && <span className="note">loading…</span>}
         {err && <span className="error">{err}</span>}
       </div>
       {res && (
         <>
-          {(o.view === "windows" || res.code !== 0) && <div className="messages">
+          {(res.view === "windows" || res.code !== 0) && <div className="messages">
             {res.messages.map((m, i) => (
               <div key={i} className={m.includes("WARNING") ? "warning" : m.startsWith("Highest") ? "ok" : "error"}>{m.trim()}</div>
             ))}
           </div>}
-          {o.view === "windows" && rows.length > 0 ? (
-            <div className="table-wrap">
-              <table>
-                <thead><tr><th>start</th><th>end</th><th>avg conc</th><th>requests</th><th>err</th><th>throughput/GPU</th><th>at target</th><th>inter P10 ≥</th><th>TTFT P95 ≤ ms</th><th>preempt</th><th>cache</th><th>MTP</th><th>KV max</th><th>verdict</th></tr></thead>
-                <tbody>
-                  {rows.map((l, i) => (
-                    <tr key={i}>
-                      <td>{l.start}</td><td>{l.end}</td><td>{f1(l.mean_concurrency)}</td><td>{f1(l.completed_requests, 0)}</td><td>{f1(l.failed_requests, 0)}</td>
-                      <td>{f1(l.output_throughput_per_gpu)}</td><td>{pct(l.share_of_requests_at_target)}{l.share_exact === "False" ? "*" : ""}</td>
-                      <td>{l.interactivity_bound === "True" ? "<" : ""}{f1(l.estimated_interactivity_p10)}</td>
-                      <td>{l.ttft_p95_beyond === "True" ? ">" : ""}{f1(l.estimated_ttft_p95_ms, 0)}</td><td>{f1(l.preemptions, 0)}</td>
-                      <td>{pct(l.prefix_cache)}</td><td>{pct(l.mtp_acceptance)}</td><td>{pct(l.kv_cache_max_fraction)}</td>
-                      <td>{l.verdict}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-              <p className="note">{rows.some((l) => l.share_exact === "False") && "* interpolated share: no histogram bound at the target; start vLLM with --custom-histogram-buckets (README, section 7.1); \"undetermined\": the target falls in a bucket that straddles 90%. "}≥ and ≤: bounds read from the vLLM histogram buckets. avg conc: requests in flight, averaged over the window.</p>
-            </div>
-          ) : <pre className="output">{res.output}</pre>}
+          {rows.length > 0 ? <ObservationChart rows={rows} view={res.view} o={o} setO={setO} />
+            : <pre className="output">{res.output}</pre>}
           <p className="note">Command run: <code>{res.command}</code></p>
         </>
       )}
@@ -570,10 +730,28 @@ function Results() {
 }
 
 export default function App() {
-  const [tab, setTab] = useState("launch");
+  const [tab, setTab] = useState("config");
   const [selection, setSelection] = useState(null);
   // Connection fields and parameters are kept while the page stays open (nothing is saved).
   const [connection, setConnection] = useState(CONNECTION);
+  const [prometheus, setPrometheus] = useState(PROMETHEUS);
+  const [test, setTest] = useState(null);       // result of "Test connection", kept when the tab changes
+  const [defaults, setDefaults] = useState(null);   // what the terminal that started the interface says (target.env), no key
+  useEffect(() => {
+    api("/api/defaults").then((d) => {
+      setDefaults(d);
+      // a field that has not been touched yet takes the value of the terminal
+      setConnection((c) => ({ ...c,
+        url: d.url && c.url === CONNECTION.url ? d.url : c.url,
+        model: d.model && c.model === CONNECTION.model ? d.model : c.model,
+        metrics: d.metrics && c.metrics === CONNECTION.metrics ? d.metrics : c.metrics }));
+      if (d.tokenizer) {
+        setParams((p) => ({ ...p,
+          synthetic: { ...p.synthetic, tokenizer: p.synthetic.tokenizer || d.tokenizer },
+          agentx: { ...p.agentx, tokenizer: p.agentx.tokenizer || d.tokenizer } }));
+      }
+    }).catch(() => {});
+  }, []);
   const [params, setParams] = useState(INITIAL);
   const [kind, setKind] = useState("synthetic");
   const [observation, setObservation] = useState(OBSERVATION);
@@ -583,16 +761,19 @@ export default function App() {
       <header>
         <h1>GPU Bench</h1>
         <nav>
-          {[["launch", "Launch"], ["runs", "Runs"], ["results", "Results"], ["observation", "Observation"]].map(([k, l]) => (
+          {[["config", "Configuration"], ["launch", "Launch stress tests"], ["runs", "Runs"], ["results", "Results"],
+            ["observation", "Observation"]].map(([k, l]) => (
             <button key={k} className={tab === k ? "active" : ""} onClick={() => setTab(k)}>{l}</button>
           ))}
         </nav>
       </header>
+      {tab === "config" && <Configuration c={connection} setC={setConnection} prom={prometheus} setProm={setPrometheus}
+        test={test} setTest={setTest} defaults={defaults} />}
       {tab === "launch" && <Launch onLaunched={(id) => { setSelection(id); setTab("runs"); }}
-        c={connection} setC={setConnection} params={params} setParams={setParams} kind={kind} setKind={setKind} />}
+        c={connection} params={params} setParams={setParams} kind={kind} setKind={setKind} />}
       {tab === "runs" && <Runs selection={selection} setSelection={setSelection} />}
       {tab === "results" && <Results />}
-      {tab === "observation" && <Observation o={observation} setO={setObservation} />}
+      {tab === "observation" && <Observation o={observation} setO={setObservation} prom={prometheus} gpu={connection.gpu} />}
     </div>
   );
 }

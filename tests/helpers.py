@@ -88,16 +88,27 @@ class Stub:
 
 class PromStub:
     """A local Prometheus HTTP API: GET /api/v1/query_range is answered by `responder(query, start, end, step)`,
-    which returns the Prometheus "result" list ([{"metric": {...}, "values": [[t, "v"], ...]}]). Calls go to `seen`."""
+    which returns the Prometheus "result" list ([{"metric": {...}, "values": [[t, "v"], ...]}]). Calls go to `seen`.
+    `endpoints` maps another path (for example "/api/v1/targets") to the "data" object it answers; the requests to
+    those paths go to `gets` as (path with query string, headers). Any other path answers 404."""
 
-    def __init__(self, responder):
-        self.responder, self.seen = responder, []
+    def __init__(self, responder, endpoints=None):
+        self.responder, self.seen, self.endpoints, self.gets = responder, [], dict(endpoints or {}), []
         stub = self
 
         class Handler(BaseHTTPRequestHandler):
             def do_GET(self):
                 url = urllib.parse.urlparse(self.path)
                 qs = {k: v[0] for k, v in urllib.parse.parse_qs(url.query).items()}
+                if url.path in stub.endpoints:
+                    stub.gets.append((self.path, dict(self.headers)))
+                    body = json.dumps({"status": "success", "data": stub.endpoints[url.path]}).encode()
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json")
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+                    return
                 if url.path != "/api/v1/query_range":
                     self.send_response(404)
                     self.send_header("Content-Length", "0")

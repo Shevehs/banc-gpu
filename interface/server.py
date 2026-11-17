@@ -26,9 +26,12 @@ import signal
 import socket
 import sys
 import time
+import urllib.parse
 from pathlib import Path
 
 from aiohttp import web
+
+from tools import settings
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
@@ -172,6 +175,43 @@ def valid_key(v):
     return v
 
 
+def _address(url):
+    """(scheme, host, port, path) of a URL typed by a person, compared without case and without a trailing slash."""
+    parts = urllib.parse.urlsplit(str(url or "").strip())
+    scheme = parts.scheme.lower()
+    try:
+        port = parts.port or {"http": 80, "https": 443}.get(scheme)
+    except ValueError:
+        port = None
+    return scheme, (parts.hostname or "").lower(), port, parts.path.rstrip("/")
+
+
+def same_url(a, b):
+    """True if two target URLs are the same address (scheme, host, port and path; case and a trailing slash ignored).
+
+    "localhost" and "127.0.0.1" are not the same address here: when in doubt, the answer is no."""
+    left = _address(a)
+    return bool(left[0] and left[1]) and left == _address(b)
+
+
+def target_key(p):
+    """The API key to use for the target of the form `p`.
+
+    The key typed in the form wins. Otherwise BENCH_API_KEY of the terminal that started the interface is used, but only
+    when the form's target URL is the BENCH_URL of that terminal: a key meant for one server must never go to another.
+    The key never goes to the browser. An unusable key in the terminal is ignored."""
+    key = valid_key(p.get("api_key"))
+    if key:
+        return key
+    env_key, env_url = settings.api_key(), settings.read_setting("URL")
+    if env_key and env_url and same_url(p.get("url"), env_url):
+        try:
+            return valid_key(env_key)
+        except Refusal:
+            return ""
+    return ""
+
+
 SECRETS = ("BENCH_API_KEY", "BENCH_AGENT_KEYS", "BENCH_PROMETHEUS_KEY")
 
 
@@ -205,7 +245,7 @@ def synthetic_command(p):
     env.setdefault("BENCH_TOKENIZER", "")  # empty = the repository's default tokenizer
     # All variables read by sweep.sh are set here: nothing is inherited from the terminal.
     env["BENCH_METRICS"] = " ".join(valid_metrics_urls(p.get("metrics")))
-    env["BENCH_API_KEY"] = valid_key(p.get("api_key")) or ""
+    env["BENCH_API_KEY"] = target_key(p)
     if p.get("duration"):
         env["BENCH_DURATION"] = str(valid_number(p.get("duration"), "duration", 10, 7200, True)); env["BENCH_REQUESTS_PER_CONCURRENCY"] = "8"
     else:
@@ -251,7 +291,7 @@ def agentx_command(p):
     short = bool(p.get("short_run"))
     duration = valid_number(p.get("duration", 1800), "duration per level", 30 if short else 900, 7200, True)
     env = {"BENCH_URL": valid_local_url(p.get("url")), "BENCH_MODEL": valid_model(p.get("model")),
-           "BENCH_METRICS": " ".join(valid_metrics_urls(p.get("metrics"))), "BENCH_API_KEY": valid_key(p.get("api_key")) or "",
+           "BENCH_METRICS": " ".join(valid_metrics_urls(p.get("metrics"))), "BENCH_API_KEY": target_key(p),
            "BENCH_DURATION": str(duration), "BENCH_ROOT_DIR": results_dir(p.get("root") or "results-agentx"),
            "BENCH_AGENTX_DIR": local_path(p.get("traces_dir"), "traces directory") if p.get("traces_dir") else "",
            "BENCH_SHORT_RUN": "1" if short else "", "BENCH_OVERWRITE": "", "BENCH_SEED": "", "BENCH_TOKENIZER": "",
@@ -285,7 +325,8 @@ def agents_command(p):
     mode = p.get("mode") if p.get("mode") in ("scripted", "autonomous") else None
     if not mode:
         raise Refusal("mode: scripted or autonomous")
-    env = {"BENCH_API_KEY": valid_key(p.get("api_key"))} if valid_key(p.get("api_key")) else {}
+    key = target_key(p)
+    env = {"BENCH_API_KEY": key} if key else {}
     pairs = []
     for pair in str(p.get("agent_keys") or "").split(","):
         if pair.strip():
@@ -520,12 +561,17 @@ def valid_prometheus_url(v):
     return v.rstrip("/")
 
 
+def observation_view(p):
+    """The view asked for in the form `p`: windows (the default), period or agents."""
+    return p.get("view") if p.get("view") in ("windows", "period", "agents") else "windows"
+
+
 def observation_command(p, excluded=()):
     """Command of the observation (observation/query.py, which queries Prometheus) from the fields `p`.
 
     `excluded` lists (start, end) Unix times of ranges to discard (stress tests started from this interface).
     Returns (command, environment, working directory); the Prometheus key goes in the environment only. The
-    command has no --output: the caller adds it.
+    command has no --view-output: the caller adds it.
 
     Raises:
         Refusal: if a field is invalid."""
@@ -533,7 +579,7 @@ def observation_command(p, excluded=()):
            "--target", str(valid_number(p.get("target"), "target", 0.1, 10_000)),
            "--gpu", str(valid_number(p.get("gpu"), "GPU", 1, 4096, True))]
     cmd += ["--vllm", valid_selector(p.get("vllm") or 'job="vllm"', "vLLM selector")]
-    view = p.get("view") if p.get("view") in ("windows", "period", "agents") else "windows"
+    view = observation_view(p)
     if p.get("litellm"):
         by = str(p.get("by") or "metadata_agent").strip()
         if not LABEL_OK.match(by):
@@ -561,8 +607,9 @@ async def observation(req):
     """POST /api/observation: query Prometheus with `python -m observation.query`; nothing to start, no load.
 
     The ranges of the runs started from this interface (plus a minute) are passed as --exclude: their load must
-    not count as real usage. Returns the table rows (CSV of the windows), the key messages, the full output,
-    the exit code and the command; 400 if the parameters are refused, 504 if Prometheus is too slow."""
+    not count as real usage. Returns the rows of the view (one per window, per period or per agent: the
+    --view-output CSV), the view, the key messages, the full output, the exit code and the command; 400 if the
+    parameters are refused, 504 if Prometheus is too slow."""
     try:
         p = await read_body(req)
         excluded = [(e["start"], (e["end"] or time.time()) + 60) for e in RUNS.values()]
@@ -571,25 +618,42 @@ async def observation(req):
         return web.json_response({"error": str(e)}, status=400)
     LOGS_DIR.mkdir(exist_ok=True)
     csv_file = LOGS_DIR / f"observation-{secrets.token_hex(4)}.csv"
-    proc = await asyncio.create_subprocess_exec(*cmd, "--output", str(csv_file), cwd=str(cwd),
+    proc = await asyncio.create_subprocess_exec(*cmd, "--view-output", str(csv_file), cwd=str(cwd),
                                                 env={**base_environment(), **env},
                                                 stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
-    try:
-        output = (await asyncio.wait_for(proc.communicate(), timeout=120))[0].decode("utf-8", "replace")
-    except asyncio.TimeoutError:
-        proc.kill()
-        await proc.wait()
-        return web.json_response({"error": "Prometheus did not answer within 120 s: shorten the range"}, status=504)
     rows = []
-    if csv_file.exists():
-        with open(csv_file, newline="", encoding="utf-8") as fh:
-            rows = list(csv.DictReader(fh))
-        csv_file.unlink()
+    try:
+        try:
+            output = (await asyncio.wait_for(proc.communicate(), timeout=120))[0].decode("utf-8", "replace")
+        except asyncio.TimeoutError:
+            return web.json_response({"error": "Prometheus did not answer within 120 s: shorten the range"}, status=504)
+        if csv_file.exists():
+            with open(csv_file, newline="", encoding="utf-8") as fh:
+                rows = list(csv.DictReader(fh))
+    finally:
+        # also when the request is cancelled (the page asked again): no query left running, no file left behind
+        if proc.returncode is None:
+            proc.kill()
+            await proc.wait()
+        csv_file.unlink(missing_ok=True)
     # Keep in sync with the wording printed by observation/query.py
     messages = [l for l in output.splitlines() if "WARNING" in l or "Highest" in l or l.startswith("No ")
                 or "unreachable" in l or "HTTP" in l]
-    return web.json_response({"rows": rows, "messages": messages, "output": output, "code": proc.returncode,
-                              "command": " ".join(cmd)})
+    return web.json_response({"rows": rows, "view": observation_view(p), "messages": messages, "output": output,
+                              "code": proc.returncode, "command": " ".join(cmd)})
+
+
+async def defaults(req):
+    """GET /api/defaults: the starting values of the form, from the BENCH_* variables of the terminal that started the
+    interface (the same variables as target.env).
+
+    Only what is not secret is returned: the target, the model, the metrics URLs and the tokenizer. The keys never go to
+    the browser: `api_key_set` only says that BENCH_API_KEY exists, and `api_key_url` which target it applies to."""
+    key_set = bool(settings.api_key())
+    return web.json_response({
+        "url": settings.read_setting("URL", ""), "model": settings.read_setting("MODEL", ""),
+        "metrics": settings.read_setting("METRICS", ""), "tokenizer": settings.read_setting("TOKENIZER", ""),
+        "api_key_set": key_set, "api_key_url": settings.read_setting("URL", "") if key_set else ""})
 
 
 async def test_connection(req):
@@ -601,7 +665,7 @@ async def test_connection(req):
     import aiohttp
     try:
         p = await read_body(req)
-        url = valid_local_url(p.get("url")); k = valid_key(p.get("api_key"))
+        url = valid_local_url(p.get("url")); k = target_key(p)
         met = valid_metrics_urls(p.get("metrics")) or [url + "/metrics"]
         mod = valid_model(p.get("model")) if p.get("model") else None
     except Refusal as e:
@@ -682,7 +746,7 @@ def main():
     app.on_shutdown.append(clean_shutdown)
     app.add_routes([web.post("/api/runs", launch), web.get("/api/runs", list_runs),
                     web.get("/api/runs/{eid}/log", run_log), web.post("/api/runs/{eid}/stop", stop_run),
-                    web.get("/api/roots", list_roots), web.get("/api/results", read_results),
+                    web.get("/api/roots", list_roots), web.get("/api/defaults", defaults), web.get("/api/results", read_results),
                     web.post("/api/test-connection", test_connection), web.post("/api/observation", observation),
                     web.get("/", home)])
     if (DIST / "assets").exists():

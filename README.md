@@ -189,7 +189,7 @@ flowchart LR
     results[("results*/&lt;label&gt;/<br/>JSON, JSONL, server_config.json")]
     report["python -m report<br/>aiperf | agents"]
     tables[/"table*.csv + printed<br/>selected point"/]
-    windows[/"printed windows, periods, agents<br/>+ optional CSV (--output)"/]
+    windows[/"printed windows, periods, agents<br/>+ optional CSV (--output, --view-output)"/]
   end
   prom[("Prometheus<br/>(scrapes every 15 s,<br/>keeps the history)")]
   gw["LiteLLM gateway (optional)<br/>/v1 · /metrics/"]
@@ -1072,22 +1072,22 @@ In every case:
 
 - **One job per configuration**: all the targets of a job are added up (all the replicas of one installation). Two
   installations to compare mean two jobs (`job_name: vllm-tep8`, `job_name: vllm-tp4`).
-- **Scrape every 15 s** (`scrape_interval`): windows must last at least 4 scrapes (1 min); if you change this
-  setting, give the same value to `--scrape`.
+- **Scrape every 15 s** (`scrape_interval`): windows must last at least 4 scrapes (1 min). The observation reads the
+  interval from Prometheus by itself; `--scrape` is only there to override it.
 - **Peaks are coarser than in the stress tests**: AIPerf reads vLLM's `/metrics` about every 0.33 s and the test
   agents every 2 s, whereas Prometheus reads it every 15 s.
   - A short spike of KV cache usage or of waiting requests can fall between two scrapes and go unseen, so the maxima of
     the observation are lower bounds.
   - The counters (requests, preemptions, cache hits) are not affected, since the bench subtracts the start of a window
     from its end.
-  - For finer peaks, lower `scrape_interval` (5 s is a reasonable value) and give the same value to `--scrape`. The cost
-    is more storage in Prometheus and more load on vLLM and LiteLLM, because every scrape renders the whole `/metrics`
-    page. Use whole seconds: `--scrape` does not support less than 1 s.
+  - For finer peaks, lower `scrape_interval` (5 s is a reasonable value): the observation picks it up. The cost is more
+    storage in Prometheus and more load on vLLM and LiteLLM, because every scrape renders the whole `/metrics` page.
+    The observation works in whole seconds: an interval shorter than 1 s is rounded up to 1 s.
 - **Check**: page `http://<host>:9090/targets`, every target must be "UP" (otherwise the error is shown next to it).
 - **History**: it starts when Prometheus starts. Leave it running as a service; the default retention is 15 days,
   30 with the option above.
-- **Existing Prometheus**: if your operations team already has a Prometheus that scrapes vLLM, use it: give its URL,
-  the selector of its job (`--vllm 'job="<its job>"'`) and its scrape interval (`--scrape`).
+- **Existing Prometheus**: if your operations team already has a Prometheus that scrapes vLLM, use it: give its URL
+  and the selector of its job (`--vllm 'job="<its job>"'`). The scrape interval is read from it.
 - Tested with Prometheus 3.7.3; newer versions have not been tried.
 
 ### 7.3 Query the observation
@@ -1102,8 +1102,8 @@ python -m observation.query --prometheus http://127.0.0.1:9090 --since 2h --wind
 | `--vllm` | selector of the vLLM targets, default `job="vllm"`; target labels only (`job`, `instance`), no metric label (`model_name`…); all matching targets are added up |
 | `--since` | range ending now: `30m`, `2h`, `1d` (default `2h`) |
 | `--start`, `--end` | past range, local time: `--start "2026-11-14 09:00" --end "2026-11-14 17:00"` (`--end` defaults to now) |
-| `--window` | length of a window (default `5m`; at least 4 x `--scrape`); at most 10,000 windows per query |
-| `--scrape` | Prometheus `scrape_interval` (default `15s`) |
+| `--window` | length of a window (default `5m`; at least 4 x the scrape interval); at most 10,000 windows per query |
+| `--scrape` | override of the scrape interval. By default it is read from Prometheus: the interval of the selected targets, else the global one, else 15 s. The first lines of the output say which |
 | `--target`, `--gpu` | target interactivity (tokens/s per request); GPUs behind the selector, all replicas (**both required here**: Prometheus does not see the fingerprint, so the GPUs cannot be deduced as in the stress-test reports) |
 | `--ttft-max` | maximum accepted P95 TTFT, in ms (optional) |
 | `--view` | `windows` (default), `period` ([section 7.4](#74-per-period-view)), `agents` ([section 7.5](#75-per-agent-view-through-litellm)) |
@@ -1111,6 +1111,7 @@ python -m observation.query --prometheus http://127.0.0.1:9090 --since 2h --wind
 | `--litellm`, `--by` | per-agent view: selector of the LiteLLM targets, label that tells agents apart (default `metadata_agent`) ([section 7.5](#75-per-agent-view-through-litellm)) |
 | `--exclude "start/end"` | range to discard, repeatable: a stress test on the same server would mix its load with the real usage |
 | `--output` | writes the windows to a CSV file |
+| `--view-output` | writes the rows of the chosen view to a CSV file: one per window, per period or per agent |
 
 A window **holds** when all of these are true:
 
@@ -1125,7 +1126,7 @@ The other verdicts:
   ([section 7.1](#71-tune-vllm-for-exact-interactivity));
 - **no requests**: nothing was served;
 - **discarded**: a vLLM target was unreachable at the start or during the window, vLLM restarted, or the scrape before
-  the window or scrapes within it are missing (Prometheus stopped, or `--scrape` shorter than its `scrape_interval`);
+  the window or scrapes within it are missing (Prometheus stopped, or a `--scrape` shorter than its `scrape_interval`);
 - **run in progress**: the window overlaps an `--exclude` range.
 
 TTFT and P10 interactivity are bounds read from the histogram buckets (`≤`, `≥`).
@@ -1313,22 +1314,33 @@ python -m interface.server            # --port option, default 8765
 Open **the exact address printed** (it contains an access token). On a remote VM:
 `ssh -L 8765:127.0.0.1:8765 <vm>`, then the same address on your own machine.
 
-- **Launch**: connection fields (same meanings as [section 5.2](#52-set-the-connection)), a "Test connection" button that shows the
-  server configuration (version, prefix cache, TP/PP/DP/EP…, GPUs deduced), then one of the three stress tests:
-  synthetic, AgentX or test agents.
+- **Configuration**: where the servers are.
+  - The target: URL, model, vLLM metrics URL and API key (same meanings as [section 5.2](#52-set-the-connection)), with a
+    "Test connection" button that shows the server configuration (version, prefix cache, TP/PP/DP/EP…).
+  - The GPUs behind the target. The connection test fills the field in from the fingerprint if it is empty.
+  - Prometheus: URL, optional key, vLLM and LiteLLM selectors, and the label that tells agents apart. The scrape
+    interval is read from Prometheus.
+- **Launch stress tests**: one of the three stress tests: synthetic, AgentX or test agents.
 - **Runs**: live log, stop.
 - **Results**: tables, selected point, curve of the stress tests; the "GPU" field is optional (deduced from the
   fingerprint when empty).
-- **Observation** (own tab): nothing to start.
-  - Fields: Prometheus URL and optional key, vLLM targets selector, LiteLLM targets selector with the label that tells
-    agents apart (per-agent view), range (since, or start and end), window length, scrape interval, target
-    interactivity, **GPUs** (required, as on the command line), optional max TTFT P95, and the view (by window, period
-    or agent).
-  - "Show" runs `observation.query`; a checkbox refreshes it every minute.
+- **Observation** (own tab): nothing to start. Prometheus and the GPUs come from Configuration (the GPUs are required,
+  as on the command line).
+  - Fields: range (since, or start and end), window length, target interactivity, optional max TTFT P95, and the view
+    (by window, period or agent).
+  - The result is a chart, drawn as soon as a field changes (no button). A checkbox refreshes it every minute.
+  - Choose what is shown: "x" (the date by default) and "y" (throughput per GPU, concurrency, TTFT, preemptions, ...).
+    By window, the bars are green when the window holds the target, red when it does not, grey when there is no
+    verdict or the window is not counted (the reason is in the tooltip); with another variable on x, each window is
+    a dot. By period and by agent, the bars show the variable chosen on y.
+  - "Download CSV" saves the rows of the chart.
   - The ranges of the runs started from the interface (plus one minute) are discarded ("run in progress"). Those of
     runs started by hand are only discarded if you give them to `observation.query --exclude`.
 
-The fields are not saved, and the interface does not inherit the variables from `target.env`.
+The fields are not saved. They start with the values of the terminal that started the interface (`BENCH_URL`,
+`BENCH_MODEL`, `BENCH_METRICS`, `BENCH_TOKENIZER`): load `target.env` before starting it. Keys never go to the page.
+`BENCH_API_KEY` is used when the API key field is empty, and only while the target URL is the `BENCH_URL` one. The
+runs themselves do not inherit the other variables of the terminal.
 
 It accepts only:
 
@@ -1367,7 +1379,8 @@ results-agents/table_agents.csv                # report agents
 Runs started from the interface put the test-agents results in `agents_test/results-agents/` instead.
 
 Observation writes nothing by default: the history is in Prometheus (`prometheus-data/` if you start the binary
-yourself); `observation.query --output f.csv` writes the windows of a query.
+yourself); `observation.query --output f.csv` writes the windows of a query, and `--view-output f.csv` the rows
+of the chosen view.
 
 `server_config.json` contains:
 
@@ -1432,7 +1445,7 @@ durations), labels, agent names and error messages; no prompt or response conten
 | Observation: "interpolated share *" | no histogram bound at the target | `--custom-histogram-buckets` ([section 7.1](#71-tune-vllm-for-exact-interactivity)) |
 | Observation: "No vLLM target … in Prometheus" | wrong selector, or Prometheus does not scrape vLLM | page `http://<host>:9090/targets`: the target must be "UP"; `--vllm 'job="<job_name>"'` |
 | Observation: windows "discarded" | target unreachable, vLLM restart, or missing scrapes (WARNING message) | Targets page of Prometheus: the error is shown; firewall, address, vLLM stopped |
-| Observation: windows "discarded" in a row | `--scrape` shorter than the real `scrape_interval` | give the value of `prometheus.yml` |
+| Observation: windows "discarded" in a row | a `--scrape` shorter than the real `scrape_interval` | leave `--scrape` out (the interval is read from Prometheus), or give the value of `prometheus.yml` |
 | Observation: "Range shorter than one window" | `--since` or `--start`/`--end` shorter than `--window` | lengthen the range or shorten the window |
 | Empty per-agent view | LiteLLM not scraped or label missing | `litellm` target "UP" in Prometheus; `callbacks: ["prometheus"]`, `prometheus_client` installed, `metrics_path: /metrics/`, key; `--by` ([section 7.5](#75-per-agent-view-through-litellm)) |
 | LiteLLM target "DOWN" in Prometheus, 401 error or key file not found | key missing or wrong, or `litellm.key` missing or unreadable | create `litellm.key` ([section 7.2](#72-install-and-start-prometheus-once)) with a valid key; `metrics_path: /metrics/` |
@@ -1695,15 +1708,14 @@ python -m agents_test.launcher --url http://127.0.0.1:8001 --levels "2" --durati
 Query the last 5 minutes, per window (8 GPUs, as in the fake server's fingerprint):
 
 ```bash
-python -m observation.query --prometheus http://127.0.0.1:9090 --since 5m --window 1m --scrape 5s \
-  --target 30 --gpu 8
+python -m observation.query --prometheus http://127.0.0.1:9090 --since 5m --window 1m --target 30 --gpu 8
 ```
 
 And per agent, through the fake LiteLLM metrics:
 
 ```bash
 python -m observation.query --prometheus http://127.0.0.1:9090 --litellm 'job="litellm"' \
-  --since 5m --window 1m --scrape 5s --target 30 --gpu 8 --view agents
+  --since 5m --window 1m --target 30 --gpu 8 --view agents
 ```
 
 When you are done, stop the two background processes (`jobs` lists them, then `kill %1 %2`).
@@ -1805,7 +1817,7 @@ See [section 6.4](#64-agentx-without-internet-access), [section 6.5](#65-agentx-
 - **LiteLLM**: an optional gateway in front of vLLM; it can also label requests per agent.
 - **Fingerprint**: the `system_fingerprint` field vLLM returns in its responses; the bench decodes the parallelism (TP, PP, DP, EP) from it.
 - **Prometheus**: a separate server that scrapes the `/metrics` of vLLM (and LiteLLM) at a fixed interval and keeps the history; `observation.query` asks it for the difference between the start and the end of each window.
-- **Scrape interval** (`scrape_interval`): how often Prometheus reads each `/metrics` (15 s by default); `--scrape` must carry the same value, and a window lasts at least 4 scrapes.
+- **Scrape interval** (`scrape_interval`): how often Prometheus reads each `/metrics` (15 s by default); the observation reads it from Prometheus, and a window lasts at least 4 scrapes.
 - **Deduced GPUs**: without `--gpu`, the reports compute the GPU count as TP x PP x DP from the fingerprint, times the number of vLLM servers in `BENCH_METRICS`; the observation cannot (Prometheus does not see the fingerprint), so `--gpu` is required there.
 - **Replica**: one vLLM server serving the model; several replicas can sit behind one target.
 

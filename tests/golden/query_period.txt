@@ -1,4 +1,5 @@
 Prometheus <prometheus>, vLLM {job="vllm"}, LiteLLM {job="litellm"} by metadata_agent; 2024-05-14 00:00 → 2024-05-15 00:00, windows of 10800 s
+Scrape interval: 15 s (default: Prometheus did not say)
 
 period                  windows avg conc requests  err   tput/GPU  at target inter P10≥ TTFT P95≤ ms preempt  cache   MTP  KV max  verdict
 afternoon (12-18 h)           1     20.0    12000    0       55.6       33%*       10.0          500       0    60%   67%     90%  does not hold
