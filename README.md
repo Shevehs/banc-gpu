@@ -1344,6 +1344,7 @@ Open **the exact address printed** (it contains an access token). On a remote VM
       above the maximum;
     - a warning when there are fewer than 50 completed requests (the figures are unreliable).
   - "Download CSV" saves the rows of the chart.
+  - The verdict is shown first. The warnings are folded under it, grouped by kind with the times of the windows concerned: open them when needed.
   - The ranges of the runs started from the interface (plus one minute) are discarded ("run in progress"). Those of
     runs started by hand are only discarded if you give them to `observation.query --exclude`.
 

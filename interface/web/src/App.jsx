@@ -541,6 +541,27 @@ function ObservationChart({ rows, view, o, setO }) {
   );
 }
 
+// The WARNING lines of the observation, folded: the same warning for many windows ("<date time>: ...") becomes one
+// line with its times, and everything stays closed until asked for, so that the verdict above is what is read.
+function Warnings({ lines }) {
+  if (!lines.length) return null;
+  const groups = new Map();
+  for (const line of lines) {
+    const m = line.trim().replace(/^WARNING:\s*/, "").match(/^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}):\s*(.*)$/);
+    const [time, text] = m ? [m[1], m[2]] : [null, line.trim().replace(/^WARNING:\s*/, "")];
+    if (!groups.has(text)) groups.set(text, []);
+    if (time) groups.get(text).push(time);
+  }
+  return (
+    <details className="warnings">
+      <summary>{lines.length} warning{lines.length > 1 ? "s" : ""}, {groups.size} kind{groups.size > 1 ? "s" : ""} (click to show)</summary>
+      {[...groups].map(([text, times], i) => (
+        <div key={i} className="warning">{text}{times.length ? ` (${times.length > 1 ? `${times.length} windows: ` : ""}${times.join(", ")})` : ""}</div>
+      ))}
+    </details>
+  );
+}
+
 function Observation({ o, setO, prom, gpu }) {
   const [res, setRes] = useState(null);
   const [err, setErr] = useState(null);
@@ -616,9 +637,10 @@ function Observation({ o, setO, prom, gpu }) {
       {res && (
         <>
           {(res.view === "windows" || res.code !== 0) && <div className="messages">
-            {res.messages.map((m, i) => (
-              <div key={i} className={m.includes("WARNING") ? "warning" : m.startsWith("Highest") ? "ok" : "error"}>{m.trim()}</div>
+            {res.messages.filter((m) => !m.includes("WARNING")).map((m, i) => (
+              <div key={i} className={m.startsWith("Highest") ? "ok" : "error"}>{m.trim()}</div>
             ))}
+            <Warnings lines={res.messages.filter((m) => m.includes("WARNING"))} />
           </div>}
           {rows.length > 0 ? <ObservationChart rows={rows} view={res.view} o={o} setO={setO} />
             : <pre className="output">{res.output}</pre>}
