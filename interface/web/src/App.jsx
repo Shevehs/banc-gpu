@@ -419,6 +419,17 @@ const shown = (v, share) => (v === null ? "—" : share ? `${(100 * v).toFixed(0
 // Where to draw the target as a line: only for the variables that have one.
 const limitOf = (y, o) => ({ estimated_interactivity_p10: num(o.target), estimated_ttft_p95_ms: num(o.ttft_max),
   share_of_requests_at_target: 0.9 }[y] ?? null);
+// Why a window or a period "does not hold" the target (same rules as observation/query.py): the reasons, as text.
+const reasonsNotHolding = (r, o) => {
+  const out = [];
+  if (num(r.failed_requests) > 0) out.push(`${shown(num(r.failed_requests), false)} failed request(s)`);
+  if (num(r.preemptions) > 0) out.push(`${shown(num(r.preemptions), false)} preemption(s)`);
+  const share = num(r.share_of_requests_at_target);
+  if (share !== null && share < 0.9) out.push(`only ${shown(share, true)} of the requests reach ${o.target} tokens/s (90 % needed)`);
+  const ttft = num(r.estimated_ttft_p95_ms), max = num(o.ttft_max);
+  if (max !== null && ttft !== null && ttft > max) out.push(`TTFT P95 ${shown(ttft, false)} ms is above ${max} ms`);
+  return out;
+};
 const csvOf = (rows) => {
   const cols = Object.keys(rows[0] || {});
   // a text that a spreadsheet would read as a formula is shown as text
@@ -454,6 +465,10 @@ function ObservationChart({ rows, view, o, setO }) {
         {xIsVariable && <div>{labelOf(xs, x)}: {shown(r.xv, xShare)}</div>}
         {view === "windows" && <div>{r.discarded === "True" ? `not counted: ${r.discard_reason}` : r.verdict}</div>}
         {view === "period" && <div>{r.windows} window(s), {r.verdict}</div>}
+        {view !== "agents" && r.discarded !== "True" && r.verdict === "does not hold" &&
+          reasonsNotHolding(r, o).map((m, i) => <div key={i}>· {m}</div>)}
+        {view !== "agents" && r.discarded !== "True" && num(r.completed_requests) !== null && num(r.completed_requests) < 50 &&
+          <div>· only {shown(num(r.completed_requests), false)} completed request(s): fewer than 50, the figures are unreliable</div>}
       </div>
     );
   };
