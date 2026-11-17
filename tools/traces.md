@@ -99,6 +99,8 @@ Then run AgentX on that folder:
 BENCH_AGENTX_DIR=traces-small ./agentx.sh small-r1 "1 2 4"
 ```
 
+The interface does the same: choose a generated set in the "Trace set" list of the AgentX launch. It writes `traces-<preset>` the first time and reuses it afterwards.
+
 `small-r1` is the label of the run. `"1 2 4"` are the levels: the numbers of sessions replayed at the same time. Each
 level lasts `BENCH_DURATION` seconds (1,800 by default), so this run takes about 90 minutes. The server is `BENCH_URL`
 (default `http://127.0.0.1:8000`), with `BENCH_MODEL` (default `bench`) and `BENCH_API_KEY`.

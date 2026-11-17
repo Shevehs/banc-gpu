@@ -8,6 +8,11 @@ interface/logs/
 *.env
 !*.env.example
 traces-agentx*/
+traces-tiny/
+traces-small/
+traces-medium/
+traces-large/
+traces-*.tmp/
 prometheus.yml
 litellm.key
 prometheus-data/
