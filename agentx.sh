@@ -45,6 +45,12 @@ for C in $CONCURRENCIES; do case "$C" in *[!0-9]*) echo "Invalid concurrency: $C
 if [ "$SHORT_RUN" != "1" ] && [ "$DURATION" -lt 900 ]; then
   echo "BENCH_DURATION=$DURATION: the AgentX scenario requires at least 900 s per level (BENCH_SHORT_RUN=1 for a simple check)."; exit 1
 fi
+# This bench needs AIPerf 0.13 or later: stop before anything is replaced or created.
+AIPERF_VERSION="$(aiperf --version 2>/dev/null | tail -n 1 | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -n 1 || true)"
+case "$AIPERF_VERSION" in
+  0.[0-9]|0.[0-9].*|0.1[0-2]|0.1[0-2].*)
+    echo "AIPerf $AIPERF_VERSION is installed: this bench needs AIPerf 0.13.0 or later (pip install aiperf==0.13.0)."; exit 1 ;;
+esac
 # A model name the server does not know makes every request fail at once: say so before anything is replaced or created.
 CHECK=0
 BENCH_API_KEY="$API_KEY" python3 "$HERE/tools/server_config.py" --url "$URL" --model "$MODEL" --check-model || CHECK=$?
@@ -72,11 +78,11 @@ fi
 [ -n "$MAX_CONTEXT" ] && echo "   BENCH_MAX_CONTEXT=$MAX_CONTEXT: only the traces that fit are replayed (subset, not comparable)."
 VALID=yes; { [ -n "$AGENTX_DIR" ] || [ "$SHORT_RUN" = "1" ]; } && VALID=no
 printf 'dataset=%s\ndirectory=%s\nduration=%s\nshort_run=%s\nmax_context=%s\nsubmission_valid=%s\n' "$DATASET" "$AGENTX_DIR" "$DURATION" "$SHORT_RUN" "$MAX_CONTEXT" "$VALID" > "$ROOT_DIR/$LABEL/agentx.txt"
-# Local tokenizer: AIPerf (0.12 and 0.13) looks for it in the Hugging Face cache if HF_HUB_OFFLINE is set, and fails
+# Local tokenizer: AIPerf looks for it in the Hugging Face cache if HF_HUB_OFFLINE is set, and fails
 # (same workaround as sweep.sh). The online traces can still be downloaded.
 OFFLINE_UNSET=()
 [ -n "$TOKENIZER" ] && [ -d "$TOKENIZER" ] && OFFLINE_UNSET=(env -u HF_HUB_OFFLINE -u TRANSFORMERS_OFFLINE)
-# The same folder also breaks the worker processes that AIPerf (0.12 and 0.13) starts to rebuild the prompts (from 8 traces on):
+# The same folder also breaks the worker processes that AIPerf starts to rebuild the prompts (from 8 traces on):
 # they switch to offline mode themselves and cannot load a folder, so each one fails at start-up, is replaced, and
 # AIPerf waits for results forever. A single process loads the folder without trouble: do that, unless the variable
 # is set in the terminal. This only concerns systems other than Linux: there, AIPerf preloads the tokenizer in a helper
@@ -87,21 +93,6 @@ if [ -n "$TOKENIZER" ] && [ -d "$TOKENIZER" ] && [ -z "${AIPERF_DATASET_WEKA_PAR
    && [ "$(uname -s)" != "Linux" ]; then
   export AIPERF_DATASET_WEKA_PARALLEL_WORKERS=1
   echo "   Local tokenizer folder: the traces are loaded in a single process (AIPerf's parallel loading cannot use it)."
-fi
-# AIPerf older than 0.13 loses the results of every level after the first when the levels share a dataset: it reads its
-# dataset cache so fast that the process which records the results is not yet listening. That process gives up after
-# AIPERF_DATASET_CONFIGURATION_TIMEOUT and the run never ends. AIPerf 0.13.0 has a fix. With an older version and several
-# levels, turn the cache off (each level then rebuilds its dataset), unless the variable is set in the terminal.
-LEVELS_COUNT="$(printf '%s\n' $CONCURRENCIES | grep -c . || true)"
-if [ "$LEVELS_COUNT" -gt 1 ] && [ -z "${AIPERF_DATASET_MMAP_CACHE_ENABLED:-}" ]; then
-  AIPERF_VERSION="$(aiperf --version 2>/dev/null | tail -n 1 | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -n 1 || true)"
-  case "$AIPERF_VERSION" in
-    0.[0-9]|0.[0-9].*|0.1[0-2]|0.1[0-2].*)
-      export AIPERF_DATASET_MMAP_CACHE_ENABLED=false
-      echo "   AIPerf older than 0.13: its dataset cache is turned off, because it loses the results of the levels after the first." ;;
-    "")
-      echo "   AIPerf's version could not be read. If the levels after the first have no results, set AIPERF_DATASET_MMAP_CACHE_ENABLED=false (AIPerf older than 0.13)." ;;
-  esac
 fi
 # Loading the 393 traces (download included on the first run) takes several minutes, more than the 300 s
 # AIPerf allows by default (AIPERF_DATASET_CONFIGURATION_TIMEOUT; the profile configuration timeout,
