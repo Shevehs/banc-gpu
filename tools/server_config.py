@@ -251,7 +251,29 @@ def collect(url, metrics=None, key=None, model=None, budget_s=45):
                             "response": r is not None}
         if refused:
             res["fingerprint"]["unknown_model"] = refused
+        if res["fingerprint"]["decoded"] is None and not refused:
+            _fingerprint_from_vllm(res, remaining)
     return res
+
+
+def _fingerprint_from_vllm(res, remaining):
+    """When the target gives no fingerprint (a gateway such as LiteLLM does not pass it on), ask a vLLM server itself.
+
+    The one-token completion goes to the first vLLM server found in the metrics URLs, with the model it lists in
+    /v1/models (its served name, which may differ from the gateway's alias). No key is sent: this is not the target.
+    A server that protects /v1 with its own key is left alone. Fills res["fingerprint"] (with "source") on success."""
+    for srv in res["servers"]:
+        if not (srv.get("vllm_lines") or 0):
+            continue
+        base = srv["metrics"][: -len("/metrics")] if srv["metrics"].endswith("/metrics") else srv["metrics"]
+        ids = served_model_ids(base)
+        if not ids:
+            continue
+        r, _ = _chat_probe(base, ids[0], None, timeout_s=remaining(15))
+        e = r.get("system_fingerprint") if r else None
+        if isinstance(e, str) and read_fingerprint(e):
+            res["fingerprint"] = {"raw": e, "decoded": read_fingerprint(e), "response": True, "source": base}
+            return
 
 
 def deduced_gpus(r):
@@ -301,7 +323,7 @@ def summary(r):
     if (r.get("fingerprint") or {}).get("budget_exhausted"):
         rows.append("[config] fingerprint not collected: time budget exhausted (slow servers)")
     elif r.get("fingerprint"):
-        rows.append(f"[config] target fingerprint: {r['fingerprint'].get('raw') or 'absent'}"
+        rows.append(f"[config] {'vLLM' if r['fingerprint'].get('source') else 'target'} fingerprint: {r['fingerprint'].get('raw') or 'absent'}"
                       + (f" -> TP {dec['tensor_parallel_size']}, PP {dec['pipeline_parallel_size']}, "
                          f"DP {dec['data_parallel_size']}, EP {'yes' if dec['enable_expert_parallel'] else 'no'}"
                          + (" (or masked if --fingerprint-mode hash)" if dec["masking_possible"] else "")

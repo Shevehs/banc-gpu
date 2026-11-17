@@ -460,7 +460,8 @@ python tools/server_config.py --url "$BENCH_URL" --model "$BENCH_MODEL" --metric
 
 The `[config]` lines give:
 
-- the target's fingerprint (vLLM version, decoded TP / PP / DP / EP);
+- the fingerprint (vLLM version, decoded TP / PP / DP / EP), from the target or, when the target is a gateway that
+  does not pass it on, from the first vLLM server of `BENCH_METRICS`;
 - the number of GPUs deduced from it;
 - then, for each `/metrics` URL: the vLLM version, whether the prefix cache is on, and the number of speculative
   tokens read from the metrics (0 = no speculative decoding).
@@ -492,8 +493,10 @@ The GPU count is the TP x PP x DP of the fingerprint, times the number of vLLM s
   address in `BENCH_METRICS` ([section 5.2](#52-set-the-connection)).
 - **No fingerprint, and the output says the server did not respond**: the key or the target is wrong, or the model
   name (the `ERROR` line above names it when the server refuses it). Fix it before going on.
-- **No fingerprint and no other message**: the vLLM version does not produce it, `--fingerprint-mode none` is set, or a
-  gateway drops the field. Target vLLM directly, or note the launch command with your results.
+- **No fingerprint and no other message**: the vLLM version does not produce it, `--fingerprint-mode none` is set, or
+  the target is a gateway that drops the field and vLLM could not be asked. vLLM is asked directly (one token, with
+  the model it lists, and no key) when `BENCH_METRICS` points at it; if vLLM has its own `--api-key`, target vLLM
+  directly, or note the launch command with your results.
 - **"TP 1, PP 1, DP 1, EP no (or hidden…)"**: this is true for a server without parallelism, but it is also what a
   server launched with `--fingerprint-mode hash` shows. Check the launch command.
 

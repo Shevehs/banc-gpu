@@ -411,3 +411,31 @@ def test_collect_of_an_accepted_model_has_no_refusal(stub):
     s = stub(routes())
     r = collect(s.url, [s.url + "/metrics"], model="bench")
     assert "unknown_model" not in r["fingerprint"] and "ERROR" not in summary(r)
+
+
+def test_collect_asks_vllm_for_the_fingerprint_when_the_gateway_gives_none(stub):
+    gateway = stub(routes(**{"/v1/chat/completions": (200, {"choices": []}, {})}))
+    vllm = stub(routes(**{"/v1/models": (200, {"data": [{"id": "served-name"}]}, {})}))
+    r = collect(gateway.url, [vllm.url + "/metrics"], key="sk-gateway", model="alias")
+    fp = r["fingerprint"]
+    assert fp["raw"] == "vllm-0.11.0-tp4-dp2-ep-0a1b2c3d" and fp["source"] == vllm.url
+    post = [x for x in vllm.seen if x["method"] == "POST"][0]
+    assert json.loads(post["body"])["model"] == "served-name" and post["headers"].get("Authorization") is None
+    assert all(x["headers"].get("Authorization") is None for x in vllm.seen)      # the gateway's key never goes to vLLM
+    assert "vLLM fingerprint: vllm-0.11.0-tp4-dp2-ep-0a1b2c3d" in summary(r)
+
+
+def test_collect_keeps_the_target_fingerprint_when_it_has_one(stub):
+    gateway = stub(routes())
+    vllm = stub(routes(**{"/v1/chat/completions": (200, {"system_fingerprint": "vllm-0.11.0-tp1-0a1b2c3d"}, {})}))
+    r = collect(gateway.url, [vllm.url + "/metrics"], key="k", model="bench")
+    assert r["fingerprint"]["raw"] == "vllm-0.11.0-tp4-dp2-ep-0a1b2c3d" and "source" not in r["fingerprint"]
+    assert not [x for x in vllm.seen if x["method"] == "POST"]
+
+
+def test_collect_leaves_a_vllm_protected_by_its_own_key_alone(stub):
+    gateway = stub(routes(**{"/v1/chat/completions": (200, {"choices": []}, {})}))
+    vllm = stub(routes(**{"/v1/models": (401, {"error": "key"}, {})}))
+    r = collect(gateway.url, [vllm.url + "/metrics"], key="k", model="alias")
+    assert r["fingerprint"]["raw"] is None and "source" not in r["fingerprint"]
+
