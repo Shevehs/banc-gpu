@@ -197,9 +197,9 @@ def same_url(a, b):
 def target_key(p):
     """The API key to use for the target of the form `p`.
 
-    The key typed in the form wins. Otherwise BENCH_API_KEY of the terminal that started the interface is used, but only
-    when the form's target URL is the BENCH_URL of that terminal: a key meant for one server must never go to another.
-    The key never goes to the browser. An unusable key in the terminal is ignored."""
+    The key typed in the form wins. Otherwise BENCH_API_KEY (the terminal that started the interface, else target.env) is used, but only
+    when the form's target URL is the BENCH_URL from the same place: a key meant for one server must never go to
+    another. The key never goes to the browser. An unusable key is ignored."""
     key = valid_key(p.get("api_key"))
     if key:
         return key
