@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import {
-  CartesianGrid, Legend, Line, LineChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis,
+  Bar, BarChart, CartesianGrid, Cell, Legend, Line, LineChart, ReferenceLine, ResponsiveContainer, Scatter, ScatterChart,
+  Tooltip, XAxis, YAxis,
 } from "recharts";
 
 // Access token: it is part of the address printed when the server starts (?token=...).
@@ -37,7 +38,7 @@ const INITIAL = {
 };
 // Observation: what is asked of Prometheus. Fields are kept while the page stays open.
 const OBSERVATION = { since: "2h", start: "", end: "", window: "5m", target: 30, ttft_max: "", view: "windows",
-  period: "range" };
+  period: "range", x: "", y: "" };
 const KINDS = [["synthetic", "Stress test: synthetic"], ["agentx", "Stress test: AgentX"],
   ["agents", "Stress test: test agents"]];
 const NOTES = {
@@ -388,25 +389,163 @@ function Runs({ selection, setSelection }) {
 
 // ------------------------------------------------------------------ Observation tab
 // Reads Prometheus (which scrapes vLLM's and LiteLLM's /metrics): nothing to start, no load generated.
+// What can be put on an axis: [column of the rows, label, unit shown, is a share (0-1)].
+const WINDOW_VARIABLES = [
+  ["output_throughput_per_gpu", "Throughput per GPU (tokens/s)"], ["mean_concurrency", "Average concurrency"],
+  ["max_concurrency", "Peak concurrency"], ["completed_requests", "Completed requests"],
+  ["failed_requests", "Failed requests"], ["share_of_requests_at_target", "Share of requests at the target", true],
+  ["estimated_interactivity_p10", "Interactivity P10 (tokens/s)"], ["estimated_ttft_p50_ms", "TTFT P50 (ms)"],
+  ["estimated_ttft_p95_ms", "TTFT P95 (ms)"], ["preemptions", "Preemptions"], ["prefix_cache", "Prefix cache hit rate", true],
+  ["mtp_acceptance", "MTP acceptance", true], ["kv_cache_max_fraction", "KV cache, peak", true],
+  ["max_waiting_requests", "Requests waiting, peak"],
+];
+const AGENT_VARIABLES = [
+  ["requests", "Requests"], ["output_token_share", "Share of output tokens", true], ["input_tokens_per_request", "Input tokens per request"],
+  ["output_tokens_per_request", "Output tokens per request"], ["ttft_p50_s", "TTFT P50 (s)"], ["ttft_p95_s", "TTFT P95 (s)"],
+  ["latency_p95_s", "Latency P95 (s)"], ["mean_speed", "Average speed (tokens/s)"],
+];
+const VERDICT_COLORS = { holds: "#16a34a", "does not hold": "#dc2626" };
+const GREY = "#9ca3af";
+// Which variables the view offers on x and y, and what x is by default.
+function axesOf(view) {
+  if (view === "agents") return { ys: AGENT_VARIABLES, xs: [["agent_name", "Agent"]], defaultX: "agent_name", defaultY: "requests" };
+  const ys = WINDOW_VARIABLES;
+  if (view === "period") return { ys, xs: [["period", "Period"]], defaultX: "period", defaultY: "output_throughput_per_gpu" };
+  return { ys, xs: [["start", "Date"], ...ys], defaultX: "start", defaultY: "output_throughput_per_gpu" };
+}
+const labelOf = (list, key) => (list.find((v) => v[0] === key) || [key, key])[1];
+const num = (x) => (x === "" || x === undefined || x === null || isNaN(+x) ? null : +x);
+const shown = (v, share) => (v === null ? "—" : share ? `${(100 * v).toFixed(0)} %` : Math.abs(v) >= 100 ? v.toFixed(0) : v.toFixed(2).replace(/\.?0+$/, ""));
+// Where to draw the target as a line: only for the variables that have one.
+const limitOf = (y, o) => ({ estimated_interactivity_p10: num(o.target), estimated_ttft_p95_ms: num(o.ttft_max),
+  share_of_requests_at_target: 0.9 }[y] ?? null);
+const csvOf = (rows) => {
+  const cols = Object.keys(rows[0] || {});
+  const cell = (v) => (/[",\n]/.test(String(v)) ? `"${String(v).replace(/"/g, '""')}"` : String(v));
+  return [cols.join(","), ...rows.map((r) => cols.map((c) => cell(r[c] ?? "")).join(","))].join("\n");
+};
+
+function ObservationChart({ rows, view, o, setO }) {
+  const { ys, xs, defaultX, defaultY } = axesOf(view);
+  const x = xs.some((v) => v[0] === o.x) ? o.x : defaultX;
+  const y = ys.some((v) => v[0] === o.y) ? o.y : defaultY;
+  const share = !!(ys.find((v) => v[0] === y) || [])[2];
+  const xShare = !!(xs.find((v) => v[0] === x) || [])[2];
+  const yLabel = labelOf(ys, y);
+  const xIsVariable = view === "windows" && x !== "start";
+  const data = rows.map((r) => ({
+    ...r, xv: xIsVariable ? num(r[x]) : r[x], yv: num(r[y]),
+    // grey: the window does not count (discarded or run in progress), or its verdict cannot be given
+    color: view !== "windows" ? COLORS[0] : r.discarded === "True" ? GREY : VERDICT_COLORS[r.verdict] || GREY,
+  })).filter((r) => !xIsVariable || r.xv !== null);
+  const limit = limitOf(y, o);
+  const tooltip = ({ active, payload }) => {
+    if (!active || !payload?.length) return null;
+    const r = payload[0].payload;
+    return (
+      <div className="tooltip">
+        <div><b>{xIsVariable ? `${r.start} → ${r.end}` : view === "windows" ? `${r.start} → ${r.end}` : r[x]}</b></div>
+        <div>{yLabel}: {shown(r.yv, share)}</div>
+        {xIsVariable && <div>{labelOf(xs, x)}: {shown(r.xv, xShare)}</div>}
+        {view === "windows" && <div>{r.discarded === "True" ? `not counted: ${r.discard_reason}` : r.verdict}</div>}
+        {view === "period" && <div>{r.windows} window(s), {r.verdict}</div>}
+      </div>
+    );
+  };
+  const axisStyle = { fontSize: 12 };
+  return (
+    <>
+      <div className="row">
+        <Field label="x">
+          <select value={x} onChange={(e) => setO({ ...o, x: e.target.value })} disabled={xs.length < 2}>
+            {xs.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+          </select>
+        </Field>
+        <Field label="y">
+          <select value={y} onChange={(e) => setO({ ...o, y: e.target.value })}>
+            {ys.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+          </select>
+        </Field>
+        <button onClick={() => {
+          const link = document.createElement("a");
+          link.href = URL.createObjectURL(new Blob([csvOf(rows)], { type: "text/csv" }));
+          link.download = `observation-${view}.csv`;
+          link.click();
+          URL.revokeObjectURL(link.href);
+        }}>Download CSV</button>
+      </div>
+      <div className="chart">
+        <ResponsiveContainer width="100%" height={360}>
+          {xIsVariable ? (
+            <ScatterChart margin={{ top: 10, right: 20, bottom: 30, left: 10 }}>
+              <CartesianGrid strokeDasharray="3 3" />
+              <XAxis type="number" dataKey="xv" name={labelOf(xs, x)} tick={axisStyle} domain={["auto", "auto"]}
+                tickFormatter={(v) => shown(v, xShare)} label={{ value: labelOf(xs, x), position: "insideBottom", offset: -15 }} />
+              <YAxis type="number" dataKey="yv" name={yLabel} tick={axisStyle} domain={["auto", "auto"]}
+                tickFormatter={(v) => shown(v, share)} width={64} label={{ value: yLabel, angle: -90, position: "insideLeft", style: { textAnchor: "middle" }, offset: 4 }} />
+              <Tooltip content={tooltip} />
+              {limit !== null && <ReferenceLine y={limit} stroke="#dc2626" strokeDasharray="4 4" />}
+              <Scatter data={data} isAnimationActive={false}>
+                {data.map((d, i) => <Cell key={i} fill={d.color} />)}
+              </Scatter>
+            </ScatterChart>
+          ) : (
+            <BarChart data={data} margin={{ top: 10, right: 20, bottom: 30, left: 10 }}>
+              <CartesianGrid strokeDasharray="3 3" />
+              <XAxis dataKey={x} tick={axisStyle} interval="preserveStartEnd" minTickGap={24}
+                label={{ value: labelOf(xs, x), position: "insideBottom", offset: -15 }} />
+              <YAxis tick={axisStyle} tickFormatter={(v) => shown(v, share)}
+                width={64} label={{ value: yLabel, angle: -90, position: "insideLeft", style: { textAnchor: "middle" }, offset: 4 }} />
+              <Tooltip content={tooltip} cursor={{ fill: "rgba(0,0,0,0.06)" }} />
+              {limit !== null && <ReferenceLine y={limit} stroke="#dc2626" strokeDasharray="4 4" />}
+              <Bar dataKey="yv" isAnimationActive={false}>
+                {data.map((d, i) => <Cell key={i} fill={d.color} />)}
+              </Bar>
+            </BarChart>
+          )}
+        </ResponsiveContainer>
+      </div>
+      <p className="note">
+        {view === "windows" && "Green: the window holds the target; red: it does not; grey: no verdict, or the window is not counted (hover for the reason). "}
+        {limit !== null && "Dashed line: the target. "}
+        {view === "windows" && "The share at the target and the interactivity are interpolated when vLLM has no histogram bound at the target (README, section 7.1)."}
+      </p>
+    </>
+  );
+}
+
 function Observation({ o, setO, prom, gpu }) {
   const [res, setRes] = useState(null);
   const [err, setErr] = useState(null);
   const [busy, setBusy] = useState(false);
   const [auto, setAuto] = useState(false);
+  const [tick, setTick] = useState(0);
   const set = (k) => (e) => setO({ ...o, [k]: e.target.value });
-  const show = async () => {
-    setErr(null); setBusy(true);
-    try {
-      setRes(await api("/api/observation", { method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...prom, ...o, gpu }) }));
-    } catch (e) { setErr(e.message); setRes(null); }
-    setBusy(false);
-  };
-  const latest = useRef(show);
-  latest.current = show;
+  // What is asked of Prometheus: the display choices (x, y) are not part of it.
+  const { x: _x, y: _y, ...asked } = o;
+  const query = JSON.stringify({ ...prom, ...asked, gpu });
+  // The chart follows the form: it is drawn again when a field changes (after a short pause for typing) or every
+  // minute if asked; an answer that arrives late is dropped.
+  useEffect(() => {
+    if (!gpu) { setRes(null); return undefined; }
+    const controller = new AbortController();
+    const t = setTimeout(async () => {
+      setBusy(true);
+      try {
+        const r = await api("/api/observation", { method: "POST", headers: { "Content-Type": "application/json" },
+          body: query, signal: controller.signal });
+        setRes(r); setErr(null);
+      } catch (e) {
+        if (e.name === "AbortError") return;
+        setErr(e.message); setRes(null);
+      }
+      setBusy(false);
+    }, tick === 0 ? 600 : 0);
+    return () => { clearTimeout(t); controller.abort(); };
+  }, [query, tick]);
   useEffect(() => {
     if (!auto) return undefined;
-    const t = setInterval(() => latest.current(), 60_000);
+    const t = setInterval(() => setTick((n) => n + 1), 60_000);
     return () => clearInterval(t);
   }, [auto]);
   const rows = res?.rows || [];
@@ -414,7 +553,7 @@ function Observation({ o, setO, prom, gpu }) {
     <section>
       <p className="note">Prometheus scrapes vLLM's /metrics (and LiteLLM's for the per-agent view) continuously; this tab queries it
         over the chosen range and gives a verdict per window. No load is generated. The ranges of the runs started from this interface
-        since it was launched are discarded ("run in progress"). Prometheus and the GPUs are set in the Configuration tab.</p>
+        since it was launched are not counted ("run in progress"). Prometheus and the GPUs are set in the Configuration tab.</p>
       {!gpu && <p className="warning">Give the number of GPUs behind the target in the Configuration tab.</p>}
       <div className="grid">
         <Field label="Since" help="range ending now: 30m, 2h, 1d; ignored if a start is given">
@@ -439,37 +578,19 @@ function Observation({ o, setO, prom, gpu }) {
         )}
       </div>
       <div className="row">
-        <button className="primary" onClick={show} disabled={busy || !gpu}>{busy ? "…" : "Show"}</button>
         <label><input type="checkbox" checked={auto} onChange={(e) => setAuto(e.target.checked)} /> refresh every minute</label>
+        {busy && <span className="note">loading…</span>}
         {err && <span className="error">{err}</span>}
       </div>
       {res && (
         <>
-          {(o.view === "windows" || res.code !== 0) && <div className="messages">
+          {(res.view === "windows" || res.code !== 0) && <div className="messages">
             {res.messages.map((m, i) => (
               <div key={i} className={m.includes("WARNING") ? "warning" : m.startsWith("Highest") ? "ok" : "error"}>{m.trim()}</div>
             ))}
           </div>}
-          {o.view === "windows" && rows.length > 0 ? (
-            <div className="table-wrap">
-              <table>
-                <thead><tr><th>start</th><th>end</th><th>avg conc</th><th>requests</th><th>err</th><th>throughput/GPU</th><th>at target</th><th>inter P10 ≥</th><th>TTFT P95 ≤ ms</th><th>preempt</th><th>cache</th><th>MTP</th><th>KV max</th><th>verdict</th></tr></thead>
-                <tbody>
-                  {rows.map((l, i) => (
-                    <tr key={i}>
-                      <td>{l.start}</td><td>{l.end}</td><td>{f1(l.mean_concurrency)}</td><td>{f1(l.completed_requests, 0)}</td><td>{f1(l.failed_requests, 0)}</td>
-                      <td>{f1(l.output_throughput_per_gpu)}</td><td>{pct(l.share_of_requests_at_target)}{l.share_exact === "False" ? "*" : ""}</td>
-                      <td>{l.interactivity_bound === "True" ? "<" : ""}{f1(l.estimated_interactivity_p10)}</td>
-                      <td>{l.ttft_p95_beyond === "True" ? ">" : ""}{f1(l.estimated_ttft_p95_ms, 0)}</td><td>{f1(l.preemptions, 0)}</td>
-                      <td>{pct(l.prefix_cache)}</td><td>{pct(l.mtp_acceptance)}</td><td>{pct(l.kv_cache_max_fraction)}</td>
-                      <td>{l.verdict}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-              <p className="note">{rows.some((l) => l.share_exact === "False") && "* interpolated share: no histogram bound at the target; start vLLM with --custom-histogram-buckets (README, section 7.1); \"undetermined\": the target falls in a bucket that straddles 90%. "}≥ and ≤: bounds read from the vLLM histogram buckets. avg conc: requests in flight, averaged over the window.</p>
-            </div>
-          ) : <pre className="output">{res.output}</pre>}
+          {rows.length > 0 ? <ObservationChart rows={rows} view={res.view} o={o} setO={setO} />
+            : <pre className="output">{res.output}</pre>}
           <p className="note">Command run: <code>{res.command}</code></p>
         </>
       )}

@@ -1328,7 +1328,12 @@ Open **the exact address printed** (it contains an access token). On a remote VM
   as on the command line).
   - Fields: range (since, or start and end), window length, target interactivity, optional max TTFT P95, and the view
     (by window, period or agent).
-  - "Show" runs `observation.query`; a checkbox refreshes it every minute.
+  - The result is a chart, drawn as soon as a field changes (no button). A checkbox refreshes it every minute.
+  - Choose what is shown: "x" (the date by default) and "y" (throughput per GPU, concurrency, TTFT, preemptions, ...).
+    By window, the bars are green when the window holds the target, red when it does not, grey when there is no
+    verdict or the window is not counted (the reason is in the tooltip); with another variable on x, each window is
+    a dot. By period and by agent, the bars show the variable chosen on y.
+  - "Download CSV" saves the rows of the chart.
   - The ranges of the runs started from the interface (plus one minute) are discarded ("run in progress"). Those of
     runs started by hand are only discarded if you give them to `observation.query --exclude`.
 
