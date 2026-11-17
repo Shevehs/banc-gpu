@@ -1023,3 +1023,15 @@ def test_window_rows_say_why_a_window_was_discarded(monkeypatch, prom, tmp_path,
     rows = read_csv(out)
     assert [r["discard_reason"] for r in rows] == ["excluded range (stress test)", "excluded range (stress test)", ""]
     assert [r["discarded"] for r in rows] == ["True", "True", "False"]
+
+
+def test_get_data_gives_none_when_the_answer_is_cut_short(monkeypatch):
+    """A broken HTTP answer (not only an unreachable host) must not stop an optional probe."""
+    import http.client
+
+    class Opener:
+        def open(self, *a, **k):
+            raise http.client.IncompleteRead(b"")
+    monkeypatch.setattr(query, "_OPENER", Opener())
+    assert query.Prometheus("http://prom:9090").get_data("/api/v1/targets") is None
+

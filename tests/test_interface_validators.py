@@ -903,3 +903,29 @@ def test_observation_with_an_unknown_view_returns_the_windows(monkeypatch, tmp_p
 def test_observation_refuses_the_agents_view_without_litellm(monkeypatch, tmp_path):
     status, payload, seen = run_observation(monkeypatch, tmp_path, {**OBS, "view": "agents"}, "")
     assert status == 400 and "LiteLLM" in payload["error"] and seen == []
+
+
+def test_observation_cancelled_kills_the_query_and_leaves_no_file(monkeypatch, tmp_path):
+    """The page asks again while a query runs: the handler is cancelled, the process killed, no CSV left behind."""
+    procs = []
+
+    class Hanging(FakeQuery):
+        def __init__(self, cmd, kw):
+            super().__init__(cmd, kw, hang=True)
+            self.returncode = None      # still running
+
+    async def fake_exec(*cmd, **kw):
+        procs.append(Hanging(cmd, kw))
+        return procs[-1]
+
+    async def scenario():
+        task = asyncio.ensure_future(server.observation(FakeRequest(OBS)))
+        await asyncio.sleep(0.05)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+    monkeypatch.setattr(server.asyncio, "create_subprocess_exec", fake_exec)
+    monkeypatch.setattr(server, "LOGS_DIR", tmp_path / "logs")
+    monkeypatch.setattr(server, "RUNS", {})
+    asyncio.run(scenario())
+    assert procs[0].killed and not list((tmp_path / "logs").glob("observation-*"))

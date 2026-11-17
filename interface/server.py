@@ -621,17 +621,21 @@ async def observation(req):
     proc = await asyncio.create_subprocess_exec(*cmd, "--view-output", str(csv_file), cwd=str(cwd),
                                                 env={**base_environment(), **env},
                                                 stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
-    try:
-        output = (await asyncio.wait_for(proc.communicate(), timeout=120))[0].decode("utf-8", "replace")
-    except asyncio.TimeoutError:
-        proc.kill()
-        await proc.wait()
-        return web.json_response({"error": "Prometheus did not answer within 120 s: shorten the range"}, status=504)
     rows = []
-    if csv_file.exists():
-        with open(csv_file, newline="", encoding="utf-8") as fh:
-            rows = list(csv.DictReader(fh))
-        csv_file.unlink()
+    try:
+        try:
+            output = (await asyncio.wait_for(proc.communicate(), timeout=120))[0].decode("utf-8", "replace")
+        except asyncio.TimeoutError:
+            return web.json_response({"error": "Prometheus did not answer within 120 s: shorten the range"}, status=504)
+        if csv_file.exists():
+            with open(csv_file, newline="", encoding="utf-8") as fh:
+                rows = list(csv.DictReader(fh))
+    finally:
+        # also when the request is cancelled (the page asked again): no query left running, no file left behind
+        if proc.returncode is None:
+            proc.kill()
+            await proc.wait()
+        csv_file.unlink(missing_ok=True)
     # Keep in sync with the wording printed by observation/query.py
     messages = [l for l in output.splitlines() if "WARNING" in l or "Highest" in l or l.startswith("No ")
                 or "unreachable" in l or "HTTP" in l]

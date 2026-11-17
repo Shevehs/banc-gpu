@@ -421,7 +421,12 @@ const limitOf = (y, o) => ({ estimated_interactivity_p10: num(o.target), estimat
   share_of_requests_at_target: 0.9 }[y] ?? null);
 const csvOf = (rows) => {
   const cols = Object.keys(rows[0] || {});
-  const cell = (v) => (/[",\n]/.test(String(v)) ? `"${String(v).replace(/"/g, '""')}"` : String(v));
+  // a text that a spreadsheet would read as a formula is shown as text
+  const cell = (v) => {
+    let s = String(v);
+    if (/^[=+\-@\t\r]/.test(s) && isNaN(+s)) s = `'${s}`;
+    return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
   return [cols.join(","), ...rows.map((r) => cols.map((c) => cell(r[c] ?? "")).join(","))].join("\n");
 };
 
@@ -519,35 +524,39 @@ function Observation({ o, setO, prom, gpu }) {
   const [err, setErr] = useState(null);
   const [busy, setBusy] = useState(false);
   const [auto, setAuto] = useState(false);
-  const [tick, setTick] = useState(0);
   const set = (k) => (e) => setO({ ...o, [k]: e.target.value });
   // What is asked of Prometheus: the display choices (x, y) are not part of it.
-  const { x: _x, y: _y, ...asked } = o;
+  const asked = { ...o, x: undefined, y: undefined };
   const query = JSON.stringify({ ...prom, ...asked, gpu });
-  // The chart follows the form: it is drawn again when a field changes (after a short pause for typing) or every
+  // The chart follows the form: it is drawn again when a field changes (after a short pause for typing) and every
   // minute if asked; an answer that arrives late is dropped.
+  const controller = useRef(null);
+  const run = async (body) => {
+    controller.current?.abort();
+    const mine = new AbortController();
+    controller.current = mine;
+    setBusy(true);
+    try {
+      const r = await api("/api/observation", { method: "POST", headers: { "Content-Type": "application/json" },
+        body, signal: mine.signal });
+      setRes(r); setErr(null);
+    } catch (e) {
+      if (e.name === "AbortError") return;
+      setErr(e.message); setRes(null);
+    }
+    setBusy(false);
+  };
   useEffect(() => {
-    if (!gpu) { setRes(null); return undefined; }
-    const controller = new AbortController();
-    const t = setTimeout(async () => {
-      setBusy(true);
-      try {
-        const r = await api("/api/observation", { method: "POST", headers: { "Content-Type": "application/json" },
-          body: query, signal: controller.signal });
-        setRes(r); setErr(null);
-      } catch (e) {
-        if (e.name === "AbortError") return;
-        setErr(e.message); setRes(null);
-      }
-      setBusy(false);
-    }, tick === 0 ? 600 : 0);
-    return () => { clearTimeout(t); controller.abort(); };
-  }, [query, tick]);
+    if (!gpu) { controller.current?.abort(); setBusy(false); setRes(null); return undefined; }
+    const t = setTimeout(() => run(query), 600);
+    return () => clearTimeout(t);
+  }, [query]);
+  useEffect(() => () => controller.current?.abort(), []);
   useEffect(() => {
-    if (!auto) return undefined;
-    const t = setInterval(() => setTick((n) => n + 1), 60_000);
+    if (!auto || !gpu) return undefined;
+    const t = setInterval(() => run(query), 60_000);
     return () => clearInterval(t);
-  }, [auto]);
+  }, [auto, query]);
   const rows = res?.rows || [];
   return (
     <section>

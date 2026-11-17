@@ -189,7 +189,7 @@ flowchart LR
     results[("results*/&lt;label&gt;/<br/>JSON, JSONL, server_config.json")]
     report["python -m report<br/>aiperf | agents"]
     tables[/"table*.csv + printed<br/>selected point"/]
-    windows[/"printed windows, periods, agents<br/>+ optional CSV (--output)"/]
+    windows[/"printed windows, periods, agents<br/>+ optional CSV (--output, --view-output)"/]
   end
   prom[("Prometheus<br/>(scrapes every 15 s,<br/>keeps the history)")]
   gw["LiteLLM gateway (optional)<br/>/v1 · /metrics/"]
@@ -1379,7 +1379,8 @@ results-agents/table_agents.csv                # report agents
 Runs started from the interface put the test-agents results in `agents_test/results-agents/` instead.
 
 Observation writes nothing by default: the history is in Prometheus (`prometheus-data/` if you start the binary
-yourself); `observation.query --output f.csv` writes the windows of a query, and `--view-output f.csv` the rows of the chosen view.
+yourself); `observation.query --output f.csv` writes the windows of a query, and `--view-output f.csv` the rows
+of the chosen view.
 
 `server_config.json` contains:
 

@@ -26,6 +26,7 @@ Key: BENCH_PROMETHEUS_KEY environment variable if Prometheus requires a token (B
 """
 import argparse
 import csv
+import http.client
 import json
 import math
 import os
@@ -185,7 +186,7 @@ class Prometheus:
         try:
             with _OPENER.open(req, timeout=min(self.timeout_s, 10)) as r:
                 j = json.loads(r.read(5_000_000).decode("utf-8", "replace"))
-        except (urllib.error.URLError, OSError, ValueError):
+        except (urllib.error.URLError, OSError, ValueError, http.client.HTTPException):
             return None
         data = j.get("data") if isinstance(j, dict) and j.get("status") == "success" else None
         return data if isinstance(data, dict) else None
