@@ -47,7 +47,8 @@ The interface never starts vLLM: it measures the one that is running. Options to
   the time zone (`TZ`), `VIRTUAL_ENV`, `HF_HOME`, `HF_HUB_CACHE`, the proxy settings, the certificates and
   `DO_NOT_TRACK` are passed on.
 - The form starts with `BENCH_URL`, `BENCH_MODEL`, `BENCH_METRICS` and `BENCH_TOKENIZER` of the terminal that started the
-  interface (`GET /api/defaults`, behind the same token as the rest of the API). No key is ever sent to the page: the
+  interface, or else of `target.env` at the root of the repository (read when the interface starts, never run)
+  (`GET /api/defaults`, behind the same token as the rest of the API). No key is ever sent to the page: the
   response only says whether `BENCH_API_KEY` exists and for which target. When the API key field is empty, the server
   uses `BENCH_API_KEY` for the run, but only if the form's target URL is the `BENCH_URL` of the terminal (same scheme,
   host, port and path, case and a trailing slash ignored). A key meant for one server never goes to another.

@@ -6,6 +6,7 @@ Variables from older versions or with generic names (API_KEY, URL, ...) are NOT 
 name exported for another tool must never be sent to the target. `warn_ignored_settings` tells the user
 when such a variable is set (it never prints values). Run `python3 tools/settings.py` to see the warnings."""
 import os
+import re
 import sys
 
 # variable that is no longer read -> variable to use instead
@@ -28,6 +29,27 @@ IGNORED = {
 def read_setting(name, default=None):
     """Value of BENCH_<name> without surrounding white space, else `default` (an empty value counts as absent)."""
     return (os.environ.get("BENCH_" + name) or "").strip() or default
+
+
+def load_target_env(path):
+    """Take the `export BENCH_<NAME>=value` lines of the file `path` (target.env) as settings, without replacing a
+    variable that is already set. A missing file, other lines and anything that is not a plain value are skipped.
+    Returns the names taken. The file is read, never run."""
+    taken = []
+    try:
+        lines = open(path, encoding="utf-8").read().splitlines()
+    except OSError:
+        return taken
+    for line in lines:
+        m = re.match(r"""\s*(?:export\s+)?(BENCH_[A-Z0-9_]+)=(?:"([^"$`\\]*)"|'([^']*)'|([^\s"'$`\\;#]*))\s*(?:#.*)?$""", line)
+        if not m:
+            continue
+        name = m.group(1)
+        value = next(g for g in m.groups()[1:] if g is not None)
+        if value.strip() and not os.environ.get(name):
+            os.environ[name] = value
+            taken.append(name)
+    return taken
 
 
 def api_key():

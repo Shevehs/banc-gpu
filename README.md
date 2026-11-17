@@ -1337,8 +1337,9 @@ Open **the exact address printed** (it contains an access token). On a remote VM
   - The ranges of the runs started from the interface (plus one minute) are discarded ("run in progress"). Those of
     runs started by hand are only discarded if you give them to `observation.query --exclude`.
 
-The fields are not saved. They start with the values of the terminal that started the interface (`BENCH_URL`,
-`BENCH_MODEL`, `BENCH_METRICS`, `BENCH_TOKENIZER`): load `target.env` before starting it. Keys never go to the page.
+The fields are not saved. They start with `BENCH_URL`, `BENCH_MODEL`, `BENCH_METRICS` and `BENCH_TOKENIZER`, taken
+from the terminal that started the interface or, for what the terminal does not set, from `target.env` at the root
+of the repository (read, not run). Keys never go to the page.
 `BENCH_API_KEY` is used when the API key field is empty, and only while the target URL is the `BENCH_URL` one. The
 runs themselves do not inherit the other variables of the terminal.
 
