@@ -617,6 +617,7 @@ function Results() {
   const [require, setRequire] = useState(false);
   const [res, setRes] = useState(null);
   const [err, setErr] = useState(null);
+  const [busy, setBusy] = useState(false);
 
   const loadRoots = () => api("/api/roots").then((r) => {
     setRoots(r);
@@ -630,12 +631,16 @@ function Results() {
   useEffect(() => {
     if (!root) { setRes(null); return undefined; }
     const controller = new AbortController();
+    setErr(null);
     const t = setTimeout(async () => {
+      setBusy(true);
       try {
         const q = new URLSearchParams({ type: kind, root, target, gpu, require: require ? "1" : "0" });
-        setRes(await api(`/api/results?${q}`, { signal: controller.signal })); setErr(null);
+        const r = await api(`/api/results?${q}`, { signal: controller.signal });
+        if (!controller.signal.aborted) { setRes(r); setBusy(false); }
       } catch (e) {
-        if (e.name !== "AbortError") { setErr(e.message); setRes(null); }
+        // a value being typed can be refused for a moment: the last results stay on screen with the message
+        if (!controller.signal.aborted) { setErr(e.message); setBusy(false); }
       }
     }, 500);
     return () => { clearTimeout(t); controller.abort(); };
@@ -655,7 +660,7 @@ function Results() {
     <section>
       <div className="grid">
         <Field label="Type">
-          <select value={kind} onChange={(e) => { setKind(e.target.value); setRes(null); }}>
+          <select value={kind} onChange={(e) => { setKind(e.target.value); setRoot(""); setRes(null); }}>
             {KINDS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
           </select>
         </Field>
@@ -672,7 +677,8 @@ function Results() {
           <input type="checkbox" checked={require} onChange={(e) => setRequire(e.target.checked)} />
         </Field>
       </div>
-      {err && <div className="row"><span className="error">{err}</span></div>}
+      {(err || busy) && <div className="row">{busy && !err && <span className="note">loading…</span>}
+        {err && <span className="error">{err}</span>}</div>}
       {!root && <p className="note">No results directory of this type yet: run a stress test, or refresh the list.</p>}
 
       {res && (

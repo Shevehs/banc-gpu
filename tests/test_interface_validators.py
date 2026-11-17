@@ -953,3 +953,46 @@ def test_results_cancelled_kills_the_report(monkeypatch):
     monkeypatch.setattr(server.asyncio, "create_subprocess_exec", fake_exec)
     asyncio.run(scenario())
     assert procs[0].killed
+
+
+def test_results_of_the_same_folder_run_one_at_a_time(monkeypatch):
+    """Two reports on one results folder must not overlap: `python -m report` rewrites table.csv there."""
+    running, peak = [0], [0]
+
+    class Slow(FakeQuery):
+        async def communicate(self):
+            running[0] += 1
+            peak[0] = max(peak[0], running[0])
+            await asyncio.sleep(0.05)
+            running[0] -= 1
+            return await super().communicate()
+
+    async def fake_exec(*cmd, **kw):
+        return Slow(cmd, kw)
+
+    async def scenario():
+        await asyncio.gather(*(server.read_results(FakeGet(type="synthetic", root="results", target=str(t)))
+                               for t in (30, 31, 32)))
+    monkeypatch.setattr(server.asyncio, "create_subprocess_exec", fake_exec)
+    monkeypatch.setattr(server, "REPORT_LOCKS", {})
+    asyncio.run(scenario())
+    assert peak[0] == 1
+
+
+def test_shielded_handler_finishes_even_if_the_client_goes_away():
+    done = []
+
+    async def handler(req):
+        await asyncio.sleep(0.05)
+        done.append(True)
+        return "ok"
+
+    async def scenario():
+        task = asyncio.ensure_future(server.shielded(handler)(None))
+        await asyncio.sleep(0.01)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        await asyncio.sleep(0.1)
+    asyncio.run(scenario())
+    assert done == [True]
