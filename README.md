@@ -739,6 +739,8 @@ This writes 30 sessions whose longest call is about 28,000 tokens (preset `small
 python tools/make_traces.py --preset small --output traces-small
 ```
 
+The interface does the same from the "Trace set" list of the AgentX launch ([section 9](#9-interface)).
+
 The presets are `tiny`, `small`, `medium` and `large`: the longest call is 8,000, 28,000, 120,000 and 250,000 tokens.
 The script prints the `--max-model-len` that vLLM needs for your set.
 
@@ -1327,6 +1329,11 @@ Open **the exact address printed** (it contains an access token). On a remote VM
   - Prometheus: URL, optional key, vLLM and LiteLLM selectors, and the label that tells agents apart. The scrape
     interval is read from Prometheus.
 - **Launch stress tests**: one of the three stress tests: synthetic, AgentX or test agents.
+  - For AgentX, the "Trace set" list holds the published set (full or 256k), a generated set (`tiny`, `small`,
+    `medium`, `large`) and your own folder of traces.
+  - A generated set is written to `traces-<preset>` in the repository the first time and reused afterwards. The log
+    of the run gives the `--max-model-len` that vLLM needs for it
+    ([section 6.5](#65-agentx-with-generated-or-your-own-traces)).
 - **Runs**: live log, stop.
 - **Results**: tables, selected point, curve of the stress tests, updated as soon as a field changes; the "GPU" field is optional (deduced from the
   fingerprint when empty).

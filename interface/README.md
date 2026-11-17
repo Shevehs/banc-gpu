@@ -68,7 +68,8 @@ The interface never starts vLLM: it measures the one that is running. Options to
   empty); and Prometheus (URL, key, vLLM and LiteLLM selectors, the label that tells agents apart; the scrape interval is
   read from Prometheus).
 - **Launch stress tests**: one of the three stress tests: synthetic (AIPerf), AgentX or test agents
-  (repository README, section 6). For the test agents, "Label the agents" and "Per-agent keys" give every
+  (repository README, section 6). For AgentX, the "Trace set" list also generates a set (`tiny` to `large`, written to
+  `traces-<preset>` the first time) or takes your own folder (repository README, section 6.5). For the test agents, "Label the agents" and "Per-agent keys" give every
   request the identity of its profile, for the per-agent view through LiteLLM (repository README, section 7.5).
 - **Runs**: the runs started since the interface server was started, a live log, and stop. Logs are kept in `interface/logs/`.
 - **Results**: analysis of a results directory, shown as soon as a field changes (table, selected point, warnings,
