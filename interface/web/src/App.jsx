@@ -547,14 +547,15 @@ function Warnings({ lines }) {
   if (!lines.length) return null;
   const groups = new Map();
   for (const line of lines) {
-    const m = line.trim().replace(/^WARNING:\s*/, "").match(/^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}):\s*(.*)$/);
-    const [time, text] = m ? [m[1], m[2]] : [null, line.trim().replace(/^WARNING:\s*/, "")];
+    const body = line.trim().replace(/^WARNING:\s*/, "");
+    const m = body.match(/^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}):\s*(.*)$/);
+    const [time, text] = m ? [m[1], m[2]] : [null, body];
     if (!groups.has(text)) groups.set(text, []);
     if (time) groups.get(text).push(time);
   }
   return (
     <details className="warnings">
-      <summary>{lines.length} warning{lines.length > 1 ? "s" : ""}, {groups.size} kind{groups.size > 1 ? "s" : ""} (click to show)</summary>
+      <summary>{lines.length} warning{lines.length > 1 ? "s" : ""}, {groups.size} kind{groups.size > 1 ? "s" : ""}</summary>
       {[...groups].map(([text, times], i) => (
         <div key={i} className="warning">{text}{times.length ? ` (${times.length > 1 ? `${times.length} windows: ` : ""}${times.join(", ")})` : ""}</div>
       ))}

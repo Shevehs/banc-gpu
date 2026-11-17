@@ -1344,7 +1344,8 @@ Open **the exact address printed** (it contains an access token). On a remote VM
       above the maximum;
     - a warning when there are fewer than 50 completed requests (the figures are unreliable).
   - "Download CSV" saves the rows of the chart.
-  - The verdict is shown first. The warnings are folded under it, grouped by kind with the times of the windows concerned: open them when needed.
+  - The warnings of the observation are folded under the verdict: click "N warnings, M kinds" to open them.
+    Identical warnings are grouped on one line with the times of their windows.
   - The ranges of the runs started from the interface (plus one minute) are discarded ("run in progress"). Those of
     runs started by hand are only discarded if you give them to `observation.query --exclude`.
 
@@ -1458,7 +1459,7 @@ durations), labels, agent names and error messages; no prompt or response conten
 | `api_base` on a port like 56964 | port read from vLLM's log: it is the caller's | vLLM's port is its `--port` (8000 by default) |
 | Observation: "interpolated share *" | no histogram bound at the target | `--custom-histogram-buckets` ([section 7.1](#71-tune-vllm-for-exact-interactivity)) |
 | Observation: "No vLLM target … in Prometheus" | wrong selector, or Prometheus does not scrape vLLM | page `http://<host>:9090/targets`: the target must be "UP"; `--vllm 'job="<job_name>"'` |
-| Observation: windows "discarded" | target unreachable, vLLM restart, or missing scrapes (WARNING message) | Targets page of Prometheus: the error is shown; firewall, address, vLLM stopped |
+| Observation: windows "discarded" | target unreachable, vLLM restart, or missing scrapes (WARNING message; in the interface, open the warnings folded under the verdict) | Targets page of Prometheus: the error is shown; firewall, address, vLLM stopped |
 | Observation: windows "discarded" in a row | a `--scrape` shorter than the real `scrape_interval` | leave `--scrape` out (the interval is read from Prometheus), or give the value of `prometheus.yml` |
 | Observation: "Range shorter than one window" | `--since` or `--start`/`--end` shorter than `--window` | lengthen the range or shorten the window |
 | Empty per-agent view | LiteLLM not scraped or label missing | `litellm` target "UP" in Prometheus; `callbacks: ["prometheus"]`, `prometheus_client` installed, `metrics_path: /metrics/`, key; `--by` ([section 7.5](#75-per-agent-view-through-litellm)) |
