@@ -21,7 +21,11 @@ const pct = (x) => (x === "" || x === undefined || x === null || isNaN(+x) ? "�
 
 // ------------------------------------------------------------------ initial values
 // Nothing is hard-wired: everything is entered in the form.
-const CONNECTION = { url: "http://127.0.0.1:8000", model: "bench", metrics: "", api_key: "" };
+// The target, and the GPUs behind it (empty: filled in from the fingerprint when the connection is tested).
+const CONNECTION = { url: "http://127.0.0.1:8000", model: "bench", metrics: "", api_key: "", gpu: "" };
+// Prometheus, for the observation (no load, nothing to start).
+const PROMETHEUS = { prometheus: "http://127.0.0.1:9090", prometheus_key: "", vllm: 'job="vllm"', litellm: "",
+  by: "metadata_agent" };
 const INITIAL = {
   synthetic: { tokenizer: "", isl: 2048, osl: 256, levels: "1 2 4 8 16", duration: "", requests_per_concurrency: 8,
     temperature: 0.7, root: "results", extra: "", label: "run-r1" },
@@ -31,10 +35,9 @@ const INITIAL = {
   agentx: { levels: "1 2 4 8", duration: 1800, tokenizer: "", traces_dir: "", short_run: false, max_context: "", variant: "",
     root: "results-agentx", label: "agentx-r1" },
 };
-// Observation: Prometheus only (no load, nothing to start). Fields are kept while the page stays open.
-const OBSERVATION = { prometheus: "http://127.0.0.1:9090", prometheus_key: "", vllm: 'job="vllm"', litellm: "",
-  by: "metadata_agent", since: "2h", start: "", end: "", window: "5m", scrape: "15s", target: 30, gpu: 1,
-  ttft_max: "", view: "windows", period: "range" };
+// Observation: what is asked of Prometheus. Fields are kept while the page stays open.
+const OBSERVATION = { since: "2h", start: "", end: "", window: "5m", target: 30, ttft_max: "", view: "windows",
+  period: "range" };
 const KINDS = [["synthetic", "Stress test: synthetic"], ["agentx", "Stress test: AgentX"],
   ["agents", "Stress test: test agents"]];
 const NOTES = {
@@ -80,7 +83,7 @@ function ServerConfig({ config }) {
       {config.deduced_gpus && (
         <p>{config.deduced_gpus.count
           ? `GPUs deduced: ${config.deduced_gpus.explanation}${config.deduced_gpus.masking_possible ? " (1 GPU per server assumed: --fingerprint-mode hash would hide the parallelism)" : ""}`
-          : `GPUs not deduced: ${config.deduced_gpus.explanation} (give the GPU count by hand in Results)`}</p>
+          : `GPUs not deduced: ${config.deduced_gpus.explanation} (give the GPU count by hand in the field above, or in Results)`}</p>
       )}
       {servers.filter(badMetrics).map((s) => (
         <p key={s.metrics} className="warning">{base(s.metrics)}: {s.vllm_lines === 0 ? "no vllm: metric" : s.metrics_status === "budget" ? "not read (time budget exhausted)"
@@ -129,32 +132,20 @@ function ServerConfig({ config }) {
   );
 }
 
-// ------------------------------------------------------------------ Launch tab
-function Launch({ onLaunched, c, setC, params, setParams, kind, setKind }) {
-  const [msg, setMsg] = useState(null);
-  const [test, setTest] = useState(null);
-  const p = params[kind];
+// ------------------------------------------------------------------ Configuration tab
+// Where the servers are: the target (vLLM, or a gateway) with the GPUs behind it, and Prometheus. The other tabs read it.
+function Configuration({ c, setC, prom, setProm, test, setTest }) {
   const setConn = (k) => (e) => setC({ ...c, [k]: e.target.value });
-  const set = (k) => (e) => setParams({ ...params, [kind]: { ...p, [k]: e.target.value } });
-  const check = (k) => (e) => setParams({ ...params, [kind]: { ...p, [k]: e.target.checked } });
-  const toggleAgent = (a) => setParams({ ...params, agents: { ...p,
-    agents: p.agents.includes(a) ? p.agents.filter((x) => x !== a) : [...p.agents, a] } });
-
+  const setP = (k) => (e) => setProm({ ...prom, [k]: e.target.value });
   const testConnection = async () => {
     setTest({ pending: true });
     try {
-      setTest(await api("/api/test-connection", { method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(c) }));
+      const r = await api("/api/test-connection", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(c) });
+      setTest(r);
+      const n = r?.config?.deduced_gpus?.count;
+      if (n && !c.gpu) setC({ ...c, gpu: String(n) });   // a number typed by hand is never replaced
     } catch (e) { setTest({ error: e.message }); }
-  };
-  const submit = async () => {
-    setMsg(null);
-    try {
-      const r = await api("/api/runs", { method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ type: kind, ...c, ...p }) });
-      setMsg({ ok: true, text: `Run started: ${r.id}` });
-      onLaunched(r.id);
-    } catch (e) { setMsg({ ok: false, text: e.message }); }
   };
 
   return (
@@ -172,6 +163,9 @@ function Launch({ onLaunched, c, setC, params, setParams, kind, setKind }) {
         </Field>
         <Field label="API key" help="optional; never written to the logs">
           <input type="password" autoComplete="off" value={c.api_key} onChange={setConn("api_key")} />
+        </Field>
+        <Field label="GPUs behind the target" help="all replicas; used by the observation. Filled in from the fingerprint when you test the connection, if you leave it empty">
+          <input type="number" min="1" value={c.gpu} placeholder="deduced by the test" onChange={setConn("gpu")} />
         </Field>
       </div>
       <div className="row">
@@ -194,7 +188,50 @@ function Launch({ onLaunched, c, setC, params, setParams, kind, setKind }) {
       {test?.run_in_progress && <p className="warning">A run is in progress: no one-token completion is sent, so the fingerprint is not read (it would fall inside the measurement).</p>}
       {test?.config && <ServerConfig config={test.config} />}
 
-      <h3>Run</h3>
+      <h3>Prometheus</h3>
+      <p className="note">The observation queries a Prometheus that scrapes vLLM's /metrics (and LiteLLM's for the per-agent view).
+        No load is generated. The scrape interval is read from Prometheus. Setup: README, section 7.</p>
+      <div className="grid">
+        <Field label="Prometheus URL"><input value={prom.prometheus} onChange={setP("prometheus")} /></Field>
+        <Field label="Prometheus key" help="optional; empty if Prometheus does not require a token">
+          <input type="password" autoComplete="off" value={prom.prometheus_key} onChange={setP("prometheus_key")} />
+        </Field>
+        <Field label="vLLM targets" help="selector on the target labels (job, instance); all replicas are added up">
+          <input value={prom.vllm} onChange={setP("vllm")} />
+        </Field>
+        <Field label="LiteLLM targets" help='optional, per-agent view: e.g. job="litellm"'>
+          <input value={prom.litellm} placeholder='job="litellm"' onChange={setP("litellm")} />
+        </Field>
+        <Field label="Agents distinguished by" help="metadata_agent (metadata.agent field) or api_key_alias (one key per agent)">
+          <input value={prom.by} onChange={setP("by")} />
+        </Field>
+      </div>
+    </section>
+  );
+}
+
+// ------------------------------------------------------------------ Launch stress tests tab
+function Launch({ onLaunched, c, params, setParams, kind, setKind }) {
+  const [msg, setMsg] = useState(null);
+  const p = params[kind];
+  const set = (k) => (e) => setParams({ ...params, [kind]: { ...p, [k]: e.target.value } });
+  const check = (k) => (e) => setParams({ ...params, [kind]: { ...p, [k]: e.target.checked } });
+  const toggleAgent = (a) => setParams({ ...params, agents: { ...p,
+    agents: p.agents.includes(a) ? p.agents.filter((x) => x !== a) : [...p.agents, a] } });
+
+  const submit = async () => {
+    setMsg(null);
+    try {
+      const r = await api("/api/runs", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ type: kind, ...c, ...p }) });
+      setMsg({ ok: true, text: `Run started: ${r.id}` });
+      onLaunched(r.id);
+    } catch (e) { setMsg({ ok: false, text: e.message }); }
+  };
+
+  return (
+    <section>
+      <p className="note">Target: <code>{c.url}</code>, model <code>{c.model}</code>. Change it in the Configuration tab.</p>
       <div className="row">
         <div className="segments">
           {KINDS.map(([k, l]) => (
@@ -344,7 +381,7 @@ function Runs({ selection, setSelection }) {
 
 // ------------------------------------------------------------------ Observation tab
 // Reads Prometheus (which scrapes vLLM's and LiteLLM's /metrics): nothing to start, no load generated.
-function Observation({ o, setO }) {
+function Observation({ o, setO, prom, gpu }) {
   const [res, setRes] = useState(null);
   const [err, setErr] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -354,7 +391,7 @@ function Observation({ o, setO }) {
     setErr(null); setBusy(true);
     try {
       setRes(await api("/api/observation", { method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(o) }));
+        body: JSON.stringify({ ...prom, ...o, gpu }) }));
     } catch (e) { setErr(e.message); setRes(null); }
     setBusy(false);
   };
@@ -370,30 +407,16 @@ function Observation({ o, setO }) {
     <section>
       <p className="note">Prometheus scrapes vLLM's /metrics (and LiteLLM's for the per-agent view) continuously; this tab queries it
         over the chosen range and gives a verdict per window. No load is generated. The ranges of the runs started from this interface
-        since it was launched are discarded ("run in progress"). Setup: README, section 7.</p>
+        since it was launched are discarded ("run in progress"). Prometheus and the GPUs are set in the Configuration tab.</p>
+      {!gpu && <p className="warning">Give the number of GPUs behind the target in the Configuration tab.</p>}
       <div className="grid">
-        <Field label="Prometheus URL"><input value={o.prometheus} onChange={set("prometheus")} /></Field>
-        <Field label="Prometheus key" help="optional; empty if Prometheus does not require a token">
-          <input type="password" autoComplete="off" value={o.prometheus_key} onChange={set("prometheus_key")} />
-        </Field>
-        <Field label="vLLM targets" help="selector on the target labels (job, instance); all replicas are added up">
-          <input value={o.vllm} onChange={set("vllm")} />
-        </Field>
-        <Field label="LiteLLM targets" help='optional, per-agent view: e.g. job="litellm"'>
-          <input value={o.litellm} placeholder='job="litellm"' onChange={set("litellm")} />
-        </Field>
-        <Field label="Agents distinguished by" help="metadata_agent (metadata.agent field) or api_key_alias (one key per agent)">
-          <input value={o.by} onChange={set("by")} />
-        </Field>
         <Field label="Since" help="range ending now: 30m, 2h, 1d; ignored if a start is given">
           <input value={o.since} onChange={set("since")} />
         </Field>
         <Field label="Start" help="optional, local time"><input type="datetime-local" value={o.start} onChange={set("start")} /></Field>
         <Field label="End" help="optional; empty = now"><input type="datetime-local" value={o.end} onChange={set("end")} /></Field>
-        <Field label="Window length" help="e.g. 5m, 15m, 1h; at least 4 scrapes"><input value={o.window} onChange={set("window")} /></Field>
-        <Field label="Scrape interval" help="scrape_interval of prometheus.yml (15s by default)"><input value={o.scrape} onChange={set("scrape")} /></Field>
+        <Field label="Window length" help="e.g. 5m, 15m, 1h; at least 4 scrapes of Prometheus"><input value={o.window} onChange={set("window")} /></Field>
         <Field label="Target interactivity (tokens/s per request)"><input type="number" value={o.target} onChange={set("target")} /></Field>
-        <Field label="GPUs behind the vLLM targets"><input type="number" value={o.gpu} onChange={set("gpu")} /></Field>
         <Field label="Max TTFT P95 (ms)" help="optional"><input type="number" value={o.ttft_max} onChange={set("ttft_max")} /></Field>
         <Field label="View">
           <select value={o.view} onChange={set("view")}>
@@ -409,7 +432,7 @@ function Observation({ o, setO }) {
         )}
       </div>
       <div className="row">
-        <button className="primary" onClick={show} disabled={busy}>{busy ? "…" : "Show"}</button>
+        <button className="primary" onClick={show} disabled={busy || !gpu}>{busy ? "…" : "Show"}</button>
         <label><input type="checkbox" checked={auto} onChange={(e) => setAuto(e.target.checked)} /> refresh every minute</label>
         {err && <span className="error">{err}</span>}
       </div>
@@ -570,10 +593,12 @@ function Results() {
 }
 
 export default function App() {
-  const [tab, setTab] = useState("launch");
+  const [tab, setTab] = useState("config");
   const [selection, setSelection] = useState(null);
   // Connection fields and parameters are kept while the page stays open (nothing is saved).
   const [connection, setConnection] = useState(CONNECTION);
+  const [prometheus, setPrometheus] = useState(PROMETHEUS);
+  const [test, setTest] = useState(null);       // result of "Test connection", kept when the tab changes
   const [params, setParams] = useState(INITIAL);
   const [kind, setKind] = useState("synthetic");
   const [observation, setObservation] = useState(OBSERVATION);
@@ -583,16 +608,19 @@ export default function App() {
       <header>
         <h1>GPU Bench</h1>
         <nav>
-          {[["launch", "Launch"], ["runs", "Runs"], ["results", "Results"], ["observation", "Observation"]].map(([k, l]) => (
+          {[["config", "Configuration"], ["launch", "Launch stress tests"], ["runs", "Runs"], ["results", "Results"],
+            ["observation", "Observation"]].map(([k, l]) => (
             <button key={k} className={tab === k ? "active" : ""} onClick={() => setTab(k)}>{l}</button>
           ))}
         </nav>
       </header>
+      {tab === "config" && <Configuration c={connection} setC={setConnection} prom={prometheus} setProm={setPrometheus}
+        test={test} setTest={setTest} />}
       {tab === "launch" && <Launch onLaunched={(id) => { setSelection(id); setTab("runs"); }}
-        c={connection} setC={setConnection} params={params} setParams={setParams} kind={kind} setKind={setKind} />}
+        c={connection} params={params} setParams={setParams} kind={kind} setKind={setKind} />}
       {tab === "runs" && <Runs selection={selection} setSelection={setSelection} />}
       {tab === "results" && <Results />}
-      {tab === "observation" && <Observation o={observation} setO={setObservation} />}
+      {tab === "observation" && <Observation o={observation} setO={setObservation} prom={prometheus} gpu={connection.gpu} />}
     </div>
   );
 }
