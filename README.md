@@ -1111,6 +1111,7 @@ python -m observation.query --prometheus http://127.0.0.1:9090 --since 2h --wind
 | `--litellm`, `--by` | per-agent view: selector of the LiteLLM targets, label that tells agents apart (default `metadata_agent`) ([section 7.5](#75-per-agent-view-through-litellm)) |
 | `--exclude "start/end"` | range to discard, repeatable: a stress test on the same server would mix its load with the real usage |
 | `--output` | writes the windows to a CSV file |
+| `--view-output` | writes the rows of the chosen view to a CSV file: one per window, per period or per agent |
 
 A window **holds** when all of these are true:
 
@@ -1373,7 +1374,7 @@ results-agents/table_agents.csv                # report agents
 Runs started from the interface put the test-agents results in `agents_test/results-agents/` instead.
 
 Observation writes nothing by default: the history is in Prometheus (`prometheus-data/` if you start the binary
-yourself); `observation.query --output f.csv` writes the windows of a query.
+yourself); `observation.query --output f.csv` writes the windows of a query, and `--view-output f.csv` the rows of the chosen view.
 
 `server_config.json` contains:
 

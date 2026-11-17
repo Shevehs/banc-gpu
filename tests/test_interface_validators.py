@@ -1,6 +1,7 @@
 """Input validators and command builders of interface/server.py: the security boundary of the interface."""
 import asyncio
 import json
+import pathlib
 import sys
 
 import pytest
@@ -421,12 +422,12 @@ def test_valid_prometheus_url_public_host_allowed_by_environment(monkeypatch):
 
 
 class FakeQuery:
-    """Stand-in for the observation subprocess: records the call, writes the CSV asked by --output."""
+    """Stand-in for the observation subprocess: records the call, writes the CSV asked by --view-output."""
 
     def __init__(self, cmd, kw, output="Highest mean concurrency that holds: 3\nWARNING: x\nplain\n", code=0, hang=False):
         self.cmd, self.kw, self.returncode, self.text, self.hang, self.killed = cmd, kw, code, output, hang, False
-        if code == 0 and "--output" in cmd:
-            with open(cmd[cmd.index("--output") + 1], "w", encoding="utf-8") as f:
+        if code == 0 and "--view-output" in cmd:
+            with open(cmd[cmd.index("--view-output") + 1], "w", encoding="utf-8") as f:
                 f.write("start,verdict\n2026-05-01 08:00,holds\n")
 
     async def communicate(self):
@@ -856,3 +857,49 @@ def test_a_key_in_the_terminal_without_a_url_has_no_target(monkeypatch):
     monkeypatch.setenv("BENCH_API_KEY", ENV_KEY)
     payload = defaults_payload()
     assert payload["api_key_set"] is True and payload["api_key_url"] == ""
+
+
+# ------------------------------------------- the observation endpoint returns the rows of the chosen view
+def run_observation(monkeypatch, tmp_path, body, csv_text):
+    """POST /api/observation with a fake `observation.query` that writes csv_text where --view-output says."""
+    seen = []
+
+    class Process:
+        returncode = 0
+
+        async def communicate(self):
+            return b"Highest concurrency meeting the target\n", None
+
+    async def fake_exec(*cmd, **kw):
+        seen.append(cmd)
+        pathlib.Path(cmd[cmd.index("--view-output") + 1]).write_text(csv_text)
+        return Process()
+    monkeypatch.setattr(server.asyncio, "create_subprocess_exec", fake_exec)
+    monkeypatch.setattr(server, "LOGS_DIR", tmp_path / "logs")
+    monkeypatch.setattr(server, "RUNS", {})
+    resp = asyncio.run(server.observation(FakeRequest(body)))
+    return resp.status, json.loads(resp.text), seen
+
+
+@pytest.mark.parametrize("view,csv_text,first_row", [
+    ("windows", "start,verdict\n2026-11-16 18:00,holds\n", {"start": "2026-11-16 18:00", "verdict": "holds"}),
+    ("period", "period,start_hour,windows\nnight (0-6 h),0,3\n", {"period": "night (0-6 h)", "start_hour": "0", "windows": "3"}),
+    ("agents", "agent,requests\ncoder,240\n", {"agent": "coder", "requests": "240"}),
+])
+def test_observation_returns_the_rows_of_the_view(monkeypatch, tmp_path, view, csv_text, first_row):
+    body = {**OBS, "view": view, **({"litellm": 'job="litellm"'} if view == "agents" else {})}
+    status, payload, seen = run_observation(monkeypatch, tmp_path, body, csv_text)
+    assert status == 200 and payload["view"] == view and payload["rows"] == [first_row]
+    assert "--view-output" in seen[0] and "--output" not in seen[0]
+    assert seen[0][seen[0].index("--view") + 1] == view
+    assert payload["messages"] == ["Highest concurrency meeting the target"] and payload["code"] == 0
+
+
+def test_observation_with_an_unknown_view_returns_the_windows(monkeypatch, tmp_path):
+    status, payload, _ = run_observation(monkeypatch, tmp_path, {**OBS, "view": "x; ls"}, "start\n2026-11-16 18:00\n")
+    assert status == 200 and payload["view"] == "windows"
+
+
+def test_observation_refuses_the_agents_view_without_litellm(monkeypatch, tmp_path):
+    status, payload, seen = run_observation(monkeypatch, tmp_path, {**OBS, "view": "agents"}, "")
+    assert status == 400 and "LiteLLM" in payload["error"] and seen == []

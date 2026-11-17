@@ -934,3 +934,92 @@ def test_main_refuses_a_window_shorter_than_four_detected_scrapes(monkeypatch, p
     s = prom(lambda *a: [], {"/api/v1/targets": targets(("vllm", "90s"))})
     with pytest.raises(SystemExit, match=r"4 x the scrape interval \(360 s, read from Prometheus: the interval of the selected"):
         run_main(monkeypatch, *common(s.url))
+
+
+# ---------------------------------------------------------------- the rows of each view, as data (--view-output)
+def read_csv(path):
+    return list(csv.DictReader(path.open(newline="", encoding="utf-8")))
+
+
+@pytest.mark.parametrize("label,mode,hour", [
+    ("night (0-6 h)", "range", 0), ("morning (6-12 h)", "range", 6), ("afternoon (12-18 h)", "range", 12),
+    ("evening (18-24 h)", "range", 18), ("00 h", "hour", 0), ("07 h", "hour", 7), ("23 h", "hour", 23),
+])
+def test_period_start_hour(label, mode, hour):
+    assert query.period_start_hour(label, mode) == hour
+
+
+def test_period_rows_are_in_the_order_of_the_day_with_the_merged_indicators(utc_timezone):
+    valid = [window(DAY + 13 * 3600), window(DAY + 2 * 3600, requests=10), window(DAY + 3 * 3600, requests=30)]
+    rows = query.period_rows(valid, arguments())
+    assert [r["period"] for r in rows] == ["night (0-6 h)", "afternoon (12-18 h)"]          # not alphabetical
+    assert [(r["start_hour"], r["windows"]) for r in rows] == [(0, 2), (12, 1)]
+    assert rows[0]["completed_requests"] == 40                                                # 10 + 30 merged
+    assert rows[0]["verdict"] == "holds" and "output_throughput_per_gpu" in rows[0]
+
+
+def test_period_rows_by_hour_and_without_any_usable_window(utc_timezone):
+    rows = query.period_rows([window(DAY + 14 * 3600), window(DAY + 13 * 3600), window(DAY + 13 * 3600 + 900)], arguments(period="hour"))
+    assert [(r["period"], r["windows"]) for r in rows] == [("13 h", 2), ("14 h", 1)]
+    assert query.period_rows([], arguments()) == []
+
+
+def test_period_rows_have_the_columns_of_the_windows_plus_three(utc_timezone):
+    valid = [window(DAY + 3 * 3600)]
+    window_columns = set(query.evaluate(valid[0], arguments()))
+    assert set(query.period_rows(valid, arguments())[0]) == window_columns | {"period", "start_hour", "windows"}
+
+
+def test_agent_rows_add_the_windows_and_name_the_missing_identity():
+    valid = [window(agents={"coder": agent(30), "": agent(2)}),
+             window(DAY + 300, agents={"coder": agent(30), "reviewer": agent(10, 100.0, False)}), window(DAY + 600, agents=None)]
+    rows = {r["agent"]: r for r in query.agent_rows(valid)}
+    assert set(rows) == {"coder", "reviewer", ""}
+    assert rows["coder"]["requests"] == 60 and rows["coder"]["agent_name"] == "coder"
+    assert rows[""]["agent_name"] == "(no identity)"
+    assert rows["reviewer"]["mean_speed"] is None                                              # not every request streamed
+    assert round(sum(r["output_token_share"] for r in rows.values()), 6) == 1.0
+    assert query.agent_rows([window(agents={}), window(agents=None)]) == []
+
+
+def test_the_text_views_are_unchanged_by_the_row_helpers(capsys, utc_timezone):
+    """period_view and agents_view print what they printed before (the golden tests hold the full text)."""
+    valid = [window(DAY + 13 * 3600), window(DAY + 2 * 3600, requests=10)]
+    query.period_view(valid, arguments())
+    assert [l.split()[0] for l in capsys.readouterr().out.splitlines()[1:3]] == ["afternoon", "night"]
+
+
+def test_main_view_output_for_the_windows_view_is_the_windows(monkeypatch, prom, tmp_path, utc_timezone):
+    out, view = tmp_path / "w.csv", tmp_path / "v.csv"
+    run_main(monkeypatch, *common(canned(prom).url, "--output", str(out), "--view-output", str(view)))
+    assert read_csv(view) == read_csv(out) and len(read_csv(view)) == 3
+
+
+def test_main_view_output_for_the_period_view_is_one_row_per_period(monkeypatch, prom, tmp_path, utc_timezone):
+    out, view = tmp_path / "w.csv", tmp_path / "v.csv"
+    run_main(monkeypatch, *common(canned(prom).url, "--view", "period", "--output", str(out), "--view-output", str(view)))
+    rows = read_csv(view)
+    assert [(r["period"], r["start_hour"], r["windows"]) for r in rows] == [("night (0-6 h)", "0", "3")]
+    assert len(read_csv(out)) == 3                                                            # --output still has the windows
+
+
+def test_main_view_output_for_the_agents_view_is_one_row_per_agent(monkeypatch, prom, tmp_path, utc_timezone):
+    view = tmp_path / "v.csv"
+    windows = [fixtures.prom_window(300, 100, agents={"coder": agent(80), "reviewer": agent(20)})] * 3
+    run_main(monkeypatch, *common(canned(prom, windows).url, "--litellm", 'job="litellm"', "--view", "agents", "--view-output", str(view)))
+    rows = read_csv(view)
+    assert [(r["agent"], r["requests"]) for r in rows] == [("coder", "240.0"), ("reviewer", "60.0")]
+    assert rows[0]["output_token_share"].startswith("0.8")
+
+
+def test_main_without_view_output_writes_no_view_file(monkeypatch, prom, tmp_path, utc_timezone):
+    run_main(monkeypatch, *common(canned(prom).url, "--view", "period"))
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_window_rows_say_why_a_window_was_discarded(monkeypatch, prom, tmp_path, utc_timezone):
+    out = tmp_path / "w.csv"
+    run_main(monkeypatch, *common(canned(prom).url, "--exclude", "2024-05-14 00:03/2024-05-14 00:07", "--output", str(out)))
+    rows = read_csv(out)
+    assert [r["discard_reason"] for r in rows] == ["excluded range (stress test)", "excluded range (stress test)", ""]
+    assert [r["discarded"] for r in rows] == ["True", "True", "False"]

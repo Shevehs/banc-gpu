@@ -561,12 +561,17 @@ def valid_prometheus_url(v):
     return v.rstrip("/")
 
 
+def observation_view(p):
+    """The view asked for in the form `p`: windows (the default), period or agents."""
+    return p.get("view") if p.get("view") in ("windows", "period", "agents") else "windows"
+
+
 def observation_command(p, excluded=()):
     """Command of the observation (observation/query.py, which queries Prometheus) from the fields `p`.
 
     `excluded` lists (start, end) Unix times of ranges to discard (stress tests started from this interface).
     Returns (command, environment, working directory); the Prometheus key goes in the environment only. The
-    command has no --output: the caller adds it.
+    command has no --view-output: the caller adds it.
 
     Raises:
         Refusal: if a field is invalid."""
@@ -574,7 +579,7 @@ def observation_command(p, excluded=()):
            "--target", str(valid_number(p.get("target"), "target", 0.1, 10_000)),
            "--gpu", str(valid_number(p.get("gpu"), "GPU", 1, 4096, True))]
     cmd += ["--vllm", valid_selector(p.get("vllm") or 'job="vllm"', "vLLM selector")]
-    view = p.get("view") if p.get("view") in ("windows", "period", "agents") else "windows"
+    view = observation_view(p)
     if p.get("litellm"):
         by = str(p.get("by") or "metadata_agent").strip()
         if not LABEL_OK.match(by):
@@ -602,8 +607,9 @@ async def observation(req):
     """POST /api/observation: query Prometheus with `python -m observation.query`; nothing to start, no load.
 
     The ranges of the runs started from this interface (plus a minute) are passed as --exclude: their load must
-    not count as real usage. Returns the table rows (CSV of the windows), the key messages, the full output,
-    the exit code and the command; 400 if the parameters are refused, 504 if Prometheus is too slow."""
+    not count as real usage. Returns the rows of the view (one per window, per period or per agent: the
+    --view-output CSV), the view, the key messages, the full output, the exit code and the command; 400 if the
+    parameters are refused, 504 if Prometheus is too slow."""
     try:
         p = await read_body(req)
         excluded = [(e["start"], (e["end"] or time.time()) + 60) for e in RUNS.values()]
@@ -612,7 +618,7 @@ async def observation(req):
         return web.json_response({"error": str(e)}, status=400)
     LOGS_DIR.mkdir(exist_ok=True)
     csv_file = LOGS_DIR / f"observation-{secrets.token_hex(4)}.csv"
-    proc = await asyncio.create_subprocess_exec(*cmd, "--output", str(csv_file), cwd=str(cwd),
+    proc = await asyncio.create_subprocess_exec(*cmd, "--view-output", str(csv_file), cwd=str(cwd),
                                                 env={**base_environment(), **env},
                                                 stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
     try:
@@ -629,8 +635,8 @@ async def observation(req):
     # Keep in sync with the wording printed by observation/query.py
     messages = [l for l in output.splitlines() if "WARNING" in l or "Highest" in l or l.startswith("No ")
                 or "unreachable" in l or "HTTP" in l]
-    return web.json_response({"rows": rows, "messages": messages, "output": output, "code": proc.returncode,
-                              "command": " ".join(cmd)})
+    return web.json_response({"rows": rows, "view": observation_view(p), "messages": messages, "output": output,
+                              "code": proc.returncode, "command": " ".join(cmd)})
 
 
 async def defaults(req):

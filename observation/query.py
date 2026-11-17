@@ -7,6 +7,7 @@ Usage: python -m observation.query --prometheus http://127.0.0.1:9090 --target 3
        [--since 2h | --start "2026-11-14 09:00" [--end "2026-11-14 17:00"]] [--window 5m]
        [--view windows|period|agents] [--period range|hour] [--ttft-max ms]
        [--exclude "2026-11-14 10:00/2026-11-14 11:00" ...] [--scrape 15s] [--output table.csv]
+       [--view-output view.csv]
   --vllm, --litellm : Prometheus label selectors of the targets (job of prometheus.yml). All the matching
             series are added together: one selector = one configuration (all replicas).
   --target : target interactivity per request (tokens/s). A window "holds" if at least 90 % of the completed
@@ -18,6 +19,9 @@ Usage: python -m observation.query --prometheus http://127.0.0.1:9090 --target 3
   --exclude : ranges to discard (stress test on the same server: the synthetic load would mix with real usage)
   --scrape : Prometheus scrape interval (scrape_interval), for the gauges. Optional: by default it is read from Prometheus
             (the interval of the vLLM and LiteLLM targets, else the global one), and 15 s if Prometheus cannot say.
+  --output : CSV of the windows, whatever the view (one row per window, discarded ones included)
+  --view-output : CSV of the rows of the chosen view: the windows, or one row per period (with the number of windows
+            merged and the hour it starts), or one row per agent
 Key: BENCH_PROMETHEUS_KEY environment variable if Prometheus requires a token (Bearer). Standard library only.
 """
 import argparse
@@ -447,7 +451,7 @@ def build_rows(obs, args, sel_l, w, scrape, excluded):
             alerts.extend(check_litellm(o, when, sel_l))
         rows.append({"start": when, "end": time.strftime("%H:%M", time.localtime(o["end"])),
                      "duration_s": round(o["end"] - o["start"]), "targets": o["targets"], **r,
-                     "discarded": bool(reason)})
+                     "discarded": bool(reason), "discard_reason": reason or ""})
     return rows, alerts, valid
 
 
@@ -469,26 +473,60 @@ def check_litellm(o, when, sel_l):
     return alerts
 
 
-def period_view(valid, args):
-    """Print the indicators of the merged windows per period (args.period)."""
+def period_groups(valid, args):
+    """[(label, number of windows, indicators of the merged windows)] per period (args.period), sorted by label."""
     groups = {}
     for o in valid:
         groups.setdefault(period_label(o["start"], args.period), []).append(o)
+    return [(label, len(groups[label]), evaluate(merge(groups[label]), args)) for label in sorted(groups)]
+
+
+def period_start_hour(label, mode):
+    """Hour of the day (0-23, local time) at which the period `label` starts: to put the periods in order."""
+    if mode == "hour":
+        return int(label[:2])
+    return next(start for start, name in RANGES if name == label)
+
+
+def period_rows(valid, args):
+    """Rows of the per-period view, in the order of the day: the period, the hour it starts, the number of windows
+    merged, then the indicators of the merged windows (same columns as the windows)."""
+    rows = [{"period": label, "start_hour": period_start_hour(label, args.period), "windows": n, **r}
+            for label, n, r in period_groups(valid, args)]
+    return sorted(rows, key=lambda r: r["start_hour"])
+
+
+def period_view(valid, args):
+    """Print the indicators of the merged windows per period (args.period)."""
     print(f"{'period':<22}{'windows':>9}" + headers())
-    for label in sorted(groups):
-        print(f"{label:<22}{len(groups[label]):>9}" + format_row(evaluate(merge(groups[label]), args)))
+    for label, n, r in period_groups(valid, args):
+        print(f"{label:<22}{n:>9}" + format_row(r))
     print("\nThroughput/GPU: mean over the period; avg conc: requests in flight on average. Peak of a period: "
           "--view windows.")
 
 
-def agents_view(valid, args, sel_l):
-    """Print the per-agent view (LiteLLM metrics), all the usable windows added together."""
+def agent_totals(valid):
+    """The metrics of every usable window added together, per agent."""
     totals = {}
     for o in valid:
         for agent, d in (o.get("agents") or {}).items():
             t = totals.setdefault(agent, {k: ({} if isinstance(v, dict) else 0.0) for k, v in d.items()})
             for k, v in d.items():
                 t[k] = sum_histograms([t[k], v]) if isinstance(v, dict) else t[k] + v
+    return totals
+
+
+def agent_rows(valid):
+    """Rows of the per-agent view: one per agent (the label as LiteLLM gives it, then the name shown)."""
+    rows = []
+    for agent, r in agent_indicators(agent_totals(valid)).items():
+        rows.append({"agent": agent, "agent_name": agent if agent not in ("", "None") else "(no identity)", **r})
+    return rows
+
+
+def agents_view(valid, args, sel_l):
+    """Print the per-agent view (LiteLLM metrics), all the usable windows added together."""
+    totals = agent_totals(valid)
     if not totals:
         print(f"No per-agent request in the range (LiteLLM {{{sel_l}}}, label {args.by}).")
     else:
@@ -568,11 +606,22 @@ def build_parser():
     a.add_argument("--period", choices=["hour", "range"], default="range")
     a.add_argument("--exclude", action="append", default=[], help='range "start/end" to discard (stress test)')
     a.add_argument("--output", default=None, help="CSV of the windows (optional)")
+    a.add_argument("--view-output", default=None,
+                   help="CSV of the rows of the chosen view: windows, periods or agents (optional)")
     return a
 
 
+def write_csv(path, rows):
+    """Write `rows` (dictionaries) as a CSV file with a header: the columns are the keys of all the rows."""
+    with open(path, "w", newline="", encoding="utf-8") as fh:
+        writer = csv.DictWriter(fh, fieldnames=list(dict.fromkeys(k for r in rows for k in r)))
+        writer.writeheader()
+        writer.writerows(rows)
+
+
 def main():
-    """Command-line entry point: query Prometheus, print the chosen view and the warnings, write --output."""
+    """Command-line entry point: query Prometheus, print the chosen view and the warnings, write --output and
+    --view-output."""
     p = build_parser().parse_args()
     sel_v = check_selector(p.vllm, "--vllm")
     sel_l = check_selector(p.litellm, "--litellm") if p.litellm else None
@@ -607,11 +656,9 @@ def main():
         raise SystemExit(f"No vLLM target {{{sel_v}}} in Prometheus over this range: check the selector "
                          "(job of prometheus.yml) and the Status > Targets page of Prometheus.")
     if p.output:
-        with open(p.output, "w", newline="", encoding="utf-8") as fh:
-            fields = list(dict.fromkeys(k for r in rows for k in r))
-            writer = csv.DictWriter(fh, fieldnames=fields)
-            writer.writeheader()
-            writer.writerows(rows)
+        write_csv(p.output, rows)
+    if p.view_output:
+        write_csv(p.view_output, {"period": period_rows, "agents": lambda v, a: agent_rows(v)}.get(p.view, lambda v, a: rows)(valid, p))
     print(f"Prometheus {p.prometheus}, vLLM {{{sel_v}}}"
           + (f", LiteLLM {{{sel_l}}} by {p.by}" if sel_l else "")
           + f"; {time.strftime('%Y-%m-%d %H:%M', time.localtime(obs[0]['start']))} → "
