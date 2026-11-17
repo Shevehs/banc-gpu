@@ -16,7 +16,7 @@ Two families of measurements:
   installation **sustains the real load**, per window, per period and per agent, over any past range.
 
 > **Status.** Written from the code of **vLLM at commit [`7f855f6`](https://github.com/vllm-project/vllm/tree/7f855f605892656ebf7265642e5d22a34a6ae731)**
-> and tested with **AIPerf 0.12.0** against a fake server ([Appendix E](#appendix-e-try-the-bench-without-a-gpu)).
+> and tested with **AIPerf 0.13.0** against a fake server ([Appendix E](#appendix-e-try-the-bench-without-a-gpu)).
 > Against a real vLLM it has only been tried on a small local server (vLLM 0.33.0), **not yet on a GPU server**.
 > On your first real run, compare your outputs with the example in [section 5.4](#54-test-the-connection).
 > Unfamiliar terms: see [Appendix G](#appendix-g-glossary). What is verified, documented or still unchecked is
@@ -103,7 +103,7 @@ installs the right Python for the bench ([how to install it](#43-install-the-ben
 ```bash
 git clone https://github.com/Shevehs/banc-gpu.git ~/banc-gpu && cd ~/banc-gpu
 uv venv --seed --python 3.12 .venv-aiperf && source .venv-aiperf/bin/activate
-pip install aiperf==0.12.0 "openai>=1.40" httpx
+pip install aiperf==0.13.0 "openai>=1.40" httpx
 ```
 
 ### 2.2 Point the bench at your vLLM
@@ -250,7 +250,7 @@ expose them. A launch warning says so if it points elsewhere.
 | **vLLM's `/metrics` reachable** from the client machine | Enabled by default; it provides preemptions, cache, speculative decoding, KV cache occupancy. It does **not** require the API key (see [Appendix A](#appendix-a-security-notes)). | `curl -s http://<host>:8000/metrics \| grep -c '^vllm:'` prints a number greater than 0 |
 | **LiteLLM installed** (optional) | To measure through the gateway, or to follow the agents separately in observation ([section 7.5](#75-per-agent-view-through-litellm)): LiteLLM sees which agent sends each request, vLLM does not. Your vLLM declared as a model of LiteLLM, with its key if it has one ([LiteLLM, vLLM](https://docs.litellm.ai/docs/providers/vllm); [configuration](https://docs.litellm.ai/docs/proxy/configs)). | `curl -s -H "Authorization: Bearer <key>" http://<vm>:4000/v1/models` |
 | **Prometheus** (observation only) | A separate server that scrapes vLLM's `/metrics` (and LiteLLM's) and keeps the history; vLLM does not provide one. A single binary ([download](https://prometheus.io/download/)), or the `prom/prometheus` Docker image. Configuration provided: `tools/prometheus.yml.example` ([section 7.2](#72-install-and-start-prometheus-once)). | `curl -s http://<host>:9090/-/ready` |
-| **uv** on the client machine | Installs the Python that AIPerf 0.12 requires (3.11 to 3.13) for the bench's environment; see [section 4.3](#43-install-the-bench-dependencies). | `uv --version` |
+| **uv** on the client machine | Installs the Python that AIPerf 0.13 requires (3.11 to 3.13) for the bench's environment; see [section 4.3](#43-install-the-bench-dependencies). | `uv --version` |
 | **bash** | Tested with bash 5; written to also run on the old bash 3.2, verified only with a bash 3.2 built on Linux. | `bash --version` |
 | **Network** | The client machine reaches vLLM (and LiteLLM). No Internet access is needed once the tokenizer is copied into `tools/tokenizer/` ([section 5.3](#53-copy-the-tokenizer)). | — |
 
@@ -351,8 +351,10 @@ Create the environment (`--seed` puts pip in it) and install the dependencies in
 ```bash
 uv venv --seed --python 3.12 .venv-aiperf
 source .venv-aiperf/bin/activate
-pip install aiperf==0.12.0 "openai>=1.40" httpx
+pip install aiperf==0.13.0 "openai>=1.40" httpx
 ```
+
+`sweep.sh` and `agentx.sh` check the AIPerf version and stop with a message if it is older than 0.13.
 
 Check the installation:
 
@@ -422,7 +424,7 @@ Settings are read from the `BENCH_*` variables.
   authority, give the file of that authority: `export SSL_CERT_FILE=/path/ca.pem` (read by AIPerf, the scripts and the
   test agents).
 
-Do not put `HF_HUB_OFFLINE=1` in this file: with a local tokenizer, AIPerf 0.12 fails when this
+Do not put `HF_HUB_OFFLINE=1` in this file: with a local tokenizer, AIPerf fails when this
 variable is set (`sweep.sh` removes it for AIPerf anyway).
 
 ### 5.3 Copy the tokenizer
@@ -636,7 +638,7 @@ On a small server whose context is limited to 32,768 tokens, no trace of the pub
 ([section 6.6](#66-context-shorter-than-the-traces)). You can generate shorter traces, or use your own
 ([section 6.5](#65-agentx-with-generated-or-your-own-traces)).
 
-**What the scenario enforces** (documented in the AIPerf 0.12.0 code,
+**What the scenario enforces** (documented in the AIPerf 0.13.0 code,
 `aiperf/common/scenario/inferencex_agentx_mvp.py`, and in AIPerf's message at run time):
 
 - streaming;
@@ -646,7 +648,7 @@ On a small server whose context is limited to 32,768 tokens, no trace of the pub
 - delays between turns replayed;
 - first-turn prefix scrambled, so that a run does not benefit from the previous run's cache;
 - the trace set is one of the published versions that AIPerf accepts (the bench uses `semianalysisai/cc-traces-weka-062126`,
-  the most recent in AIPerf 0.12.0). A run on another set, or on a local copy AIPerf cannot check, is marked
+  the most recent in AIPerf 0.13.0). A run on another set, or on a local copy AIPerf cannot check, is marked
   `submission_valid=false` and is not comparable.
 
 The traces are published on Hugging Face. By default, `agentx.sh` **downloads them itself** on the first run (about
@@ -1586,7 +1588,7 @@ Each agent then uses its own key as the API key, and the metrics carry `api_key_
   - [`offset`](https://prometheus.io/docs/prometheus/latest/querying/basics/#offset-modifier)
   - [download](https://prometheus.io/download/); tested with Prometheus 3.7.3
 - AIPerf:
-  - [AIPerf 0.12.0](https://pypi.org/project/aiperf/0.12.0/)
+  - [AIPerf 0.13.0](https://pypi.org/project/aiperf/0.13.0/)
   - [concurrency sweep (NVIDIA)](https://docs.nvidia.com/nim/benchmarking/llm/latest/step-by-step.html)
 - LiteLLM:
   - [vLLM provider](https://docs.litellm.ai/docs/providers/vllm)
@@ -1718,6 +1720,8 @@ When you are done, stop the two background processes (`jobs` lists them, then `k
   ([Appendix E](#appendix-e-try-the-bench-without-a-gpu)).
 - `sweep.sh` with AIPerf 0.12.0 and the AIPerf report, against a real vLLM 0.33.0 on a small local server (levels 1, 4
   and 16, with the preemption counter read from `/metrics`).
+- `sweep.sh` and `agentx.sh` with AIPerf 0.13.0, against the fake server: one-level and two-level runs, both AIPerf
+  reports and the whole test suite, including the tests that need AIPerf.
 - The test agents' launcher taking its target from `BENCH_URL`, `BENCH_MODEL` and `BENCH_METRICS`: unit tests of the
   options, and a short run against the fake server with only these variables set and no `--url` or `--model`.
 - The model-name check, against a real vLLM 0.33.0 and a real LiteLLM 1.106.10: a wrong name stops the script with the
@@ -1769,6 +1773,7 @@ See [section 4.2](#42-check-the-vllm-in-place), [section 6.6](#66-context-shorte
 - That LiteLLM forwards `min_tokens` and `ignore_eos`.
 - Prometheus versions newer than 3.7.3.
 - `agentx.sh` with AIPerf on the published trace set, since the latest changes to the scripts.
+- `sweep.sh` and `agentx.sh` with AIPerf 0.13.0 against a real vLLM.
 - A test-agents run that takes its target from the variables, on a real vLLM or LiteLLM.
 - `agentx.sh` with a local tokenizer folder on Linux, where AIPerf starts its loading processes differently
   ([section 6.5](#65-agentx-with-generated-or-your-own-traces)).

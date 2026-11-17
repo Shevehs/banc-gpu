@@ -29,6 +29,12 @@ OVERWRITE="${BENCH_OVERWRITE:-}"                       # 1 = replace existing re
 EXTRA="${BENCH_EXTRA:-}"                           # additional AIPerf options, e.g. "--use-server-token-count --api-key XXX"
 # A different seed for each label (hence for each repetition), unless BENCH_SEED is set.
 SEED="${BENCH_SEED:-$(printf '%s' "$LABEL" | cksum | cut -d' ' -f1)}"
+# This bench needs AIPerf 0.13 or later: stop before anything is replaced or created.
+AIPERF_VERSION="$(aiperf --version 2>/dev/null | tail -n 1 | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -n 1 || true)"
+case "$AIPERF_VERSION" in
+  0.[0-9]|0.[0-9].*|0.1[0-2]|0.1[0-2].*)
+    echo "AIPerf $AIPERF_VERSION is installed: this bench needs AIPerf 0.13.0 or later (pip install aiperf==0.13.0)."; exit 1 ;;
+esac
 # A model name the server does not know makes every request fail at once: say so before anything is replaced or created.
 CHECK=0
 BENCH_API_KEY="$API_KEY" python3 "$HERE/tools/server_config.py" --url "$URL" --model "$MODEL" --check-model || CHECK=$?
@@ -43,7 +49,7 @@ mkdir -p "$ROOT_DIR/$LABEL"
 # Snapshot of the server configuration (version, cache, parallelism from the response fingerprint).
 BENCH_API_KEY="$API_KEY" python3 "$HERE/tools/server_config.py" --url "$URL" --model "$MODEL" --metrics "$METRICS" \
   --output "$ROOT_DIR/$LABEL/server_config.json" || echo "   (server configuration not collected)"
-# Local tokenizer: AIPerf 0.12 looks for it in the Hugging Face cache if HF_HUB_OFFLINE is set, and fails.
+# Local tokenizer: AIPerf looks for it in the Hugging Face cache if HF_HUB_OFFLINE is set, and fails.
 # So these variables are unset for AIPerf only; a local folder triggers no download.
 OFFLINE_UNSET=()
 [ -n "$TOKENIZER" ] && [ -d "$TOKENIZER" ] && OFFLINE_UNSET=(env -u HF_HUB_OFFLINE -u TRANSFORMERS_OFFLINE)

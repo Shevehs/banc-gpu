@@ -24,7 +24,8 @@ def sandbox(tmp_path):
     bin_dir.mkdir()
     marker = tmp_path / "aiperf-was-called"
     fake = bin_dir / "aiperf"
-    fake.write_text(f"#!/bin/sh\ntouch '{marker}'\nexit 1\n")
+    fake.write_text('#!/bin/sh\nif [ "$1" = "--version" ]; then printf "%s\\n" "${FAKE_AIPERF_VERSION-0.13.0}"; exit 0; fi\n'
+                    f"touch '{marker}'\nexit 1\n")
     fake.chmod(0o755)
     work = tmp_path / "work"
     work.mkdir()
@@ -193,7 +194,8 @@ def agentx_run(tmp_path):
     work.mkdir()
     dump = tmp_path / "aiperf-env"
     fake = bin_dir / "aiperf"
-    fake.write_text(f"#!/bin/sh\nenv | grep '^AIPERF_' | sort > '{dump}'\nexit 0\n")
+    fake.write_text('#!/bin/sh\nif [ "$1" = "--version" ]; then echo 0.13.0; exit 0; fi\n'
+                    f"env | grep '^AIPERF_' | sort > '{dump}'\nexit 0\n")
     fake.chmod(0o755)
     system = bin_dir / "uname"                      # the operating system is chosen by the test: FAKE_UNAME (default Darwin)
     system.write_text('#!/bin/sh\necho "${FAKE_UNAME:-Darwin}"\n')
@@ -322,7 +324,8 @@ def aiperf_reached(tmp_path):
     work.mkdir()
     marker = tmp_path / "aiperf-was-called"
     fake = bin_dir / "aiperf"
-    fake.write_text(f"#!/bin/sh\ntouch '{marker}'\nexit 1\n")
+    fake.write_text('#!/bin/sh\nif [ "$1" = "--version" ]; then printf "%s\\n" "${FAKE_AIPERF_VERSION-0.13.0}"; exit 0; fi\n'
+                    f"touch '{marker}'\nexit 1\n")
     fake.chmod(0o755)
     shim = bin_dir / "python3"
     shim.write_text('#!/bin/sh\ncase " $* " in *" --check-model "*) [ -n "$FAKE_CHECK_EXIT" ] && exit "$FAKE_CHECK_EXIT" ;; '
@@ -357,3 +360,38 @@ def test_the_key_of_the_shell_reaches_the_model_check(sandbox, stub, script):
     s = stub({"/v1/chat/completions": VLLM_UNKNOWN_MODEL, "/v1/models": SERVED})
     sandbox(script, "lbl", BENCH_URL=s.url, BENCH_API_KEY="sk-x")
     assert {r["headers"].get("Authorization") for r in s.seen} == {"Bearer sk-x"}
+
+
+# ---------------------------------------------------------------- the bench needs AIPerf 0.13 or later
+@pytest.mark.parametrize("script", [SWEEP, AGENTX])
+@pytest.mark.parametrize("version", ["0.12.0", "0.12", "0.9.1", "0.10.0", "0.12.3", "aiperf 0.12.0", "v0.12.0", "0.12.0.dev20261001",
+                                     "Loading the plugins...\n0.12.0"])
+def test_an_aiperf_older_than_0_13_stops_the_script_before_anything_is_created(sandbox, script, version):
+    r = sandbox(script, "lbl", FAKE_AIPERF_VERSION=version)
+    assert r.returncode == 1
+    assert "needs AIPerf 0.13.0 or later (pip install aiperf==0.13.0)" in r.stdout
+    assert nothing_created(sandbox)
+
+
+@pytest.mark.parametrize("script", [SWEEP, AGENTX])
+def test_an_aiperf_older_than_0_13_keeps_existing_results_even_with_overwrite(sandbox, script):
+    old = sandbox.work / "results" / "lbl"
+    old.mkdir(parents=True)
+    (old / "old.txt").write_text("kept")
+    r = sandbox(script, "lbl", FAKE_AIPERF_VERSION="0.12.0", BENCH_OVERWRITE="1")
+    assert r.returncode == 1 and (old / "old.txt").read_text() == "kept"
+
+
+@pytest.mark.parametrize("script", [SWEEP, AGENTX])
+@pytest.mark.parametrize("version", ["0.13.0", "0.13", "0.13.1", "0.14.0", "1.0.0", "0.13.0.dev20261113", "0.100.0", "aiperf 0.13.0"])
+def test_an_aiperf_0_13_or_later_goes_on(aiperf_reached, script, version):
+    result, reached = aiperf_reached(script, FAKE_AIPERF_VERSION=version)
+    assert reached and "needs AIPerf" not in result.stdout
+
+
+@pytest.mark.parametrize("script", [SWEEP, AGENTX])
+@pytest.mark.parametrize("version", ["", "not a version"])
+def test_an_unreadable_aiperf_version_does_not_stop_the_script(aiperf_reached, script, version):
+    """The later steps report a missing or broken aiperf themselves."""
+    result, reached = aiperf_reached(script, FAKE_AIPERF_VERSION=version)
+    assert reached and "needs AIPerf" not in result.stdout

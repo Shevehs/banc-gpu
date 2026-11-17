@@ -2,7 +2,7 @@
 name = "banc-gpu"
 version = "0.1.0"
 description = "Capacity benchmark for a model served by vLLM: stress tests and observation of real usage"
-requires-python = ">=3.11,<3.14"   # the range AIPerf 0.12 supports
+requires-python = ">=3.11,<3.14"   # the range AIPerf 0.13 supports
 
 # Dependencies are dependency groups (PEP 735), not project dependencies: the repository is run from its root and
 # never installed, so there is no project to attach them to. Install with: pip install --group dev
