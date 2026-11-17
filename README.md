@@ -836,21 +836,39 @@ were used.
 The test agents are three profiles (`code_review` with sub-agents, step-by-step `pentest`, `report`).
 Their tools are simulated: they return fabricated text and act on no system.
 
-Check first that `BENCH_MODEL` is a name the server serves ([section 5.4](#54-test-the-connection)). Unlike `sweep.sh`
+Like `sweep.sh` and `agentx.sh`, the launcher reads the variables of `target.env`: load it in this terminal first
+([section 5.2](#52-set-the-connection)). `BENCH_URL`, `BENCH_MODEL` and `BENCH_METRICS` are the defaults of `--url`,
+`--model` and `--metrics`. An option typed on the command line wins over its variable. Two more rules:
+
+- `BENCH_METRICS` goes with `BENCH_URL`: it is used only when `--url` is not given. A run aimed at another URL never
+  reads the metrics of the server of `target.env`.
+- If `BENCH_URL` is the LiteLLM gateway, set `BENCH_METRICS` to vLLM's `/metrics`
+  ([section 5.2](#52-set-the-connection)), as for the other tests.
+
+Without the variables, the defaults are `http://127.0.0.1:8000`, the model name `bench` and `<url>/metrics`.
+
+Then check that `BENCH_MODEL` is a name the server serves ([section 5.4](#54-test-the-connection)). Unlike `sweep.sh`
 and `agentx.sh`, the launcher does not check it, and the tasks would fail at once.
 
 vLLM must run with the prefix cache enabled (without `--no-enable-prefix-caching`). If you have just run the synthetic
 test, restart vLLM ([section 4.2](#42-check-the-vllm-in-place)). Check that the `[config]` line says `prefix cache True`
-([section 5.4](#54-test-the-connection)), then:
+([section 5.4](#54-test-the-connection)), then start the test agents:
 
 ```bash
-python -m agents_test.launcher --url "$BENCH_URL" --model "$BENCH_MODEL" --metrics "${BENCH_METRICS:-$BENCH_URL/metrics}" \
-  --levels "1 2 4 8" --duration 900 --warmup 300 --scale 1 --label conf-a-r1
+python -m agents_test.launcher --levels "1 2 4 8" --duration 900 --warmup 300 --scale 1 --label conf-a-r1
+```
+
+Then read the report:
+
+```bash
 python -m report agents results-agents --target 30
 ```
 
 | Option | Meaning |
 |---|---|
+| `--url` | the target: vLLM or the LiteLLM gateway (default `BENCH_URL`, else `http://127.0.0.1:8000`) |
+| `--model` | the served model name (default `BENCH_MODEL`, else `bench`) |
+| `--metrics` | vLLM `/metrics` URLs, separated by spaces. Default: `BENCH_METRICS` if `--url` is not given, else `<url>/metrics`. It replaces the default, it does not add to it |
 | `--levels` | numbers of simultaneous tasks; each level holds for `--duration` seconds, alternating the three profiles |
 | `--warmup` | seconds excluded from the measurement at the start of a level (at least the duration of one task); must be < `--duration` |
 | `--scale` | multiplies all sizes: 1 = contexts up to about 135,000 tokens; 0.2 for a small server with 32,768 tokens of context |
@@ -861,13 +879,14 @@ python -m report agents results-agents --target 30
 
 Other options:
 
-- `--spread`: staggers the workers' start over this many seconds;
-- `--latency-factor`: multiplies the simulated tool times (1 to measure);
-- `--no-metrics`: does not read `/metrics`;
-- `--overwrite`: replaces existing results with the same label.
+- `--spread`: staggers the workers' start over this many seconds
+- `--latency-factor`: multiplies the simulated tool times (1 to measure)
+- `--no-metrics`: does not read `/metrics`
+- `--overwrite`: replaces existing results with the same label
 
-The key is read from `BENCH_API_KEY`. `BENCH_AGENT_KEYS` gives one key per profile
-([section 7.5](#75-per-agent-view-through-litellm)).
+The key has no option. The launcher reads `BENCH_API_KEY` from the environment, which `target.env` also sets.
+`BENCH_AGENT_KEYS` gives one key per profile ([section 7.5](#75-per-agent-view-through-litellm)). Without a key, the
+launcher sends the placeholder `bench`, which is fine for a vLLM started without `--api-key`.
 
 The report gives an "all" row per level, then one row per profile (tasks, err, tput/GPU, inter P10, TTFT P95 in
 seconds, cache share, task duration, preemptions, MTP, maximum KV cache), and the selected level. The full table is
@@ -1699,6 +1718,8 @@ When you are done, stop the two background processes (`jobs` lists them, then `k
   ([Appendix E](#appendix-e-try-the-bench-without-a-gpu)).
 - `sweep.sh` with AIPerf 0.12.0 and the AIPerf report, against a real vLLM 0.33.0 on a small local server (levels 1, 4
   and 16, with the preemption counter read from `/metrics`).
+- The test agents' launcher taking its target from `BENCH_URL`, `BENCH_MODEL` and `BENCH_METRICS`: unit tests of the
+  options, and a short run against the fake server with only these variables set and no `--url` or `--model`.
 - The model-name check, against a real vLLM 0.33.0 and a real LiteLLM 1.106.10: a wrong name stops the script with the
   server's message, the right name goes on, and a missing key or no server does not stop it.
 - `agentx.sh` with a generated set of traces and a small hand-made folder
@@ -1748,6 +1769,7 @@ See [section 4.2](#42-check-the-vllm-in-place), [section 6.6](#66-context-shorte
 - That LiteLLM forwards `min_tokens` and `ignore_eos`.
 - Prometheus versions newer than 3.7.3.
 - `agentx.sh` with AIPerf on the published trace set, since the latest changes to the scripts.
+- A test-agents run that takes its target from the variables, on a real vLLM or LiteLLM.
 - `agentx.sh` with a local tokenizer folder on Linux, where AIPerf starts its loading processes differently
   ([section 6.5](#65-agentx-with-generated-or-your-own-traces)).
 - `agentx.sh` with traces ([section 6.5](#65-agentx-with-generated-or-your-own-traces)):

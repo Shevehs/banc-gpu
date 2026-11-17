@@ -26,8 +26,8 @@ IGNORED = {
 
 
 def read_setting(name, default=None):
-    """Value of BENCH_<name>, else `default` (an empty value counts as absent)."""
-    return os.environ.get("BENCH_" + name) or default
+    """Value of BENCH_<name> without surrounding white space, else `default` (an empty value counts as absent)."""
+    return (os.environ.get("BENCH_" + name) or "").strip() or default
 
 
 def api_key():

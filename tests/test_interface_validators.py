@@ -701,6 +701,20 @@ def test_launch_does_not_inherit_the_terminal_secrets(launcher, monkeypatch):
     assert spawned[0][1]["env"]["BENCH_API_KEY"] == ""
 
 
+def test_agents_launch_does_not_inherit_the_terminal_target(launcher, monkeypatch):
+    """The launcher now reads BENCH_URL, BENCH_MODEL and BENCH_METRICS: none of them may come from the terminal that
+    started the interface, so that an empty form field keeps its meaning (the target's own /metrics)."""
+    for name, value in (("BENCH_URL", "http://gateway:4000"), ("BENCH_MODEL", "terminal-model"),
+                        ("BENCH_METRICS", "http://real-vllm:8000/metrics")):
+        monkeypatch.setenv(name, value)
+    status, _, spawned = launcher({"type": "agents", **AGENTS})
+    cmd, kwargs = spawned[0]
+    assert status == 200
+    assert not [k for k in kwargs["env"] if k in ("BENCH_URL", "BENCH_MODEL", "BENCH_METRICS")]
+    assert "--metrics" not in cmd                                      # an empty form field passes no --metrics
+    assert cmd[cmd.index("--url") + 1] == "http://127.0.0.1:8000" and cmd[cmd.index("--model") + 1] == "bench"
+
+
 @pytest.mark.parametrize("body,message", [
     ({"type": "nope"}, "unknown run type"), (ValueError("x"), "JSON body expected"), (["list"], "JSON body expected"),
     ({"type": "synthetic", **SYNTH, "url": "ftp://x"}, "target URL"),

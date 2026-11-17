@@ -111,3 +111,14 @@ def test_script_prints_warnings_on_stderr_only():
     r = helpers.run([helpers.sys.executable, "-B", "tools/settings.py"], env=env)
     assert r.returncode == 0 and r.stdout == ""
     assert "CLE_API" in r.stderr and "BENCH_API_KEY" in r.stderr and "sk-secret" not in r.stderr
+
+
+@pytest.mark.parametrize("raw,expected", [("  http://x \n", "http://x"), ("\t", "fallback"), ("   ", "fallback")])
+def test_white_space_around_a_value_is_removed_and_a_blank_value_counts_as_absent(monkeypatch, raw, expected):
+    monkeypatch.setenv("BENCH_URL", raw)
+    assert read_setting("URL", "fallback") == expected
+
+
+def test_the_api_key_is_stripped_too(monkeypatch):
+    monkeypatch.setenv("BENCH_API_KEY", " sk-1\n")
+    assert api_key() == "sk-1"
