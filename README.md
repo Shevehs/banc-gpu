@@ -1072,22 +1072,22 @@ In every case:
 
 - **One job per configuration**: all the targets of a job are added up (all the replicas of one installation). Two
   installations to compare mean two jobs (`job_name: vllm-tep8`, `job_name: vllm-tp4`).
-- **Scrape every 15 s** (`scrape_interval`): windows must last at least 4 scrapes (1 min); if you change this
-  setting, give the same value to `--scrape`.
+- **Scrape every 15 s** (`scrape_interval`): windows must last at least 4 scrapes (1 min). The observation reads the
+  interval from Prometheus by itself; `--scrape` is only there to override it.
 - **Peaks are coarser than in the stress tests**: AIPerf reads vLLM's `/metrics` about every 0.33 s and the test
   agents every 2 s, whereas Prometheus reads it every 15 s.
   - A short spike of KV cache usage or of waiting requests can fall between two scrapes and go unseen, so the maxima of
     the observation are lower bounds.
   - The counters (requests, preemptions, cache hits) are not affected, since the bench subtracts the start of a window
     from its end.
-  - For finer peaks, lower `scrape_interval` (5 s is a reasonable value) and give the same value to `--scrape`. The cost
-    is more storage in Prometheus and more load on vLLM and LiteLLM, because every scrape renders the whole `/metrics`
-    page. Use whole seconds: `--scrape` does not support less than 1 s.
+  - For finer peaks, lower `scrape_interval` (5 s is a reasonable value): the observation picks it up. The cost is more
+    storage in Prometheus and more load on vLLM and LiteLLM, because every scrape renders the whole `/metrics` page.
+    The observation works in whole seconds: an interval shorter than 1 s is rounded up to 1 s.
 - **Check**: page `http://<host>:9090/targets`, every target must be "UP" (otherwise the error is shown next to it).
 - **History**: it starts when Prometheus starts. Leave it running as a service; the default retention is 15 days,
   30 with the option above.
-- **Existing Prometheus**: if your operations team already has a Prometheus that scrapes vLLM, use it: give its URL,
-  the selector of its job (`--vllm 'job="<its job>"'`) and its scrape interval (`--scrape`).
+- **Existing Prometheus**: if your operations team already has a Prometheus that scrapes vLLM, use it: give its URL
+  and the selector of its job (`--vllm 'job="<its job>"'`). The scrape interval is read from it.
 - Tested with Prometheus 3.7.3; newer versions have not been tried.
 
 ### 7.3 Query the observation
@@ -1102,8 +1102,8 @@ python -m observation.query --prometheus http://127.0.0.1:9090 --since 2h --wind
 | `--vllm` | selector of the vLLM targets, default `job="vllm"`; target labels only (`job`, `instance`), no metric label (`model_name`…); all matching targets are added up |
 | `--since` | range ending now: `30m`, `2h`, `1d` (default `2h`) |
 | `--start`, `--end` | past range, local time: `--start "2026-11-14 09:00" --end "2026-11-14 17:00"` (`--end` defaults to now) |
-| `--window` | length of a window (default `5m`; at least 4 x `--scrape`); at most 10,000 windows per query |
-| `--scrape` | Prometheus `scrape_interval` (default `15s`) |
+| `--window` | length of a window (default `5m`; at least 4 x the scrape interval); at most 10,000 windows per query |
+| `--scrape` | override of the scrape interval. By default it is read from Prometheus: the interval of the selected targets, else the global one, else 15 s. The first lines of the output say which |
 | `--target`, `--gpu` | target interactivity (tokens/s per request); GPUs behind the selector, all replicas (**both required here**: Prometheus does not see the fingerprint, so the GPUs cannot be deduced as in the stress-test reports) |
 | `--ttft-max` | maximum accepted P95 TTFT, in ms (optional) |
 | `--view` | `windows` (default), `period` ([section 7.4](#74-per-period-view)), `agents` ([section 7.5](#75-per-agent-view-through-litellm)) |
@@ -1125,7 +1125,7 @@ The other verdicts:
   ([section 7.1](#71-tune-vllm-for-exact-interactivity));
 - **no requests**: nothing was served;
 - **discarded**: a vLLM target was unreachable at the start or during the window, vLLM restarted, or the scrape before
-  the window or scrapes within it are missing (Prometheus stopped, or `--scrape` shorter than its `scrape_interval`);
+  the window or scrapes within it are missing (Prometheus stopped, or a `--scrape` shorter than its `scrape_interval`);
 - **run in progress**: the window overlaps an `--exclude` range.
 
 TTFT and P10 interactivity are bounds read from the histogram buckets (`≤`, `≥`).
@@ -1432,7 +1432,7 @@ durations), labels, agent names and error messages; no prompt or response conten
 | Observation: "interpolated share *" | no histogram bound at the target | `--custom-histogram-buckets` ([section 7.1](#71-tune-vllm-for-exact-interactivity)) |
 | Observation: "No vLLM target … in Prometheus" | wrong selector, or Prometheus does not scrape vLLM | page `http://<host>:9090/targets`: the target must be "UP"; `--vllm 'job="<job_name>"'` |
 | Observation: windows "discarded" | target unreachable, vLLM restart, or missing scrapes (WARNING message) | Targets page of Prometheus: the error is shown; firewall, address, vLLM stopped |
-| Observation: windows "discarded" in a row | `--scrape` shorter than the real `scrape_interval` | give the value of `prometheus.yml` |
+| Observation: windows "discarded" in a row | a `--scrape` shorter than the real `scrape_interval` | leave `--scrape` out (the interval is read from Prometheus), or give the value of `prometheus.yml` |
 | Observation: "Range shorter than one window" | `--since` or `--start`/`--end` shorter than `--window` | lengthen the range or shorten the window |
 | Empty per-agent view | LiteLLM not scraped or label missing | `litellm` target "UP" in Prometheus; `callbacks: ["prometheus"]`, `prometheus_client` installed, `metrics_path: /metrics/`, key; `--by` ([section 7.5](#75-per-agent-view-through-litellm)) |
 | LiteLLM target "DOWN" in Prometheus, 401 error or key file not found | key missing or wrong, or `litellm.key` missing or unreadable | create `litellm.key` ([section 7.2](#72-install-and-start-prometheus-once)) with a valid key; `metrics_path: /metrics/` |
@@ -1695,15 +1695,14 @@ python -m agents_test.launcher --url http://127.0.0.1:8001 --levels "2" --durati
 Query the last 5 minutes, per window (8 GPUs, as in the fake server's fingerprint):
 
 ```bash
-python -m observation.query --prometheus http://127.0.0.1:9090 --since 5m --window 1m --scrape 5s \
-  --target 30 --gpu 8
+python -m observation.query --prometheus http://127.0.0.1:9090 --since 5m --window 1m --target 30 --gpu 8
 ```
 
 And per agent, through the fake LiteLLM metrics:
 
 ```bash
 python -m observation.query --prometheus http://127.0.0.1:9090 --litellm 'job="litellm"' \
-  --since 5m --window 1m --scrape 5s --target 30 --gpu 8 --view agents
+  --since 5m --window 1m --target 30 --gpu 8 --view agents
 ```
 
 When you are done, stop the two background processes (`jobs` lists them, then `kill %1 %2`).
@@ -1805,7 +1804,7 @@ See [section 6.4](#64-agentx-without-internet-access), [section 6.5](#65-agentx-
 - **LiteLLM**: an optional gateway in front of vLLM; it can also label requests per agent.
 - **Fingerprint**: the `system_fingerprint` field vLLM returns in its responses; the bench decodes the parallelism (TP, PP, DP, EP) from it.
 - **Prometheus**: a separate server that scrapes the `/metrics` of vLLM (and LiteLLM) at a fixed interval and keeps the history; `observation.query` asks it for the difference between the start and the end of each window.
-- **Scrape interval** (`scrape_interval`): how often Prometheus reads each `/metrics` (15 s by default); `--scrape` must carry the same value, and a window lasts at least 4 scrapes.
+- **Scrape interval** (`scrape_interval`): how often Prometheus reads each `/metrics` (15 s by default); the observation reads it from Prometheus, and a window lasts at least 4 scrapes.
 - **Deduced GPUs**: without `--gpu`, the reports compute the GPU count as TP x PP x DP from the fingerprint, times the number of vLLM servers in `BENCH_METRICS`; the observation cannot (Prometheus does not see the fingerprint), so `--gpu` is required there.
 - **Replica**: one vLLM server serving the model; several replicas can sit behind one target.
 

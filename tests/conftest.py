@@ -43,8 +43,8 @@ def prom():
     """Factory of Prometheus stubs: prom(responder) -> PromStub (closed at teardown)."""
     made = []
 
-    def factory(responder):
-        s = helpers.PromStub(responder)
+    def factory(responder, endpoints=None):
+        s = helpers.PromStub(responder, endpoints)
         made.append(s)
         return s
     yield factory

@@ -1,4 +1,5 @@
 Prometheus <prometheus>, vLLM {job="vllm"}, LiteLLM {job="litellm"} by metadata_agent; 2024-05-14 00:00 → 2024-05-15 00:00, windows of 10800 s
+Scrape interval: 15 s (default: Prometheus did not say)
 
   agent                    requests output share  input/req output/req TTFT P50≤ s TTFT P95≤ s latency P95≤ s   avg speed
   (no identity)                 100           1%       1500        400        0.10        0.50           5.00        83.3

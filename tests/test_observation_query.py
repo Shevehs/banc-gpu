@@ -646,7 +646,6 @@ def common(prom_url, *extra):
 
 
 @pytest.mark.parametrize("extra,message", [
-    (["--window", "59s"], "--window must be at least 4 x --scrape (60 s)"),
     (["--window", "1m", "--scrape", "30s"], "--window must be at least 4 x --scrape (120 s)"),
     (["--view", "agents"], "--view agents: give --litellm"),
     (["--vllm", "job=vllm"], "--vllm: label selector expected"),
@@ -664,6 +663,15 @@ def test_main_rejects_invalid_arguments_before_any_request(monkeypatch, stub, ut
     with pytest.raises(SystemExit) as e:
         run_main(monkeypatch, *common(s.url), *extra)
     assert message in str(e.value) and s.seen == []
+
+
+def test_main_refuses_a_short_window_after_asking_prometheus_for_its_interval(monkeypatch, stub, utc_timezone):
+    """Without --scrape the interval is read from Prometheus first, so this refusal comes after that one request."""
+    s = stub({})
+    with pytest.raises(SystemExit, match=r"4 x the scrape interval \(60 s, default: Prometheus did not say\)"):
+        run_main(monkeypatch, *common(s.url), "--window", "59s")
+    assert {r["path"].split("?")[0] for r in s.seen} <= {"/api/v1/targets", "/api/v1/status/config"}
+    assert not [r for r in s.seen if "query_range" in r["path"]]
 
 
 def test_main_requires_the_target_and_the_gpu(monkeypatch, capsys):
@@ -709,8 +717,9 @@ def test_main_windows_view_header_rows_and_verdict(monkeypatch, prom, capsys, ut
     run_main(monkeypatch, *common(s.url))
     lines = capsys.readouterr().out.splitlines()
     assert lines[0] == f'Prometheus {s.url}, vLLM {{job="vllm"}}; 2024-05-14 00:00 → 2024-05-14 00:15, windows of 300 s'
-    assert [l[:23] for l in lines[3:6]] == ["2024-05-14 00:00  00:05", "2024-05-14 00:05  00:10", "2024-05-14 00:10  00:15"]
-    assert all(l.endswith("  holds") for l in lines[3:6])
+    assert lines[1] == "Scrape interval: 15 s (default: Prometheus did not say)"
+    assert [l[:23] for l in lines[4:7]] == ["2024-05-14 00:00  00:05", "2024-05-14 00:05  00:10", "2024-05-14 00:10  00:15"]
+    assert all(l.endswith("  holds") for l in lines[4:7])
 
 
 def test_main_output_csv_has_one_row_per_window_even_when_discarded(monkeypatch, prom, tmp_path, utc_timezone):
@@ -800,7 +809,7 @@ def test_module_runs_as_a_program_and_reports_errors_on_stderr(prom, utc_timezon
     assert ok.returncode == 0 and "night (0-6 h)" in ok.stdout and ok.stderr == ""
     bad = helpers.run([helpers.sys.executable, "-B", "-m", "observation.query", *common(s.url), "--window", "10s"],
                       env=helpers.clean_environment(TZ="UTC"))
-    assert bad.returncode == 1 and "--window must be at least 4 x --scrape" in bad.stderr and bad.stdout == ""
+    assert bad.returncode == 1 and "--window must be at least 4 x the scrape interval" in bad.stderr and bad.stdout == ""
 
 
 def test_help_lists_the_options():
@@ -809,3 +818,119 @@ def test_help_lists_the_options():
     for option in ("--prometheus", "--target", "--gpu", "--vllm", "--litellm", "--by", "--since", "--start", "--end",
                    "--window", "--scrape", "--ttft-max", "--view", "--period", "--exclude", "--output"):
         assert option in r.stdout
+
+
+# ---------------------------------------------------------------- the scrape interval is read from Prometheus
+@pytest.mark.parametrize("text,seconds", [
+    ("15s", 15), ("1m", 60), ("1m30s", 90), ("500ms", 0.5), ("2h", 7200), ("1d", 86400), ("1w", 604800), ("0.5s", 0.5),
+    ("1h30m", 5400),
+])
+def test_parse_prometheus_duration(text, seconds):
+    assert query.parse_prometheus_duration(text) == seconds
+
+
+@pytest.mark.parametrize("text", ["", None, "15", "s", "1x", "1m 30s", "-5s", "fifteen", "15S"])
+def test_parse_prometheus_duration_refuses_what_prometheus_does_not_write(text):
+    assert query.parse_prometheus_duration(text) is None
+
+
+@pytest.mark.parametrize("selector,expected", [
+    ('job="vllm"', True), ('job="litellm"', False), ('job!="litellm"', True), ('job=~"vl.*"', True), ('job=~"vl"', False),
+    ('job!~"lite.*"', True), ('job="vllm",instance="h:8000"', True), ('job="vllm",instance="other"', False),
+    ('team="x"', False), ('team!="x"', True), ("", True),
+])
+def test_matches_selector(selector, expected):
+    assert query.matches_selector({"job": "vllm", "instance": "h:8000"}, selector) is expected
+
+
+def test_matches_selector_regex_must_match_the_whole_value():
+    assert query.matches_selector({"job": "vllm-2"}, 'job=~"vllm"') is False
+    assert query.matches_selector({"job": "vllm-2"}, 'job=~"vllm.*"') is True
+
+
+def targets(*pairs):
+    """The data of /api/v1/targets for (job, scrapeInterval) pairs."""
+    return {"activeTargets": [{"scrapePool": job, "labels": {"job": job, "instance": f"{job}:1"}, "scrapeInterval": every,
+                               "health": "up"} for job, every in pairs]}
+
+
+CONFIG = {"yaml": "global:\n  scrape_interval: 20s\n  scrape_timeout: 10s\nscrape_configs:\n- job_name: vllm\n"}
+
+
+def detect(prom, endpoints, selectors=('job="vllm"', None)):
+    s = prom(lambda *a: [], endpoints)
+    return query.detect_scrape_interval(query.Prometheus(s.url), list(selectors)), s
+
+
+def test_the_interval_of_the_matching_targets_is_used(prom):
+    (seconds, where), _ = detect(prom, {"/api/v1/targets": targets(("vllm", "5s"), ("litellm", "30s"))})
+    assert seconds == 5 and "targets" in where
+
+
+def test_with_a_litellm_selector_the_longest_interval_wins(prom):
+    (seconds, _), _ = detect(prom, {"/api/v1/targets": targets(("vllm", "5s"), ("litellm", "30s"))},
+                             ('job="vllm"', 'job="litellm"'))
+    assert seconds == 30
+
+
+def test_sub_second_and_fractional_intervals_round_up_to_whole_seconds(prom):
+    assert detect(prom, {"/api/v1/targets": targets(("vllm", "500ms"))})[0][0] == 1
+    assert detect(prom, {"/api/v1/targets": targets(("vllm", "1m30s"))})[0][0] == 90
+    assert detect(prom, {"/api/v1/targets": targets(("vllm", "2500ms"))})[0][0] == 3
+
+
+def test_when_no_target_matches_the_global_interval_is_used(prom):
+    (seconds, where), _ = detect(prom, {"/api/v1/targets": targets(("other", "5s")), "/api/v1/status/config": CONFIG})
+    assert seconds == 20 and "global" in where
+
+
+def test_without_the_targets_endpoint_the_global_interval_is_used(prom):
+    (seconds, where), _ = detect(prom, {"/api/v1/status/config": CONFIG})
+    assert seconds == 20 and "global" in where
+
+
+def test_the_global_interval_is_read_from_the_global_section_only(prom):
+    config = {"yaml": "scrape_configs:\n- job_name: x\n  scrape_interval: 1s\nglobal:\n  evaluation_interval: 1m\n"
+                      "  scrape_interval: 45s\n"}
+    assert detect(prom, {"/api/v1/status/config": config})[0][0] == 45
+
+
+@pytest.mark.parametrize("endpoints", [
+    {}, {"/api/v1/targets": {"activeTargets": []}, "/api/v1/status/config": {"yaml": "nothing useful"}},
+    {"/api/v1/targets": {"activeTargets": [{"scrapePool": "vllm", "scrapeInterval": "soon"}]}},
+    {"/api/v1/targets": "not an object"},
+])
+def test_when_prometheus_cannot_say_the_default_is_15_seconds(prom, endpoints):
+    (seconds, where), _ = detect(prom, endpoints)
+    assert seconds == query.DEFAULT_SCRAPE_S == 15 and "did not say" in where
+
+
+def test_an_unreachable_prometheus_gives_the_default():
+    assert query.detect_scrape_interval(query.Prometheus("http://127.0.0.1:1"), ['job="vllm"']) == (15, "default: Prometheus did not say")
+
+
+def test_the_prometheus_key_is_sent_to_the_targets_endpoint(prom):
+    s = prom(lambda *a: [], {"/api/v1/targets": targets(("vllm", "5s"))})
+    query.detect_scrape_interval(query.Prometheus(s.url, "sk-prom"), ['job="vllm"'])
+    assert s.gets and all(h.get("Authorization") == "Bearer sk-prom" for _, h in s.gets)
+
+
+def test_main_reads_the_interval_from_prometheus_and_says_so(monkeypatch, prom, capsys, utc_timezone):
+    s = prom(fixtures.prometheus_responder(DAY + 300, 300, [fixtures.prom_window(300, 100)] * 3),
+             {"/api/v1/targets": targets(("vllm", "30s"))})
+    run_main(monkeypatch, *common(s.url))
+    assert "Scrape interval: 30 s (read from Prometheus: the interval of the selected targets)" in capsys.readouterr().out
+
+
+def test_main_with_scrape_given_does_not_ask_prometheus(monkeypatch, prom, capsys, utc_timezone):
+    s = prom(fixtures.prometheus_responder(DAY + 300, 300, [fixtures.prom_window(300, 100)] * 3),
+             {"/api/v1/targets": targets(("vllm", "30s"))})
+    run_main(monkeypatch, *common(s.url, "--scrape", "10s"))
+    assert "Scrape interval: 10 s (given by --scrape)" in capsys.readouterr().out
+    assert s.gets == []
+
+
+def test_main_refuses_a_window_shorter_than_four_detected_scrapes(monkeypatch, prom):
+    s = prom(lambda *a: [], {"/api/v1/targets": targets(("vllm", "90s"))})
+    with pytest.raises(SystemExit, match=r"4 x the scrape interval \(360 s, read from Prometheus: the interval of the selected"):
+        run_main(monkeypatch, *common(s.url))

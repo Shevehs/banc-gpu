@@ -16,12 +16,14 @@ Usage: python -m observation.query --prometheus http://127.0.0.1:9090 --target 3
   --gpu   : number of GPUs behind the vLLM selector, all replicas included (required here: Prometheus does not
             see the server fingerprint)
   --exclude : ranges to discard (stress test on the same server: the synthetic load would mix with real usage)
-  --scrape : Prometheus scrape interval (scrape_interval), for the gauges
+  --scrape : Prometheus scrape interval (scrape_interval), for the gauges. Optional: by default it is read from Prometheus
+            (the interval of the vLLM and LiteLLM targets, else the global one), and 15 s if Prometheus cannot say.
 Key: BENCH_PROMETHEUS_KEY environment variable if Prometheus requires a token (Bearer). Standard library only.
 """
 import argparse
 import csv
 import json
+import math
 import os
 import re
 import time
@@ -106,11 +108,83 @@ def check_selector(v, what):
     return v
 
 
+DEFAULT_SCRAPE_S = 15
+_PROMETHEUS_DURATION = re.compile(r"^(?:\d+(?:\.\d+)?(?:ms|s|m|h|d|w|y))+$")
+_DURATION_PART = re.compile(r"(\d+(?:\.\d+)?)(ms|s|m|h|d|w|y)")
+_MATCHER = re.compile(r'([A-Za-z_][A-Za-z0-9_]*)\s*(=~|!~|!=|=)\s*"([^"\\]*)"')
+
+
+def parse_prometheus_duration(v):
+    """A duration as Prometheus writes it ("15s", "1m30s", "500ms", "2h") -> seconds, or None if it is not one."""
+    v = str(v or "").strip()
+    if not _PROMETHEUS_DURATION.match(v):
+        return None
+    units = {"ms": 0.001, "s": 1, "m": 60, "h": 3600, "d": 86400, "w": 604800, "y": 31536000}
+    return sum(float(n) * units[u] for n, u in _DURATION_PART.findall(v))
+
+
+def matches_selector(labels, selector):
+    """True if the target labels (a dict) satisfy the label selector (matchers separated by commas, no braces)."""
+    for name, op, value in _MATCHER.findall(selector or ""):
+        have = labels.get(name, "")
+        if op == "=":
+            ok = have == value
+        elif op == "!=":
+            ok = have != value
+        else:
+            try:
+                ok = re.fullmatch(value, have) is not None
+            except re.error:
+                return False
+            ok = ok if op == "=~" else not ok
+        if not ok:
+            return False
+    return True
+
+
+def detect_scrape_interval(prom, selectors):
+    """(seconds, where it comes from): the scrape interval of Prometheus, whole seconds, rounded up.
+
+    Taken from the active targets that match one of the `selectors` (the longest interval if they differ, which is the
+    safe side), else from the global `scrape_interval`, else DEFAULT_SCRAPE_S."""
+    data = prom.get_data("/api/v1/targets?state=active") or {}
+    found = []
+    for target in data.get("activeTargets") or []:
+        labels = dict(target.get("labels") or {})
+        labels.setdefault("job", target.get("scrapePool", ""))
+        seconds = parse_prometheus_duration(target.get("scrapeInterval"))
+        if seconds and any(matches_selector(labels, s) for s in selectors if s):
+            found.append(seconds)
+    if found:
+        return max(1, math.ceil(max(found))), "read from Prometheus: the interval of the selected targets"
+    config = (prom.get_data("/api/v1/status/config") or {}).get("yaml") or ""
+    m = re.search(r"^global:\n(?:[ \t]+.*\n)*?[ \t]+scrape_interval:[ \t]*(\S+)", config, re.MULTILINE)
+    seconds = parse_prometheus_duration(m.group(1)) if m else None
+    if seconds:
+        return max(1, math.ceil(seconds)), "read from Prometheus (global scrape_interval)"
+    return DEFAULT_SCRAPE_S, "default: Prometheus did not say"
+
+
 class Prometheus:
-    """Minimal client of the Prometheus HTTP API (query_range only)."""
+    """Minimal client of the Prometheus HTTP API (query_range, and a tolerant read of the other endpoints)."""
 
     def __init__(self, base, key=None, timeout_s=30):
         self.base, self.key, self.timeout_s = base.rstrip("/"), key, timeout_s
+
+    def get_data(self, path):
+        """The `data` of a GET endpoint (path and query string), or None when Prometheus cannot answer.
+
+        Meant for optional information: an unreachable server, a refusal or an unexpected body give None."""
+        req = urllib.request.Request(self.base + path)
+        if self.key:
+            req.add_header("Authorization", f"Bearer {self.key}")
+        try:
+            with _OPENER.open(req, timeout=min(self.timeout_s, 10)) as r:
+                j = json.loads(r.read(5_000_000).decode("utf-8", "replace"))
+        except (urllib.error.URLError, OSError, ValueError):
+            return None
+        data = j.get("data") if isinstance(j, dict) and j.get("status") == "success" else None
+        return data if isinstance(data, dict) else None
 
     def query_range(self, q, start, end, step):
         """[(labels, {timestamp: value})] for a PromQL query evaluated from `start` to `end`, every `step` seconds.
@@ -485,7 +559,8 @@ def build_parser():
     a.add_argument("--start", default=None, help='start of the range, "YYYY-MM-DD HH:MM" (local time)')
     a.add_argument("--end", default=None, help="end of the range (default: now)")
     a.add_argument("--window", default="5m", help="length of a window (e.g. 5m, 15m, 1h)")
-    a.add_argument("--scrape", default="15s", help="Prometheus scrape_interval")
+    a.add_argument("--scrape", default=None,
+                   help="Prometheus scrape_interval (default: read from Prometheus, else 15s)")
     a.add_argument("--target", type=float, required=True, help="target interactivity per request (tokens/s)")
     a.add_argument("--gpu", type=int, required=True, help="GPUs behind the vLLM selector, all replicas")
     a.add_argument("--ttft-max", type=float, default=None, help="maximum accepted estimated P95 TTFT (ms)")
@@ -505,9 +580,8 @@ def main():
         raise SystemExit("--by: api_key_alias, team_alias, user, end_user or metadata_<field>")
     if p.view == "agents" and not sel_l:
         raise SystemExit("--view agents: give --litellm (selector of the LiteLLM targets in Prometheus).")
-    w, scrape = parse_duration(p.window), parse_duration(p.scrape)
-    if w < 4 * scrape:
-        raise SystemExit(f"--window must be at least 4 x --scrape ({4 * scrape:g} s).")
+    w = parse_duration(p.window)
+    scrape_given = parse_duration(p.scrape) if p.scrape else None
     end = parse_instant(p.end) if p.end else time.time()
     start = parse_instant(p.start) if p.start else end - parse_duration(p.since)
     if p.start and not p.end:
@@ -520,6 +594,13 @@ def main():
         d0, d1 = x.split("/", 1)
         excluded.append((parse_instant(d0), parse_instant(d1)))
     prom = Prometheus(p.prometheus, os.environ.get("BENCH_PROMETHEUS_KEY") or None)
+    if scrape_given:
+        scrape, scrape_source = scrape_given, "given by --scrape"
+    else:
+        scrape, scrape_source = detect_scrape_interval(prom, [sel_v, sel_l])
+    if w < 4 * scrape:
+        raise SystemExit(f"--window must be at least 4 x {'--scrape' if scrape_given else 'the scrape interval'} "
+                         f"({4 * scrape:g} s" + ("" if scrape_given else f", {scrape_source}") + ").")
     obs = collect(prom, sel_v, start, end, w, scrape, sel_l, p.by if sel_l else None)
     rows, alerts, valid = build_rows(obs, p, sel_l, w, scrape, excluded)
     if all(not o["targets"] for o in obs):
@@ -534,7 +615,8 @@ def main():
     print(f"Prometheus {p.prometheus}, vLLM {{{sel_v}}}"
           + (f", LiteLLM {{{sel_l}}} by {p.by}" if sel_l else "")
           + f"; {time.strftime('%Y-%m-%d %H:%M', time.localtime(obs[0]['start']))} → "
-            f"{time.strftime('%Y-%m-%d %H:%M', time.localtime(obs[-1]['end']))}, windows of {w:g} s\n")
+            f"{time.strftime('%Y-%m-%d %H:%M', time.localtime(obs[-1]['end']))}, windows of {w:g} s")
+    print(f"Scrape interval: {scrape:g} s ({scrape_source})\n")
     if p.view == "period":
         period_view(valid, p)
     elif p.view == "agents":
