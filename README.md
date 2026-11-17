@@ -1313,22 +1313,28 @@ python -m interface.server            # --port option, default 8765
 Open **the exact address printed** (it contains an access token). On a remote VM:
 `ssh -L 8765:127.0.0.1:8765 <vm>`, then the same address on your own machine.
 
-- **Launch**: connection fields (same meanings as [section 5.2](#52-set-the-connection)), a "Test connection" button that shows the
-  server configuration (version, prefix cache, TP/PP/DP/EP…, GPUs deduced), then one of the three stress tests:
-  synthetic, AgentX or test agents.
+- **Configuration**: where the servers are.
+  - The target: URL, model, vLLM metrics URL and API key (same meanings as [section 5.2](#52-set-the-connection)), with a
+    "Test connection" button that shows the server configuration (version, prefix cache, TP/PP/DP/EP…).
+  - The GPUs behind the target. The connection test fills the field in from the fingerprint if it is empty.
+  - Prometheus: URL, optional key, vLLM and LiteLLM selectors, and the label that tells agents apart. The scrape
+    interval is read from Prometheus.
+- **Launch stress tests**: one of the three stress tests: synthetic, AgentX or test agents.
 - **Runs**: live log, stop.
 - **Results**: tables, selected point, curve of the stress tests; the "GPU" field is optional (deduced from the
   fingerprint when empty).
-- **Observation** (own tab): nothing to start.
-  - Fields: Prometheus URL and optional key, vLLM targets selector, LiteLLM targets selector with the label that tells
-    agents apart (per-agent view), range (since, or start and end), window length, scrape interval, target
-    interactivity, **GPUs** (required, as on the command line), optional max TTFT P95, and the view (by window, period
-    or agent).
+- **Observation** (own tab): nothing to start. Prometheus and the GPUs come from Configuration (the GPUs are required,
+  as on the command line).
+  - Fields: range (since, or start and end), window length, target interactivity, optional max TTFT P95, and the view
+    (by window, period or agent).
   - "Show" runs `observation.query`; a checkbox refreshes it every minute.
   - The ranges of the runs started from the interface (plus one minute) are discarded ("run in progress"). Those of
     runs started by hand are only discarded if you give them to `observation.query --exclude`.
 
-The fields are not saved, and the interface does not inherit the variables from `target.env`.
+The fields are not saved. They start with the values of the terminal that started the interface (`BENCH_URL`,
+`BENCH_MODEL`, `BENCH_METRICS`, `BENCH_TOKENIZER`): load `target.env` before starting it. Keys never go to the page.
+`BENCH_API_KEY` is used when the API key field is empty, and only while the target URL is the `BENCH_URL` one. The
+runs themselves do not inherit the other variables of the terminal.
 
 It accepts only:
 

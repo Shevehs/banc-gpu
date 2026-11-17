@@ -732,3 +732,127 @@ def test_launch_refuses_while_a_run_is_in_progress(launcher):
 
 def test_public_view_hides_the_process():
     assert server.public_view({"id": "a", "proc": object()}) == {"id": "a"}
+
+
+# ---------------------------------------------------------------- form defaults, and the key of the terminal
+@pytest.mark.parametrize("a,b,expected", [
+    ("http://127.0.0.1:8000", "http://127.0.0.1:8000", True),
+    ("http://127.0.0.1:8000/", "http://127.0.0.1:8000", True),             # a trailing slash does not matter
+    (" HTTP://LOCALHOST:8000 ", "http://localhost:8000", True),            # nor case, nor spaces around
+    ("http://host", "http://host:80", True),                               # nor a default port
+    ("https://host", "https://host:443/", True),
+    ("http://127.0.0.1:8000", "http://localhost:8000", False),             # two names for the same machine: not the same address
+    ("http://127.0.0.1:8000", "http://127.0.0.1:8001", False),
+    ("http://127.0.0.1:8000", "https://127.0.0.1:8000", False),
+    ("http://h:8000/v1", "http://h:8000", False),
+    ("", "", False), (None, "http://h:1", False), ("not a url", "not a url", False), ("http://h:1", None, False),
+])
+def test_same_url(a, b, expected):
+    assert server.same_url(a, b) is expected
+
+
+ENV_URL, ENV_KEY = "http://127.0.0.1:8000", "sk-from-the-terminal"
+
+
+@pytest.fixture
+def terminal(monkeypatch):
+    """The terminal that started the interface had loaded target.env (tests/conftest.py clears BENCH_* otherwise)."""
+    monkeypatch.setenv("BENCH_URL", ENV_URL)
+    monkeypatch.setenv("BENCH_API_KEY", ENV_KEY)
+
+
+def test_the_key_of_the_form_wins(terminal):
+    assert server.target_key({"url": ENV_URL, "api_key": "sk-typed"}) == "sk-typed"
+
+
+@pytest.mark.parametrize("url", [ENV_URL, ENV_URL + "/", " http://127.0.0.1:8000"])
+def test_the_key_of_the_terminal_is_used_for_the_target_of_the_terminal(terminal, url):
+    assert server.target_key({"url": url}) == ENV_KEY
+    assert server.target_key({"url": url, "api_key": ""}) == ENV_KEY
+
+
+@pytest.mark.parametrize("url", ["http://127.0.0.1:8001", "http://localhost:8000", "https://127.0.0.1:8000", "http://10.0.0.5:8000", "", None])
+def test_the_key_of_the_terminal_never_goes_to_another_target(terminal, url):
+    assert server.target_key({"url": url}) == ""
+
+
+def test_no_key_without_a_url_in_the_terminal(monkeypatch):
+    monkeypatch.setenv("BENCH_API_KEY", ENV_KEY)
+    assert server.target_key({"url": ENV_URL}) == ""
+
+
+def test_no_key_without_a_key_in_the_terminal(monkeypatch):
+    monkeypatch.setenv("BENCH_URL", ENV_URL)
+    assert server.target_key({"url": ENV_URL}) == ""
+
+
+def test_the_key_of_the_terminal_is_stripped_and_a_bad_one_is_ignored(monkeypatch):
+    monkeypatch.setenv("BENCH_URL", ENV_URL)
+    monkeypatch.setenv("BENCH_API_KEY", "  sk-1\n")
+    assert server.target_key({"url": ENV_URL}) == "sk-1"
+    monkeypatch.setenv("BENCH_API_KEY", "bad key with spaces")
+    assert server.target_key({"url": ENV_URL}) == ""
+
+
+def test_a_generic_variable_is_not_a_key(monkeypatch):
+    monkeypatch.setenv("BENCH_URL", ENV_URL)
+    monkeypatch.setenv("API_KEY", "must-not-be-used")
+    assert server.target_key({"url": ENV_URL}) == ""
+
+
+def test_the_commands_use_the_key_of_the_terminal_only_for_its_target(terminal):
+    same = {"url": ENV_URL}
+    other = {"url": "http://127.0.0.1:8001"}
+    assert server.synthetic_command({**SYNTH, **same})[1]["BENCH_API_KEY"] == ENV_KEY
+    assert server.synthetic_command({**SYNTH, **other})[1]["BENCH_API_KEY"] == ""
+    assert server.agentx_command({**AGENTX, **same})[1]["BENCH_API_KEY"] == ENV_KEY
+    assert server.agentx_command({**AGENTX, **other})[1]["BENCH_API_KEY"] == ""
+    assert server.agents_command({**AGENTS, **same})[1]["BENCH_API_KEY"] == ENV_KEY
+    assert "BENCH_API_KEY" not in server.agents_command({**AGENTS, **other})[1]
+
+
+def test_a_launch_gets_the_key_of_the_terminal_for_its_target(launcher, terminal):
+    status, _, spawned = launcher({"type": "agentx", **AGENTX, "url": ENV_URL})
+    assert status == 200 and spawned[0][1]["env"]["BENCH_API_KEY"] == ENV_KEY
+
+
+def test_the_key_of_the_terminal_is_hidden_in_the_displayed_command(launcher, terminal):
+    status, payload, _ = launcher({"type": "agentx", **AGENTX, "url": ENV_URL})
+    assert status == 200 and ENV_KEY not in json.dumps(payload)
+
+
+def defaults_payload():
+    return json.loads(asyncio.run(server.defaults(None)).text)
+
+
+def test_defaults_come_from_the_terminal_without_any_key(monkeypatch):
+    monkeypatch.setenv("BENCH_URL", ENV_URL)
+    monkeypatch.setenv("BENCH_MODEL", "my-model")
+    monkeypatch.setenv("BENCH_METRICS", "http://h1:8000/metrics http://h2:8000/metrics")
+    monkeypatch.setenv("BENCH_TOKENIZER", "tools/tokenizer")
+    monkeypatch.setenv("BENCH_API_KEY", ENV_KEY)
+    monkeypatch.setenv("BENCH_PROMETHEUS_KEY", "prom-secret")
+    monkeypatch.setenv("BENCH_AGENT_KEYS", "pentest=agent-secret")
+    payload = defaults_payload()
+    assert payload == {"url": ENV_URL, "model": "my-model", "metrics": "http://h1:8000/metrics http://h2:8000/metrics",
+                       "tokenizer": "tools/tokenizer", "api_key_set": True, "api_key_url": ENV_URL}
+    text = json.dumps(payload)
+    assert ENV_KEY not in text and "prom-secret" not in text and "agent-secret" not in text
+
+
+def test_defaults_are_empty_without_variables():
+    assert defaults_payload() == {"url": "", "model": "", "metrics": "", "tokenizer": "", "api_key_set": False, "api_key_url": ""}
+
+
+def test_defaults_strip_white_space_and_ignore_generic_names(monkeypatch):
+    monkeypatch.setenv("BENCH_MODEL", "  my-model \n")
+    monkeypatch.setenv("URL", "http://must-not-be-used")
+    monkeypatch.setenv("MODEL", "must-not-be-used")
+    payload = defaults_payload()
+    assert payload["model"] == "my-model" and payload["url"] == ""
+
+
+def test_a_key_in_the_terminal_without_a_url_has_no_target(monkeypatch):
+    monkeypatch.setenv("BENCH_API_KEY", ENV_KEY)
+    payload = defaults_payload()
+    assert payload["api_key_set"] is True and payload["api_key_url"] == ""

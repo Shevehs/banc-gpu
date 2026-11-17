@@ -134,9 +134,15 @@ function ServerConfig({ config }) {
 
 // ------------------------------------------------------------------ Configuration tab
 // Where the servers are: the target (vLLM, or a gateway) with the GPUs behind it, and Prometheus. The other tabs read it.
-function Configuration({ c, setC, prom, setProm, test, setTest }) {
+function Configuration({ c, setC, prom, setProm, test, setTest, defaults }) {
   const setConn = (k) => (e) => setC({ ...c, [k]: e.target.value });
   const setP = (k) => (e) => setProm({ ...prom, [k]: e.target.value });
+  // BENCH_API_KEY of the terminal never reaches this page: the server uses it, but only for the target BENCH_URL.
+  const keyFromTerminal = !!(defaults?.api_key_set && defaults.api_key_url);
+  const keyHelp = keyFromTerminal
+    ? `optional; never written to the logs. Left empty, the key of the terminal (BENCH_API_KEY) is used while the target URL is ${defaults.api_key_url}`
+    : defaults?.api_key_set ? "optional; never written to the logs. BENCH_API_KEY is set in the terminal but BENCH_URL is not: that key is not used"
+    : "optional; never written to the logs";
   const testConnection = async () => {
     setTest({ pending: true });
     try {
@@ -161,8 +167,9 @@ function Configuration({ c, setC, prom, setProm, test, setTest }) {
         <Field label="vLLM metrics URL" help="optional; fill in if the target is a gateway, or one URL per replica (separated by spaces)">
           <input value={c.metrics} placeholder="http://vllm-host:8000/metrics" onChange={setConn("metrics")} />
         </Field>
-        <Field label="API key" help="optional; never written to the logs">
-          <input type="password" autoComplete="off" value={c.api_key} onChange={setConn("api_key")} />
+        <Field label="API key" help={keyHelp}>
+          <input type="password" autoComplete="off" value={c.api_key} placeholder={keyFromTerminal ? "key of the terminal" : ""}
+            onChange={setConn("api_key")} />
         </Field>
         <Field label="GPUs behind the target" help="all replicas; used by the observation. Filled in from the fingerprint when you test the connection, if you leave it empty">
           <input type="number" min="1" value={c.gpu} placeholder="deduced by the test" onChange={setConn("gpu")} />
@@ -599,6 +606,22 @@ export default function App() {
   const [connection, setConnection] = useState(CONNECTION);
   const [prometheus, setPrometheus] = useState(PROMETHEUS);
   const [test, setTest] = useState(null);       // result of "Test connection", kept when the tab changes
+  const [defaults, setDefaults] = useState(null);   // what the terminal that started the interface says (target.env), no key
+  useEffect(() => {
+    api("/api/defaults").then((d) => {
+      setDefaults(d);
+      // a field that has not been touched yet takes the value of the terminal
+      setConnection((c) => ({ ...c,
+        url: d.url && c.url === CONNECTION.url ? d.url : c.url,
+        model: d.model && c.model === CONNECTION.model ? d.model : c.model,
+        metrics: d.metrics && c.metrics === CONNECTION.metrics ? d.metrics : c.metrics }));
+      if (d.tokenizer) {
+        setParams((p) => ({ ...p,
+          synthetic: { ...p.synthetic, tokenizer: p.synthetic.tokenizer || d.tokenizer },
+          agentx: { ...p.agentx, tokenizer: p.agentx.tokenizer || d.tokenizer } }));
+      }
+    }).catch(() => {});
+  }, []);
   const [params, setParams] = useState(INITIAL);
   const [kind, setKind] = useState("synthetic");
   const [observation, setObservation] = useState(OBSERVATION);
@@ -615,7 +638,7 @@ export default function App() {
         </nav>
       </header>
       {tab === "config" && <Configuration c={connection} setC={setConnection} prom={prometheus} setProm={setPrometheus}
-        test={test} setTest={setTest} />}
+        test={test} setTest={setTest} defaults={defaults} />}
       {tab === "launch" && <Launch onLaunched={(id) => { setSelection(id); setTab("runs"); }}
         c={connection} params={params} setParams={setParams} kind={kind} setKind={setKind} />}
       {tab === "runs" && <Runs selection={selection} setSelection={setSelection} />}
