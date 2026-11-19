@@ -1243,6 +1243,17 @@ level only; documented in
   "Per-agent keys (LiteLLM)" field of the interface); a profile without a key keeps the common key.
 - Way 2: `agents_test.launcher --label-agents` (or the "Label the agents (LiteLLM)" checkbox): `metadata.agent` = profile name.
 
+**Token counts of streamed requests**: the per-agent view reads tokens from LiteLLM (output share, input and output
+per request, average speed). For a streamed request, LiteLLM only knows the tokens if the client asks for the usage
+(`stream_options: {"include_usage": true}`). Otherwise they count as zero and the figures are too low. The test agents
+ask for it. For your own agents, either add it in their requests, or have LiteLLM add it to every streamed request
+([LiteLLM, usage](https://docs.litellm.ai/docs/completion/usage)):
+
+```yaml
+general_settings:
+  always_include_stream_usage: true
+```
+
 **Collect, then query**: declare LiteLLM in `prometheus.yml`, using the `litellm` block of the example:
 
 - the path is **`/metrics/`**, with the trailing slash, the one LiteLLM serves;
