@@ -119,7 +119,7 @@ Options:
 - `--output`: the folder to write (required, created if missing), with one `trace-NNNN.json` file per session;
 - `--preset`: `tiny`, `small`, `medium` or `large` (default `small`);
 - `--sessions`: the number of sessions, at least 1 (default 30);
-- `--seed`: the same seed gives the same set (default 1);
+- `--seed`: the same seed gives the same set (default 1). It is not `BENCH_SEED`, which only changes where each replay starts;
 - `--max-context`: replaces the preset's limit for one call (input + output), between 4,096 and 1,000,000 tokens;
 - `--no-subagents`: sessions without sub-agents (default: with sub-agents);
 - `--validate`: checks the traces with AIPerf's model before writing (default: off). If AIPerf is not installed in the
