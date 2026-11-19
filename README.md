@@ -513,7 +513,8 @@ More cases are in the troubleshooting table ([section 10.3](#103-troubleshooting
 
 The bench generates the load, level by level, until the installation breaks. The prefix-cache setting
 required by each test is in [section 4.2](#42-check-the-vllm-in-place). A **label** names each run; the suffix `-r1`, `-r2`…
-marks repetitions of the same configuration, which the report groups together. A label has up to 80 characters: letters,
+marks repetitions of the same configuration, which the report groups together. A repetition is simply another run of
+the same command with the next label (`-r2`, `-r3`): there is no setting for a number of repetitions. A label has up to 80 characters: letters,
 digits, dots, hyphens and underscores, starting with a letter or a digit and without two dots in a row (`..`).
 
 ### 6.1 Synthetic stress test
@@ -697,6 +698,15 @@ Notes on these variables:
 
 The levels are numbers of **sessions replayed at the same time** (AIPerf's `--concurrency`). The report is the one
 described in [section 6.2](#62-reading-the-aiperf-report-synthetic-and-agentx).
+
+**Which traces are replayed** (AIPerf 0.13.0):
+
+- A trace is one whole agent session, made of many requests.
+- AIPerf takes the traces one after the other, in the order of the set, and starts again from the first at the end.
+- A level stops on time, not when every trace has been played: a short level may replay only a few of them.
+- The replay of a trace starts at a random point of it (the scenario allows anywhere from its start to its end).
+  `BENCH_SEED` fixes these choices, and each label has its own seed: the repetitions `-r1`, `-r2`… do not replay the same
+  starting points.
 
 Duration: one test of 5 levels x 30 min takes about 2 h 30 (about 1 h 15 at 15 min per level). The measurement protocol ([section 8](#8-measurement-protocol)) recommends three repetitions, which makes about 7 h 30 per configuration (about 3 h 45 at 15 min per level).
 
@@ -1286,7 +1296,8 @@ A single short pass is not enough to settle on a figure. For each server configu
    `BENCH_DURATION=120 ./sweep.sh conf-a-coarse "1 2 4 8 16 32 48 64 96 128 192 256"`.
 2. **Fine pass**: 4 or 5 tighter levels (about 5 to 15% apart, e.g. `"48 52 56 60 64"`) around the knee (the last level
    that meets the target and the first that does not).
-   - **15 min** each (`BENCH_DURATION=900`), **three repetitions** (`conf-a-r1`, `-r2`, `-r3`).
+   - **15 min** each (`BENCH_DURATION=900`), **three repetitions** (`conf-a-r1`, `-r2`, `-r3`): run the same command
+     three times with these labels; nothing repeats by itself.
    - Keep the median, the min–max spread and the estimate interpolated at the target.
    - More than 10% spread between repetitions (indicative threshold) means a disturbed machine: redo.
 3. **Without speculative decoding** (if the model uses it): restart vLLM without `--speculative-config` and redo the
