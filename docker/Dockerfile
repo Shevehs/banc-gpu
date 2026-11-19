@@ -6,9 +6,10 @@
 FROM python:3.12-slim AS build
 RUN apt-get update && apt-get install -y --no-install-recommends build-essential \
     && rm -rf /var/lib/apt/lists/*
-# Same versions as the README (section 4.3); AIPerf 0.13 is required.
+# AIPerf 0.13 is required (README, section 4.3).
+# The other libraries are pinned to the versions this image was tested with (they satisfy the README's ranges).
 RUN python -m venv /opt/bench \
-    && /opt/bench/bin/pip install --no-cache-dir aiperf==0.13.0 "openai>=1.40" httpx aiohttp tokenizers
+    && /opt/bench/bin/pip install --no-cache-dir aiperf==0.13.0 openai==3.55.1 httpx==0.28.1 aiohttp==3.14.5 tokenizers==0.23.3
 
 # Stage 2: what runs.
 FROM python:3.12-slim

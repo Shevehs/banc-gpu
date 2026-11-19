@@ -380,7 +380,9 @@ AIPerf also installs `aiohttp` (interface) and the `hf` command (tokenizer). Wit
 - **`fake-server`** (option): a fake vLLM and LiteLLM, to try everything without a GPU
   ([Appendix E](#appendix-e-try-the-bench-without-a-gpu)).
 
-vLLM is not part of it: it runs on your GPU server, as in [section 4.1](#41-what-must-already-be-in-place).
+vLLM is not part of it: it runs on your GPU server, as in [section 4.1](#41-what-must-already-be-in-place). Its
+launch options (parallelism, context length, prefix cache, speculative decoding) are what the bench compares, so they
+stay yours.
 
 **Start**
 
@@ -423,9 +425,11 @@ docker compose exec bench python -m report aiperf results --target 30
   - edit the two lines marked `EDIT` in `docker/litellm-config.yaml`;
   - start LiteLLM first, because Prometheus needs a key that LiteLLM creates (the first start prepares the database
     and takes a minute): `docker compose up -d litellm-db litellm`;
-  - create a read-only key for Prometheus, and write it in `docker/secrets/litellm.key`:
+  - create a read-only key for Prometheus, and write it in `docker/secrets/litellm.key` (the master key is in `.env`,
+    not in your shell: load it first; the user is created once):
 
     ```bash
+    set -a; . ./.env; set +a
     curl -s -X POST localhost:4000/user/new -H "Authorization: Bearer $LITELLM_MASTER_KEY" \
       -H "Content-Type: application/json" -d '{"user_id": "prometheus", "user_role": "proxy_admin_viewer"}'
     curl -s -X POST localhost:4000/key/generate -H "Authorization: Bearer $LITELLM_MASTER_KEY" \
@@ -446,9 +450,16 @@ docker compose exec bench python -m report aiperf results --target 30
 - **Linux**: `BENCH_UID` and `BENCH_GID` (`id -u`, `id -g`) keep the results yours instead of root's, and run the
   container as you: set them.
 
-`docker compose down` stops the stack and keeps the Prometheus history; `docker compose down -v` erases it.
+`docker compose down` stops the stack and keeps its data. `docker compose down -v` erases it: the Prometheus history
+and, with LiteLLM, its database (virtual keys, spend logs: the key of `docker/secrets/litellm.key` then no longer
+works). The database password is fixed when its volume is created: after changing `LITELLM_DB_PASSWORD`, run
+`docker compose down -v` first.
 If LiteLLM or Prometheus already run under their own Compose, see [section 7.2](#72-install-and-start-prometheus-once)
-(option B) and run only `bench`: `docker compose up -d --build bench`.
+(option B) and run only `bench`: `docker compose up -d --build bench`. Give it the address of your Prometheus in `.env`
+(`BENCH_PROMETHEUS`), and write the vLLM and LiteLLM addresses as the `bench` container reaches them:
+`host.docker.internal:<port>`, or the service name if you attach `bench` to the network of the other Compose
+(`networks:` with `external: true`, in a `docker-compose.override.yml`). Keep `.env` private (`chmod 600 .env`): it holds
+the keys, and `HF_TOKEN` is visible with `docker inspect`.
 
 [↑ Back to top](#top)
 
@@ -1604,7 +1615,12 @@ durations), labels, agent names and error messages; no prompt or response conten
 | Empty per-agent view | LiteLLM not scraped or label missing | `litellm` target "UP" in Prometheus; `callbacks: ["prometheus"]`, `prometheus_client` installed, `metrics_path: /metrics/`, key; `--by` ([section 7.5](#75-per-agent-view-through-litellm)) |
 | Per-agent view: tokens at 0 or too low, speed empty | streamed requests without the usage: LiteLLM counts zero tokens | `stream_options: {"include_usage": true}` in the agent's requests, or `always_include_stream_usage: true` ([section 7.5](#75-per-agent-view-through-litellm)) |
 | LiteLLM target "DOWN" in Prometheus, 401 error or key file not found | key missing or wrong, or `litellm.key` missing or unreadable | create `litellm.key` ([section 7.2](#72-install-and-start-prometheus-once)) with a valid key; `metrics_path: /metrics/` |
-| Docker: "not a directory: Are you trying to mount a directory onto a file" | `prometheus.yml` or `litellm.key` (or `docker/secrets/litellm.key`) missing at the first `up`: Docker created a folder in its place | `rmdir prometheus.yml litellm.key`, create the files, start again ([section 7.2](#72-install-and-start-prometheus-once), B) |
+| Docker: "not a directory: Are you trying to mount a directory onto a file" | `prometheus.yml` or `litellm.key` missing at the first `up`: Docker created a folder in its place | `rmdir prometheus.yml litellm.key`, create the files, start again ([section 7.2](#72-install-and-start-prometheus-once), B) |
+| Docker: the target is unreachable from the container but answers on the machine | `127.0.0.1` in `target.env` is the container | `http://host.docker.internal:<port>` ([section 4.4](#44-or-with-docker-compose)) |
+| Docker: the interface answers "host refused" | the browser address uses a port other than `BENCH_PORT` | open the exact address of `docker compose logs bench` |
+| Docker, Linux: results owned by root | the container runs as root | `BENCH_UID` and `BENCH_GID` in `.env` ([section 4.4](#44-or-with-docker-compose)) |
+| Docker: LiteLLM cannot reach its database, `litellm-db` is healthy | a character other than a letter or a digit in `LITELLM_DB_PASSWORD` breaks its URL | letters and digits only, then `docker compose down -v` ([section 4.4](#44-or-with-docker-compose)) |
+| Docker: `litellm-db` restarts again and again, or "password authentication failed" | `LITELLM_DB_PASSWORD` is empty, or changed after the first start | set it; after a change, `docker compose down -v` ([section 4.4](#44-or-with-docker-compose)) |
 | LiteLLM does not start with `callbacks: ["prometheus"]` | `prometheus_client` module missing | `pip install prometheus_client` in LiteLLM's environment ([Appendix B](#appendix-b-litellm-per-key-setup-and-install-details)) |
 
 [↑ Back to top](#top)
@@ -1662,7 +1678,8 @@ test network only ([section 7.2](#72-install-and-start-prometheus-once)). If you
 carries the token.
 
 LiteLLM's key sits in `litellm.key` (read by Prometheus, ignored by git, mode 600 unless Docker needs 644). Prefer a
-read-only key (role `proxy_admin_viewer`, [section 7.2](#72-install-and-start-prometheus-once)) to the master key.
+read-only key (role `proxy_admin_viewer`, [section 7.2](#72-install-and-start-prometheus-once)) to the master key. That key
+cannot create keys, but it can read more than the metrics (spend and key information).
 
 **Test agents and observation.** The test agents' tools are simulated and act on no system. Observation only reads
 metrics, but if you raise the number of your real agents to find the limit, their tools act for real

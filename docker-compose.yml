@@ -24,12 +24,11 @@ services:
     ports: ["127.0.0.1:${BENCH_PORT:-8765}:8765"]   # the interface is reachable from this machine only
     environment:
       BENCH_TOKEN: "${BENCH_TOKEN:-}"               # empty: a random token, shown by `docker compose logs bench`
-      BENCH_PROMETHEUS: "http://prometheus:9090"
+      BENCH_PROMETHEUS: "${BENCH_PROMETHEUS:-http://prometheus:9090}"     # another Prometheus: its address here
       BENCH_LITELLM_SELECTOR: "${BENCH_LITELLM_SELECTOR:-}"
       BENCH_ALLOW_PUBLIC_URLS: "${BENCH_ALLOW_PUBLIC_URLS:-}"     # 1: accept a target on a public address
       BENCH_TOKENIZER_REPO: "${BENCH_TOKENIZER_REPO:-}"           # Hugging Face name of the model: its tokenizer is downloaded once
       HF_TOKEN: "${HF_TOKEN:-}"                                    # only for a gated model; not passed on to the runs
-    depends_on: [prometheus]
 
   prometheus:
     image: prom/prometheus:v3.7.3
@@ -44,7 +43,7 @@ services:
 
   litellm:
     profiles: [gateway]
-    image: "ghcr.io/berriai/litellm:${LITELLM_TAG:-main-stable}"
+    image: "ghcr.io/berriai/litellm:${LITELLM_TAG:-v1.110.1}"      # pinned: the bench depends on what LiteLLM serves
     command: ["--config", "/app/config.yaml", "--port", "4000"]
     ports: ["127.0.0.1:${LITELLM_PORT:-4000}:4000"]
     volumes: ["./docker/litellm-config.yaml:/app/config.yaml:ro"]
@@ -67,7 +66,7 @@ services:
       POSTGRES_DB: litellm
     volumes: ["litellm-db-data:/var/lib/postgresql/data"]
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U litellm -d litellm"]
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U litellm -d litellm"]     # over TCP: not ready during the first initialisation
       interval: 5s
       timeout: 5s
       retries: 12
