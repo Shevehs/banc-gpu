@@ -1243,6 +1243,17 @@ level only; documented in
   "Per-agent keys (LiteLLM)" field of the interface); a profile without a key keeps the common key.
 - Way 2: `agents_test.launcher --label-agents` (or the "Label the agents (LiteLLM)" checkbox): `metadata.agent` = profile name.
 
+**Token counts of streamed requests**: the per-agent view reads tokens from LiteLLM (output share, input and output
+per request, average speed). For a streamed request, LiteLLM only knows the tokens if the client asks for the usage
+(`stream_options: {"include_usage": true}`). Otherwise they count as zero and the figures are too low. The test agents
+ask for it. For your own agents, either add it in their requests, or have LiteLLM add it to every streamed request
+([LiteLLM, usage](https://docs.litellm.ai/docs/completion/usage)):
+
+```yaml
+general_settings:
+  always_include_stream_usage: true
+```
+
 **Collect, then query**: declare LiteLLM in `prometheus.yml`, using the `litellm` block of the example:
 
 - the path is **`/metrics/`**, with the trailing slash, the one LiteLLM serves;
@@ -1481,6 +1492,7 @@ durations), labels, agent names and error messages; no prompt or response conten
 | Observation: windows "discarded" in a row | a `--scrape` shorter than the real `scrape_interval` | leave `--scrape` out (the interval is read from Prometheus), or give the value of `prometheus.yml` |
 | Observation: "Range shorter than one window" | `--since` or `--start`/`--end` shorter than `--window` | lengthen the range or shorten the window |
 | Empty per-agent view | LiteLLM not scraped or label missing | `litellm` target "UP" in Prometheus; `callbacks: ["prometheus"]`, `prometheus_client` installed, `metrics_path: /metrics/`, key; `--by` ([section 7.5](#75-per-agent-view-through-litellm)) |
+| Per-agent view: tokens at 0 or too low, speed empty | streamed requests without the usage: LiteLLM counts zero tokens | `stream_options: {"include_usage": true}` in the agent's requests, or `always_include_stream_usage: true` ([section 7.5](#75-per-agent-view-through-litellm)) |
 | LiteLLM target "DOWN" in Prometheus, 401 error or key file not found | key missing or wrong, or `litellm.key` missing or unreadable | create `litellm.key` ([section 7.2](#72-install-and-start-prometheus-once)) with a valid key; `metrics_path: /metrics/` |
 | Docker: "not a directory: Are you trying to mount a directory onto a file" | `prometheus.yml` or `litellm.key` missing at the first `up`: Docker created a folder in its place | `rmdir prometheus.yml litellm.key`, create the files, start again ([section 7.2](#72-install-and-start-prometheus-once), B) |
 | LiteLLM does not start with `callbacks: ["prometheus"]` | `prometheus_client` module missing | `pip install prometheus_client` in LiteLLM's environment ([Appendix B](#appendix-b-litellm-per-key-setup-and-install-details)) |
