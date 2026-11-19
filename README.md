@@ -430,9 +430,10 @@ docker compose exec bench python -m report aiperf results --target 30
     `/key/generate`, with `{"key_alias": "code-review"}`;
   - in `target.env`: `BENCH_URL=http://litellm:4000`, the key of LiteLLM in `BENCH_API_KEY`, and
     `BENCH_METRICS=http://host.docker.internal:8000/metrics` (vLLM's `/metrics`, as the container sees it);
-  - Prometheus then holds the master key. To give it a read-only key instead (role `proxy_admin_viewer`,
-    [section 7.2](#72-install-and-start-prometheus-once)), put that key in `docker/secrets/litellm.key` and point `credentials_file` of
-    `docker/prometheus-gateway.yml` to `/etc/prometheus/secrets/litellm.key`.
+  - Prometheus then holds the master key. To give it a read-only key or none instead, see
+    [section 7.2](#72-install-and-start-prometheus-once): put a read-only key in `docker/secrets/litellm.key` and point
+    `credentials_file` of `docker/prometheus-gateway.yml` to `/etc/prometheus/secrets/litellm.key`; or, for no key,
+    uncomment `require_auth_for_metrics_endpoint: false` in `docker/litellm-config.yaml`.
 - **Without a GPU**: set `COMPOSE_PROFILES=try` and `PROMETHEUS_CONFIG=prometheus-fake.yml`, with
   `BENCH_URL=http://fake-server:8001` in `target.env`.
 - **Ports**: `BENCH_PORT`, `PROMETHEUS_PORT` and `LITELLM_PORT`, if another service uses 8765, 9090 or 4000.
@@ -1189,6 +1190,19 @@ printf '%s' "<key>" > litellm.key && chmod 644 litellm.key
 The file then becomes readable by every account of the machine, hence the interest of a limited virtual key rather than
 the master key.
 
+**A read-only key for Prometheus** (role `proxy_admin_viewer`: it reads the metrics and cannot create keys). Create the
+user once, then its key, with the master key:
+
+```bash
+curl -s -X POST localhost:4000/user/new -H "Authorization: Bearer <master key>" \
+  -H "Content-Type: application/json" -d '{"user_id": "prometheus", "user_role": "proxy_admin_viewer"}'
+curl -s -X POST localhost:4000/key/generate -H "Authorization: Bearer <master key>" \
+  -H "Content-Type: application/json" -d '{"key_alias": "prometheus", "user_id": "prometheus"}'   # "key": "sk-…"
+```
+
+To scrape with no key at all, set `require_auth_for_metrics_endpoint: false` under `litellm_settings` in LiteLLM's
+configuration: the metrics are then readable by anything that reaches LiteLLM's port, and the API stays protected.
+
 In every case:
 
 - **One job per configuration**: all the targets of a job are added up (all the replicas of one installation). Two
@@ -1368,7 +1382,7 @@ general_settings:
 LiteLLM's metrics require a key by default in recent versions (1.85.0 according to its documentation; from 1.84
 according to its code). A limited key is better than the master key. A plain virtual key is refused (401); the key of
 a user with the role `proxy_admin_viewer` is accepted, and cannot create keys (observed with the `main-stable` image,
-November 2026; the commands are in [section 4.4](#44-or-with-docker-compose)). Then:
+November 2026; the commands are in [section 7.2](#72-install-and-start-prometheus-once)). Then:
 
 ```bash
 python -m observation.query --prometheus http://127.0.0.1:9090 --litellm 'job="litellm"' \
@@ -1603,7 +1617,7 @@ durations), labels, agent names and error messages; no prompt or response conten
 | Observation: "Range shorter than one window" | `--since` or `--start`/`--end` shorter than `--window` | lengthen the range or shorten the window |
 | Empty per-agent view | LiteLLM not scraped or label missing | `litellm` target "UP" in Prometheus; `callbacks: ["prometheus"]`, `prometheus_client` installed, `metrics_path: /metrics/`, key; `--by` ([section 7.5](#75-per-agent-view-through-litellm)) |
 | Per-agent view: tokens at 0 or too low, speed empty | streamed requests without the usage: LiteLLM counts zero tokens | `stream_options: {"include_usage": true}` in the agent's requests, or `always_include_stream_usage: true` ([section 7.5](#75-per-agent-view-through-litellm)) |
-| LiteLLM target "DOWN" in Prometheus, 401 error or key file not found | key missing or wrong, or `litellm.key` missing or unreadable | create `litellm.key` ([section 7.2](#72-install-and-start-prometheus-once)) with a valid key; `metrics_path: /metrics/` |
+| LiteLLM target "DOWN" in Prometheus, 401 error or key file not found | key missing or wrong, or `litellm.key` missing or unreadable | create `litellm.key` ([section 7.2](#72-install-and-start-prometheus-once)) with a valid key; `metrics_path: /metrics/`. With this repository's Compose: `LITELLM_MASTER_KEY` was empty or changed in `.env`, run `docker compose up -d` again |
 | Docker: "not a directory: Are you trying to mount a directory onto a file" | `prometheus.yml` or `litellm.key` missing at the first `up`: Docker created a folder in its place | `rmdir prometheus.yml litellm.key`, create the files, start again ([section 7.2](#72-install-and-start-prometheus-once), B) |
 | Docker: the target is unreachable from the container but answers on the machine | `127.0.0.1` in `target.env` is the container | `http://host.docker.internal:<port>` ([section 4.4](#44-or-with-docker-compose)) |
 | Docker: the interface answers "host refused" | the browser address uses a port other than `BENCH_PORT` | open the exact address of `docker compose logs bench` |
@@ -1666,7 +1680,9 @@ The command-line scripts apply no such restriction.
 test network only ([section 7.2](#72-install-and-start-prometheus-once)). If you protect it, `BENCH_PROMETHEUS_KEY`
 carries the token.
 
-LiteLLM's key sits in `litellm.key` (read by Prometheus, ignored by git, mode 600 unless Docker needs 644). Prefer a
+LiteLLM's key sits in `litellm.key` (read by Prometheus, ignored by git, mode 600 unless Docker needs 644). With this
+repository's Compose, it is the master key, copied from `.env` into a Docker volume (`docker compose down -v` erases it,
+the next `up` writes it again). Prefer a
 read-only key (role `proxy_admin_viewer`, [section 7.2](#72-install-and-start-prometheus-once)) to the master key. That key
 cannot create keys, but it can read more than the metrics (spend and key information).
 
