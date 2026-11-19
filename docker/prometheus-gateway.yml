@@ -1,5 +1,5 @@
 # Prometheus of the Docker Compose with the LiteLLM gateway (README, section 4.4): vLLM and LiteLLM.
-# The LiteLLM key goes in docker/secrets/litellm.key (readable by every account: a read-only key, README section 4.4).
+# LiteLLM's master key (LITELLM_MASTER_KEY of .env) reaches Prometheus through the prometheus-key service (README, section 4.4).
 global:
   scrape_interval: 15s
 
@@ -10,6 +10,6 @@ scrape_configs:
   - job_name: litellm
     metrics_path: /metrics/
     authorization:
-      credentials_file: /etc/prometheus/secrets/litellm.key
+      credentials_file: /etc/prometheus/litellm/litellm.key
     static_configs:
       - targets: ["litellm:4000"]

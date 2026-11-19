@@ -100,3 +100,14 @@ def test_a_partial_tokenizer_is_downloaded_again(tmp_path):
     subprocess.run([shutil.which("bash"), str(ROOT / "docker" / "entrypoint.sh"), "true"], cwd=tmp_path,
                    env={"PATH": "/usr/bin:/bin", "BENCH_TOKENIZER_REPO": "org/model"}, capture_output=True, timeout=30)
     assert (tmp_path / "calls.txt").read_text() == "DOWNLOAD org/model\n"
+
+
+def test_prometheus_gets_litellms_key_from_the_master_key_without_a_manual_step():
+    key = COMPOSE.split("\n  prometheus-key:")[1].split("\n\n")[0]
+    assert "profiles: [gateway]" in key and "LITELLM_MASTER_KEY" in key and "litellm-key:/keys" in key
+    prometheus = COMPOSE.split("\n  prometheus:")[1].split("\n\n")[0]
+    assert "litellm-key:/etc/prometheus/litellm:ro" in prometheus
+    assert "service_completed_successfully" in prometheus and "required: false" in prometheus
+    config = (ROOT / "docker" / "prometheus-gateway.yml").read_text(encoding="utf-8")
+    assert "credentials_file: /etc/prometheus/litellm/litellm.key" in config
+    assert "litellm-key:" in COMPOSE.split("\nvolumes:")[-1]

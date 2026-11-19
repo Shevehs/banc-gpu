@@ -36,10 +36,22 @@ services:
     volumes:
       - ./docker/${PROMETHEUS_CONFIG:-prometheus.yml}:/etc/prometheus/prometheus.yml:ro
       - ./docker/secrets:/etc/prometheus/secrets:ro
+      - litellm-key:/etc/prometheus/litellm:ro           # LiteLLM's key, written by prometheus-key (gateway profile)
       - prometheus-data:/prometheus
     command: ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.retention.time=30d"]
     extra_hosts: ["host.docker.internal:host-gateway"]
+    depends_on:
+      prometheus-key: {condition: service_completed_successfully, required: false}     # only with the gateway profile
     restart: unless-stopped
+
+  prometheus-key:                                    # hands LiteLLM's key to Prometheus: nothing to create by hand
+    profiles: [gateway]
+    image: prom/prometheus:v3.7.3
+    user: root
+    entrypoint: ["/bin/sh", "-c", "printf '%s' \"$$LITELLM_MASTER_KEY\" > /keys/litellm.key && chmod 644 /keys/litellm.key"]
+    environment:
+      LITELLM_MASTER_KEY: "${LITELLM_MASTER_KEY:-}"
+    volumes: ["litellm-key:/keys"]
 
   litellm:
     profiles: [gateway]
@@ -79,4 +91,5 @@ services:
 
 volumes:
   prometheus-data:
+  litellm-key:
   litellm-db-data:

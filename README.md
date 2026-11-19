@@ -423,27 +423,16 @@ docker compose exec bench python -m report aiperf results --target 30
   - in `.env`: `COMPOSE_PROFILES=gateway`, `PROMETHEUS_CONFIG=prometheus-gateway.yml`, `LITELLM_MASTER_KEY`,
     `LITELLM_DB_PASSWORD` (letters and digits) and `BENCH_LITELLM_SELECTOR='job="litellm"'`;
   - edit the two lines marked `EDIT` in `docker/litellm-config.yaml`;
-  - start LiteLLM first, because Prometheus needs a key that LiteLLM creates (the first start prepares the database
-    and takes a minute): `docker compose up -d litellm-db litellm`;
-  - create a read-only key for Prometheus, and write it in `docker/secrets/litellm.key` (the master key is in `.env`,
-    not in your shell: load it first; the user is created once):
-
-    ```bash
-    set -a; . ./.env; set +a
-    curl -s -X POST localhost:4000/user/new -H "Authorization: Bearer $LITELLM_MASTER_KEY" \
-      -H "Content-Type: application/json" -d '{"user_id": "prometheus", "user_role": "proxy_admin_viewer"}'
-    curl -s -X POST localhost:4000/key/generate -H "Authorization: Bearer $LITELLM_MASTER_KEY" \
-      -H "Content-Type: application/json" -d '{"key_alias": "prometheus", "user_id": "prometheus"}'   # "key": "sk-…"
-    printf '%s' "<the key>" > docker/secrets/litellm.key && chmod 644 docker/secrets/litellm.key
-    ```
-
-  - then `docker compose up -d`;
+  - `docker compose up -d`: the first start of LiteLLM prepares its database and takes a minute. Prometheus reads
+    LiteLLM's metrics with the master key, which the `prometheus-key` container copies from `.env` into a volume:
+    nothing to create by hand;
   - one key per agent, for the per-agent view ([section 7.5](#75-per-agent-view-through-litellm)): the same
     `/key/generate`, with `{"key_alias": "code-review"}`;
   - in `target.env`: `BENCH_URL=http://litellm:4000`, the key of LiteLLM in `BENCH_API_KEY`, and
     `BENCH_METRICS=http://host.docker.internal:8000/metrics` (vLLM's `/metrics`, as the container sees it);
-  - to scrape without a key, uncomment `require_auth_for_metrics_endpoint: false` in `docker/litellm-config.yaml`: the
-    metrics are then readable by anything that reaches LiteLLM's port, and the API stays protected.
+  - Prometheus then holds the master key. To give it a read-only key instead (role `proxy_admin_viewer`,
+    [section 7.2](#72-install-and-start-prometheus-once)), put that key in `docker/secrets/litellm.key` and point `credentials_file` of
+    `docker/prometheus-gateway.yml` to `/etc/prometheus/secrets/litellm.key`.
 - **Without a GPU**: set `COMPOSE_PROFILES=try` and `PROMETHEUS_CONFIG=prometheus-fake.yml`, with
   `BENCH_URL=http://fake-server:8001` in `target.env`.
 - **Ports**: `BENCH_PORT`, `PROMETHEUS_PORT` and `LITELLM_PORT`, if another service uses 8765, 9090 or 4000.
@@ -451,8 +440,8 @@ docker compose exec bench python -m report aiperf results --target 30
   container as you: set them.
 
 `docker compose down` stops the stack and keeps its data. `docker compose down -v` erases it: the Prometheus history
-and, with LiteLLM, its database (virtual keys, spend logs: the key of `docker/secrets/litellm.key` then no longer
-works). The database password is fixed when its volume is created: after changing `LITELLM_DB_PASSWORD`, run
+and, with LiteLLM, its database (virtual keys, spend logs: the keys of your agents then no longer work). The
+database password is fixed when its volume is created: after changing `LITELLM_DB_PASSWORD`, run
 `docker compose down -v` first.
 If LiteLLM or Prometheus already run under their own Compose, see [section 7.2](#72-install-and-start-prometheus-once)
 (option B) and run only `bench`: `docker compose up -d --build bench`. Give it the address of your Prometheus in `.env`
