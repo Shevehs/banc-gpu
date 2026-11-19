@@ -387,8 +387,12 @@ vLLM is not part of it: it runs on your GPU server, as in [section 4.1](#41-what
 Get the code (`git clone https://github.com/Shevehs/banc-gpu.git ~/banc-gpu && cd ~/banc-gpu`), then fill in `target.env` ([section 5.2](#52-set-the-connection)) with the addresses as the
 container sees them (`127.0.0.1` would be the container itself): `http://host.docker.internal:8000` for a vLLM on the machine that runs Docker, otherwise the
 address of the server (a public address needs `BENCH_ALLOW_PUBLIC_URLS=1` in `.env`; a vLLM on a Linux machine that
-runs Docker must listen on `0.0.0.0`, not on `127.0.0.1`). Put the tokenizer in `tools/tokenizer/` ([section 5.3](#53-copy-the-tokenizer)); once the
-stack runs, `docker compose exec bench ./tools/download_tokenizer.sh <repository>` does it.
+runs Docker must listen on `0.0.0.0`, not on `127.0.0.1`).
+
+The tokenizer must be the one of the measured model ([section 5.3](#53-copy-the-tokenizer)). Put the model's Hugging
+Face name in `.env` (`BENCH_TOKENIZER_REPO=org/model`, plus `HF_TOKEN` for a gated model): the container downloads its
+tokenizer into `tools/tokenizer/` the first time it starts, if the folder has none yet. Without Internet access, copy
+the files yourself.
 
 ```bash
 docker compose up -d --build
@@ -497,7 +501,7 @@ variable is set (`sweep.sh` removes it for AIPerf anyway).
 
 ### 5.3 Copy the tokenizer
 
-With Docker Compose: `docker compose exec bench ./tools/download_tokenizer.sh <repository>` ([section 4.4](#44-or-with-docker-compose)).
+With Docker Compose: `BENCH_TOKENIZER_REPO` in `.env` downloads it once at start ([section 4.4](#44-or-with-docker-compose)).
 
 AIPerf needs the tokenizer of the measured model to build prompts of the right length; the agents use it to adjust
 their sizes. On a machine with Hugging Face access:
