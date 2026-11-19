@@ -1,0 +1,59 @@
+# The client side of the bench in Docker (README, section 4.4).
+#   docker compose up -d --build                     the interface and Prometheus (vLLM only)
+#   COMPOSE_PROFILES=gateway docker compose up -d    + LiteLLM, in front of your vLLM
+#   COMPOSE_PROFILES=try docker compose up -d        + a fake server, to try everything without a GPU
+# Choices (profile, Prometheus configuration, ports, key) go in a .env file: see .env.example.
+# vLLM is not part of it: it runs on your GPU server, and the bench reaches it by its address
+# (host.docker.internal for a vLLM on the machine that runs Docker).
+name: banc-gpu
+
+x-bench: &bench
+  build: {context: docker}
+  image: banc-gpu-bench
+  working_dir: /app
+  user: "${BENCH_UID:-0}:${BENCH_GID:-0}"          # your own user (id -u, id -g) keeps the results yours on Linux
+  volumes: [".:/app"]                               # results, traces, tokenizer, target.env stay in your folder
+  extra_hosts: ["host.docker.internal:host-gateway"]
+
+services:
+  bench:
+    <<: *bench
+    command: ["python", "-m", "interface.server", "--host", "0.0.0.0", "--port", "8765", "--public-port", "${BENCH_PORT:-8765}"]
+    ports: ["127.0.0.1:${BENCH_PORT:-8765}:8765"]   # the interface is reachable from this machine only
+    environment:
+      BENCH_TOKEN: "${BENCH_TOKEN:-}"               # empty: a random token, shown by `docker compose logs bench`
+      BENCH_PROMETHEUS: "http://prometheus:9090"
+      BENCH_LITELLM_SELECTOR: "${BENCH_LITELLM_SELECTOR:-}"
+    depends_on: [prometheus]
+
+  prometheus:
+    image: prom/prometheus:v3.7.3
+    ports: ["127.0.0.1:${PROMETHEUS_PORT:-9090}:9090"]      # Prometheus asks for no key: do not open it to the network
+    volumes:
+      - ./docker/${PROMETHEUS_CONFIG:-prometheus.yml}:/etc/prometheus/prometheus.yml:ro
+      - ./docker/secrets:/etc/prometheus/secrets:ro
+      - prometheus-data:/prometheus
+    command: ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.retention.time=30d"]
+    extra_hosts: ["host.docker.internal:host-gateway"]
+    restart: unless-stopped
+
+  litellm:
+    profiles: [gateway]
+    image: "ghcr.io/berriai/litellm:${LITELLM_TAG:-main-stable}"
+    command: ["--config", "/app/config.yaml", "--port", "4000"]
+    ports: ["127.0.0.1:${LITELLM_PORT:-4000}:4000"]
+    volumes: ["./docker/litellm-config.yaml:/app/config.yaml:ro"]
+    environment:
+      LITELLM_MASTER_KEY: "${LITELLM_MASTER_KEY:-}"
+      VLLM_API_BASE: "${VLLM_API_BASE:-http://host.docker.internal:8000/v1}"
+      VLLM_API_KEY: "${VLLM_API_KEY:-none}"
+    extra_hosts: ["host.docker.internal:host-gateway"]
+    restart: unless-stopped
+
+  fake-server:
+    <<: *bench
+    profiles: [try]
+    command: ["python", "tools/fake_server.py", "--host", "0.0.0.0", "--port", "8001"]
+
+volumes:
+  prometheus-data:

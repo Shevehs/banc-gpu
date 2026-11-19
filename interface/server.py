@@ -4,9 +4,11 @@ Usage (from the repository root, with the .venv-aiperf environment activated):
     python -m interface.server            # then open http://127.0.0.1:8765
     python -m interface.server --port 9000
 On a remote machine: SSH tunnel from your workstation, e.g. ssh -L 8765:127.0.0.1:8765 <machine>.
+In a container (docker-compose.yml): --host 0.0.0.0 inside, and the port published on 127.0.0.1 of the host only;
+--public-port is the port the browser uses when it differs from --port.
 
-The server only listens on 127.0.0.1 and requires a random token, shown at startup in the address to
-open: another web page or another user of the machine cannot start a run without it.
+The server only listens on 127.0.0.1 (unless --host says otherwise) and requires a token, random unless BENCH_TOKEN
+is set, shown at startup in the address to open: another web page or another user of the machine cannot start a run without it.
 It also checks the Host header and the origin of requests. It only runs sweep.sh, agentx.sh,
 agents_test/launcher.py and the report scripts (including observation/query.py, which queries Prometheus), with
 validated parameters (AIPerf options on an allowlist); a run started here is identical to the same run started by
@@ -40,6 +42,7 @@ LOGS_DIR = HERE / "logs"
 NAME_OK = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$")
 TOKEN = os.environ.get("BENCH_TOKEN") or secrets.token_urlsafe(24)
 PORT = [8765]
+PUBLIC_PORT = [8765]      # the port the browser uses (it differs from PORT behind a published container port)
 # AIPerf options allowed in "extra options": name -> number of expected values
 EXTRA_OK = {"--use-server-token-count": 0, "--benchmark-grace-period": 1, "--prompt-corpus": 1,
             "--num-dataset-entries": 1, "--request-timeout-seconds": 1}
@@ -697,12 +700,13 @@ async def defaults(req):
     """GET /api/defaults: the starting values of the form, from the BENCH_* variables of the terminal that started the
     interface, completed at start-up by the plain `export BENCH_*=value` lines of target.env.
 
-    Only what is not secret is returned: the target, the model, the metrics URLs and the tokenizer. The keys never go to
-    the browser: `api_key_set` only says that BENCH_API_KEY exists, and `api_key_url` which target it applies to."""
+    Only what is not secret is returned: the target, the model, the metrics URLs, the tokenizer, and the Prometheus
+    address and LiteLLM selector (BENCH_PROMETHEUS, BENCH_LITELLM_SELECTOR). The keys never go to the browser: `api_key_set` only says that BENCH_API_KEY exists, and `api_key_url` which target it applies to."""
     key_set = bool(settings.api_key())
     return web.json_response({
         "url": settings.read_setting("URL", ""), "model": settings.read_setting("MODEL", ""),
         "metrics": settings.read_setting("METRICS", ""), "tokenizer": settings.read_setting("TOKENIZER", ""),
+        "prometheus": settings.read_setting("PROMETHEUS", ""), "litellm": settings.read_setting("LITELLM_SELECTOR", ""),
         "api_key_set": key_set, "api_key_url": settings.read_setting("URL", "") if key_set else ""})
 
 
@@ -764,7 +768,7 @@ async def home(req):
 async def guard(req, handler):
     """Token, Host and origin checked for the whole API (protects against other web pages and DNS rebinding)."""
     if req.path.startswith("/api/"):
-        hosts = {f"127.0.0.1:{PORT[0]}", f"localhost:{PORT[0]}"}
+        hosts = {f"127.0.0.1:{PUBLIC_PORT[0]}", f"localhost:{PUBLIC_PORT[0]}"}
         if req.host not in hosts:
             return web.json_response({"error": "host refused"}, status=403)
         origin = req.headers.get("Origin")
@@ -788,10 +792,14 @@ async def clean_shutdown(app):
 
 
 def main():
-    """Parse --port and serve the interface on 127.0.0.1; the address to open (with the token) is printed."""
-    a = argparse.ArgumentParser(); a.add_argument("--port", type=int, default=8765)
+    """Parse --host, --port and --public-port and serve the interface; the address to open (with the token) is printed."""
+    a = argparse.ArgumentParser()
+    a.add_argument("--host", default="127.0.0.1", help="address to listen on (0.0.0.0 inside a container)")
+    a.add_argument("--port", type=int, default=8765)
+    a.add_argument("--public-port", type=int, default=None, help="port the browser uses, if it is not --port")
     p = a.parse_args()
     PORT[0] = p.port
+    PUBLIC_PORT[0] = p.public_port or p.port
     settings.load_target_env(ROOT / "target.env")   # the form starts with target.env, loaded or not in this terminal
     app = web.Application(middlewares=[guard])
     app.on_shutdown.append(clean_shutdown)
@@ -802,8 +810,8 @@ def main():
                     web.get("/", home)])
     if (DIST / "assets").exists():
         app.router.add_static("/assets", DIST / "assets")
-    print(f"Bench interface: http://127.0.0.1:{p.port}/?token={TOKEN}\n(open this exact address; Ctrl-C stops the interface and the runs in progress)")
-    web.run_app(app, host="127.0.0.1", port=p.port, print=None, handler_cancellation=True)
+    print(f"Bench interface: http://127.0.0.1:{PUBLIC_PORT[0]}/?token={TOKEN}\n(open this exact address; Ctrl-C stops the interface and the runs in progress)", flush=True)
+    web.run_app(app, host=p.host, port=p.port, print=None, handler_cancellation=True)
 
 
 if __name__ == "__main__":

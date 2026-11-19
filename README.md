@@ -35,6 +35,7 @@ Two families of measurements:
   - [4.1 What must already be in place](#41-what-must-already-be-in-place)
   - [4.2 Check the vLLM in place](#42-check-the-vllm-in-place)
   - [4.3 Install the bench dependencies](#43-install-the-bench-dependencies)
+  - [4.4 Or with Docker Compose](#44-or-with-docker-compose)
 - [5. Configure the client](#5-configure-the-client)
   - [5.1 Activate the environment](#51-activate-the-environment)
   - [5.2 Set the connection](#52-set-the-connection)
@@ -364,6 +365,60 @@ aiperf --version && python -c "import openai, aiohttp; print('ok')"
 
 AIPerf also installs `aiohttp` (interface) and the `hf` command (tokenizer). Without Internet access, `pip` and `uv`
 (which downloads Python) must point to a mirror.
+
+### 4.4 Or with Docker Compose
+
+`docker-compose.yml` installs the client side in containers, instead of sections 4.3 and 7.2:
+
+- **`bench`**: AIPerf, the Python libraries and the interface ([section 9](#9-interface)). The repository is mounted
+  in the container, so `target.env`, the results, the traces and the tokenizer stay in your folder.
+- **`prometheus`**: the history for the observation ([section 7](#7-observation-real-use)).
+- **`litellm`** (option): the gateway, in front of your vLLM ([section 7.5](#75-per-agent-view-through-litellm)).
+- **`fake-server`** (option): a fake vLLM and LiteLLM, to try everything without a GPU
+  ([Appendix E](#appendix-e-try-the-bench-without-a-gpu)).
+
+vLLM is not part of it: it runs on your GPU server, as in [section 4.1](#41-what-must-already-be-in-place).
+
+**Start**
+
+Get the code (section 4.3), then fill in `target.env` ([section 5.2](#52-set-the-connection)) with the addresses as the
+container sees them: `http://host.docker.internal:8000` for a vLLM on the machine that runs Docker, otherwise the
+address of the server. Put the tokenizer in `tools/tokenizer/` ([section 5.3](#53-copy-the-tokenizer)); once the
+stack runs, `docker compose exec bench ./tools/download_tokenizer.sh <repository>` does it.
+
+```bash
+docker compose up -d --build
+docker compose logs bench
+```
+
+The log shows the address to open, with its token. The interface listens on `127.0.0.1` of this machine only: from
+another machine, use an SSH tunnel ([interface/README.md](interface/README.md)). Its Prometheus address is already
+filled in. Your vLLM replicas are listed in `docker/prometheus.yml`, one line each.
+
+**Run the scripts from a terminal**
+
+```bash
+docker compose exec bench bash -c 'source target.env && ./sweep.sh trial-r1 "1 2 4"'
+docker compose exec bench python -m report aiperf results --target 30
+```
+
+**Options**, in a `.env` file (`cp .env.example .env`; every line of it is explained):
+
+- **With LiteLLM**:
+  - set `COMPOSE_PROFILES=gateway`, `PROMETHEUS_CONFIG=prometheus-gateway.yml`, `LITELLM_MASTER_KEY` and
+    `BENCH_LITELLM_SELECTOR='job="litellm"'`;
+  - edit the two lines marked `EDIT` in `docker/litellm-config.yaml`, and write the key for Prometheus in
+    `docker/secrets/litellm.key` (`chmod 644`, [section 7.2](#72-install-and-start-prometheus-once));
+  - in `target.env`: `BENCH_URL=http://litellm:4000`, the key of LiteLLM in `BENCH_API_KEY`, and the address of
+    vLLM's `/metrics` in `BENCH_METRICS`.
+- **Without a GPU**: set `COMPOSE_PROFILES=try` and `PROMETHEUS_CONFIG=prometheus-fake.yml`, with
+  `BENCH_URL=http://fake-server:8001` in `target.env`.
+- **Ports**: `BENCH_PORT`, `PROMETHEUS_PORT` and `LITELLM_PORT`, if another service uses 8765, 9090 or 4000.
+- **Linux**: `BENCH_UID` and `BENCH_GID` (`id -u`, `id -g`) keep the results yours instead of root's.
+
+`docker compose down` stops the stack and keeps the Prometheus history; `docker compose down -v` erases it.
+If LiteLLM or Prometheus already run under their own Compose, see [section 7.2](#72-install-and-start-prometheus-once)
+(option B) and run only `bench`: `docker compose up -d --build bench`.
 
 [↑ Back to top](#top)
 
@@ -1457,6 +1512,7 @@ of the chosen view.
 | `agentx.sh`, `tools/download_agentx_traces.sh` | AgentX stress test; local copy of the traces |
 | `observation/query.py`, `analysis.py` | observation mode: Prometheus queries (`python -m observation.query`), indicators and verdicts (windows, periods, agents) |
 | `tools/prometheus.yml.example`, `prometheus-fake.yml` | Prometheus configuration (production; check without a GPU) |
+| `docker-compose.yml`, `.env.example`, `docker/` | the client side in Docker: image, Prometheus and LiteLLM configuration ([section 4.4](#44-or-with-docker-compose)) |
 | `agents_test/agents.py` | the three test agents and their simulated tools |
 | `agents_test/profiles.py` | sizes of the three profiles, and the number of calls of one task |
 | `agents_test/launcher.py` | launch by levels |

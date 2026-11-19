@@ -1,0 +1,14 @@
+# Prometheus of the Docker Compose to try the bench without a GPU (README, section 4.4): the fake server plays vLLM and LiteLLM.
+global:
+  scrape_interval: 5s
+
+scrape_configs:
+  - job_name: vllm
+    static_configs:
+      - targets: ["fake-server:8001"]
+  - job_name: litellm
+    metrics_path: /litellm/metrics/
+    authorization:
+      credentials_file: /etc/prometheus/secrets/fake.key
+    static_configs:
+      - targets: ["fake-server:8001"]

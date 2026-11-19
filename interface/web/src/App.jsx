@@ -822,6 +822,9 @@ export default function App() {
         url: d.url && c.url === CONNECTION.url ? d.url : c.url,
         model: d.model && c.model === CONNECTION.model ? d.model : c.model,
         metrics: d.metrics && c.metrics === CONNECTION.metrics ? d.metrics : c.metrics }));
+      setPrometheus((q) => ({ ...q,
+        prometheus: d.prometheus && q.prometheus === PROMETHEUS.prometheus ? d.prometheus : q.prometheus,
+        litellm: d.litellm && q.litellm === PROMETHEUS.litellm ? d.litellm : q.litellm }));
       if (d.tokenizer) {
         setParams((p) => ({ ...p,
           synthetic: { ...p.synthetic, tokenizer: p.synthetic.tokenizer || d.tokenizer },

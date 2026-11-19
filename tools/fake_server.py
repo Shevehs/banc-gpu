@@ -4,7 +4,7 @@ Mimics: /v1/models, streaming /v1/chat/completions (text or tool call), the usag
 tokens (prefix shared with previous requests, 4 characters per token), /metrics in Prometheus format
 (a few vLLM metrics), /litellm/metrics (LiteLLM-style metrics per api_key_alias, always served), /version
 and, with --dev-mode, /server_info. The numbers measure nothing.
-Usage: python tools/fake_server.py --port 8001"""
+Usage: python tools/fake_server.py --port 8001   (--host 0.0.0.0 inside a container)"""
 import argparse
 import asyncio
 import json
@@ -243,6 +243,7 @@ a.add_argument("--itl-bounds", default="",
                help="JSON bounds of the inter_token_latency histogram, like vLLM's --custom-histogram-buckets")
 a.add_argument("--dev-mode", action="store_true", help="mimics VLLM_SERVER_DEV_MODE=1 (/server_info)")
 a.add_argument("--port", type=int, default=8001)
+a.add_argument("--host", default="127.0.0.1", help="address to listen on (0.0.0.0 inside a container)")
 a.add_argument("--error-rate", type=float, default=0.0)
 ARGS = a.parse_args()
 ITL_BOUNDS = json.loads(ARGS.itl_bounds) if ARGS.itl_bounds else B_ITL
@@ -253,4 +254,4 @@ app.add_routes([web.get("/v1/models", models), web.post("/v1/chat/completions", 
                 web.get("/metrics", metrics), web.get("/version", version), web.get("/admin", admin), web.get("/server_info", server_info),
                 web.get("/litellm/metrics/", metrics_litellm),
                 web.get("/litellm/metrics", lambda r: web.HTTPTemporaryRedirect("/litellm/metrics/"))])
-web.run_app(app, host="127.0.0.1", port=PORT, print=None)
+web.run_app(app, host=ARGS.host, port=PORT, print=None)

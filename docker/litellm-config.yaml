@@ -1,0 +1,15 @@
+# LiteLLM of the Docker Compose, profile "gateway" (README, section 4.4). Edit the two lines marked EDIT.
+model_list:
+  - model_name: bench                          # EDIT: the name the clients use (BENCH_MODEL)
+    litellm_params:
+      model: openai/bench                      # EDIT: openai/<the name vLLM serves (--served-model-name)>
+      api_base: os.environ/VLLM_API_BASE       # VLLM_API_BASE in .env (default: the vLLM of this machine, port 8000)
+      api_key: os.environ/VLLM_API_KEY         # VLLM_API_KEY in .env, only if vLLM was started with --api-key
+
+litellm_settings:
+  callbacks: ["prometheus"]                    # the metrics Prometheus scrapes
+  custom_prometheus_metadata_labels: ["metadata.agent"]    # per-agent view, way 2 (README, section 7.5)
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
+  always_include_stream_usage: true            # LiteLLM counts the tokens of streamed requests
