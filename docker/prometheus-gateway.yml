@@ -1,5 +1,5 @@
 # Prometheus of the Docker Compose with the LiteLLM gateway (README, section 4.4): vLLM and LiteLLM.
-# The LiteLLM key goes in docker/secrets/litellm.key (readable by every account: use a limited virtual key if you can).
+# The LiteLLM key goes in docker/secrets/litellm.key (readable by every account: a read-only key, README section 4.4).
 global:
   scrape_interval: 15s
 

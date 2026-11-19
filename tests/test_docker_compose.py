@@ -13,7 +13,7 @@ def test_every_published_port_is_on_the_loopback_of_the_host_only():
 
 
 def test_the_optional_services_need_a_profile():
-    for service in ("litellm", "fake-server"):
+    for service in ("litellm", "litellm-db", "fake-server"):
         block = COMPOSE.split(f"\n  {service}:")[1].split("\n\n")[0]
         assert "profiles:" in block, service
     for service in ("bench", "prometheus"):
@@ -71,3 +71,12 @@ def test_a_failed_download_warns_and_the_command_still_runs(tmp_path):
     out, calls = run_entrypoint(tmp_path, {"BENCH_TOKENIZER_REPO": "org/model"}, download_ok=False)
     assert calls == ["DOWNLOAD org/model"] and "WARNING: the tokenizer download failed" in out.stdout
     assert "STARTED" in out.stdout and out.returncode == 0
+
+
+def test_litellm_has_its_database_and_waits_for_it():
+    litellm = COMPOSE.split("\n  litellm:")[1].split("\n\n")[0]
+    database = COMPOSE.split("\n  litellm-db:")[1].split("\n\n")[0]
+    assert "DATABASE_URL" in litellm and "service_healthy" in litellm
+    assert "healthcheck:" in database and "ports:" not in database          # no port is published
+    assert 'POSTGRES_PASSWORD: "${LITELLM_DB_PASSWORD:-}"' in database       # empty: PostgreSQL refuses to start
+    assert "litellm-db-data" in COMPOSE.split("\nvolumes:")[-1]

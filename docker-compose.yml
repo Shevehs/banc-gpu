@@ -50,9 +50,27 @@ services:
     volumes: ["./docker/litellm-config.yaml:/app/config.yaml:ro"]
     environment:
       LITELLM_MASTER_KEY: "${LITELLM_MASTER_KEY:-}"     # empty: LiteLLM refuses to start (it never runs open)
+      DATABASE_URL: "postgresql://litellm:${LITELLM_DB_PASSWORD:-}@litellm-db:5432/litellm"
       VLLM_API_BASE: "${VLLM_API_BASE:-http://host.docker.internal:8000/v1}"
       VLLM_API_KEY: "${VLLM_API_KEY:-none}"
     extra_hosts: ["host.docker.internal:host-gateway"]
+    depends_on:
+      litellm-db: {condition: service_healthy}
+    restart: unless-stopped
+
+  litellm-db:                                        # LiteLLM's database: virtual keys (one per agent), spend logs
+    profiles: [gateway]
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: litellm
+      POSTGRES_PASSWORD: "${LITELLM_DB_PASSWORD:-}"      # empty: PostgreSQL refuses to start. No port is published.
+      POSTGRES_DB: litellm
+    volumes: ["litellm-db-data:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U litellm -d litellm"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
     restart: unless-stopped
 
   fake-server:
@@ -62,3 +80,4 @@ services:
 
 volumes:
   prometheus-data:
+  litellm-db-data:

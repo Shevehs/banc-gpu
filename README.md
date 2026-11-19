@@ -416,14 +416,30 @@ docker compose exec bench python -m report aiperf results --target 30
 
 **Options**, in a `.env` file (`cp .env.example .env`; every line of it is explained):
 
-- **With LiteLLM**:
-  - set `COMPOSE_PROFILES=gateway`, `PROMETHEUS_CONFIG=prometheus-gateway.yml`, `LITELLM_MASTER_KEY` and
-    `BENCH_LITELLM_SELECTOR='job="litellm"'`;
-  - edit the two lines marked `EDIT` in `docker/litellm-config.yaml`, and write the key for Prometheus in
-    `docker/secrets/litellm.key` (`chmod 644`, a limited virtual key rather than the master key if you have one,
-    [section 7.2](#72-install-and-start-prometheus-once));
+- **With LiteLLM and its database** (profile `gateway`: the `litellm` and `litellm-db` containers; skip it if you
+  already run LiteLLM, and neither image is downloaded):
+  - in `.env`: `COMPOSE_PROFILES=gateway`, `PROMETHEUS_CONFIG=prometheus-gateway.yml`, `LITELLM_MASTER_KEY`,
+    `LITELLM_DB_PASSWORD` (letters and digits) and `BENCH_LITELLM_SELECTOR='job="litellm"'`;
+  - edit the two lines marked `EDIT` in `docker/litellm-config.yaml`;
+  - start LiteLLM first, because Prometheus needs a key that LiteLLM creates (the first start prepares the database
+    and takes a minute): `docker compose up -d litellm-db litellm`;
+  - create a read-only key for Prometheus, and write it in `docker/secrets/litellm.key`:
+
+    ```bash
+    curl -s -X POST localhost:4000/user/new -H "Authorization: Bearer $LITELLM_MASTER_KEY" \
+      -H "Content-Type: application/json" -d '{"user_id": "prometheus", "user_role": "proxy_admin_viewer"}'
+    curl -s -X POST localhost:4000/key/generate -H "Authorization: Bearer $LITELLM_MASTER_KEY" \
+      -H "Content-Type: application/json" -d '{"key_alias": "prometheus", "user_id": "prometheus"}'   # "key": "sk-…"
+    printf '%s' "<the key>" > docker/secrets/litellm.key && chmod 644 docker/secrets/litellm.key
+    ```
+
+  - then `docker compose up -d`;
+  - one key per agent, for the per-agent view ([section 7.5](#75-per-agent-view-through-litellm)): the same
+    `/key/generate`, with `{"key_alias": "code-review"}`;
   - in `target.env`: `BENCH_URL=http://litellm:4000`, the key of LiteLLM in `BENCH_API_KEY`, and
-    `BENCH_METRICS=http://host.docker.internal:8000/metrics` (vLLM's `/metrics`, as the container sees it).
+    `BENCH_METRICS=http://host.docker.internal:8000/metrics` (vLLM's `/metrics`, as the container sees it);
+  - to scrape without a key, uncomment `require_auth_for_metrics_endpoint: false` in `docker/litellm-config.yaml`: the
+    metrics are then readable by anything that reaches LiteLLM's port, and the API stays protected.
 - **Without a GPU**: set `COMPOSE_PROFILES=try` and `PROMETHEUS_CONFIG=prometheus-fake.yml`, with
   `BENCH_URL=http://fake-server:8001` in `target.env`.
 - **Ports**: `BENCH_PORT`, `PROMETHEUS_PORT` and `LITELLM_PORT`, if another service uses 8765, 9090 or 4000.
@@ -1350,8 +1366,9 @@ general_settings:
   ([section 7.2](#72-install-and-start-prometheus-once)).
 
 LiteLLM's metrics require a key by default in recent versions (1.85.0 according to its documentation; from 1.84
-according to its code). A limited virtual key is better than the master key (inferred: check that it is enough for
-`/metrics/` on your version). Then:
+according to its code). A limited key is better than the master key. A plain virtual key is refused (401); the key of
+a user with the role `proxy_admin_viewer` is accepted, and cannot create keys (observed with the `main-stable` image,
+November 2026; the commands are in [section 4.4](#44-or-with-docker-compose)). Then:
 
 ```bash
 python -m observation.query --prometheus http://127.0.0.1:9090 --litellm 'job="litellm"' \
@@ -1645,7 +1662,7 @@ test network only ([section 7.2](#72-install-and-start-prometheus-once)). If you
 carries the token.
 
 LiteLLM's key sits in `litellm.key` (read by Prometheus, ignored by git, mode 600 unless Docker needs 644). Prefer a
-limited virtual key to the master key.
+read-only key (role `proxy_admin_viewer`, [section 7.2](#72-install-and-start-prometheus-once)) to the master key.
 
 **Test agents and observation.** The test agents' tools are simulated and act on no system. Observation only reads
 metrics, but if you raise the number of your real agents to find the limit, their tools act for real
@@ -1658,7 +1675,7 @@ metrics, but if you raise the number of your real agents to find the limit, thei
 ## Appendix B. LiteLLM per-key setup and install details
 
 Details for the per-agent view ([section 7.5](#75-per-agent-view-through-litellm)). Everything here was observed with
-LiteLLM 1.109.1.
+LiteLLM 1.109.1 (the Docker image: Prisma is already in it, and `docker-compose.yml` starts the PostgreSQL database).
 
 **Prometheus metrics.** `prometheus_client` is not installed by `pip install "litellm[proxy]"`, and LiteLLM then
 refuses to start with `callbacks: ["prometheus"]`. Fix: `pip install prometheus_client` in LiteLLM's environment.
