@@ -13,6 +13,7 @@ x-bench: &bench
   working_dir: /app
   user: "${BENCH_UID:-0}:${BENCH_GID:-0}"          # your own user (id -u, id -g) keeps the results yours on Linux
   volumes: [".:/app"]                               # results, traces, tokenizer, target.env stay in your folder
+  security_opt: ["no-new-privileges:true"]
   extra_hosts: ["host.docker.internal:host-gateway"]
 
 services:
@@ -24,6 +25,7 @@ services:
       BENCH_TOKEN: "${BENCH_TOKEN:-}"               # empty: a random token, shown by `docker compose logs bench`
       BENCH_PROMETHEUS: "http://prometheus:9090"
       BENCH_LITELLM_SELECTOR: "${BENCH_LITELLM_SELECTOR:-}"
+      BENCH_ALLOW_PUBLIC_URLS: "${BENCH_ALLOW_PUBLIC_URLS:-}"     # 1: accept a target on a public address
     depends_on: [prometheus]
 
   prometheus:
@@ -44,7 +46,7 @@ services:
     ports: ["127.0.0.1:${LITELLM_PORT:-4000}:4000"]
     volumes: ["./docker/litellm-config.yaml:/app/config.yaml:ro"]
     environment:
-      LITELLM_MASTER_KEY: "${LITELLM_MASTER_KEY:-}"
+      LITELLM_MASTER_KEY: "${LITELLM_MASTER_KEY:-}"     # empty: LiteLLM refuses to start (it never runs open)
       VLLM_API_BASE: "${VLLM_API_BASE:-http://host.docker.internal:8000/v1}"
       VLLM_API_KEY: "${VLLM_API_KEY:-none}"
     extra_hosts: ["host.docker.internal:host-gateway"]

@@ -700,8 +700,9 @@ async def defaults(req):
     """GET /api/defaults: the starting values of the form, from the BENCH_* variables of the terminal that started the
     interface, completed at start-up by the plain `export BENCH_*=value` lines of target.env.
 
-    Only what is not secret is returned: the target, the model, the metrics URLs, the tokenizer, and the Prometheus
-    address and LiteLLM selector (BENCH_PROMETHEUS, BENCH_LITELLM_SELECTOR). The keys never go to the browser: `api_key_set` only says that BENCH_API_KEY exists, and `api_key_url` which target it applies to."""
+    Only what is not secret is returned: the target, the model, the metrics URLs, the tokenizer, and the
+    Prometheus address and LiteLLM selector (BENCH_PROMETHEUS, BENCH_LITELLM_SELECTOR). The keys never go to
+    the browser: `api_key_set` only says that BENCH_API_KEY exists, and `api_key_url` which target it applies to."""
     key_set = bool(settings.api_key())
     return web.json_response({
         "url": settings.read_setting("URL", ""), "model": settings.read_setting("MODEL", ""),
@@ -800,6 +801,9 @@ def main():
     p = a.parse_args()
     PORT[0] = p.port
     PUBLIC_PORT[0] = p.public_port or p.port
+    if p.host not in ("127.0.0.1", "localhost", "::1"):
+        print(f"WARNING: listening on {p.host}: the token is the only protection unless the port is published on "
+              "127.0.0.1 only (Docker Compose does that).", flush=True)
     settings.load_target_env(ROOT / "target.env")   # the form starts with target.env, loaded or not in this terminal
     app = web.Application(middlewares=[guard])
     app.on_shutdown.append(clean_shutdown)

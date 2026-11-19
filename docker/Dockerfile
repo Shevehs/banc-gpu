@@ -12,7 +12,7 @@ RUN python -m venv /opt/bench \
 
 # Stage 2: what runs.
 FROM python:3.12-slim
-ENV PYTHONUNBUFFERED=1 DO_NOT_TRACK=1 HOME=/home/bench VIRTUAL_ENV=/opt/bench PATH=/opt/bench/bin:$PATH
+ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 DO_NOT_TRACK=1 HOME=/home/bench VIRTUAL_ENV=/opt/bench PATH=/opt/bench/bin:$PATH
 RUN apt-get update && apt-get install -y --no-install-recommends curl procps \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=build /opt/bench /opt/bench

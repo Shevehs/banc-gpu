@@ -23,5 +23,6 @@ resultats*/
 agents_test/resultats*/
 interface/journaux/
 # Docker Compose: keys for Prometheus stay out (fake.key is not a secret)
+!docker/prometheus.yml
 docker/secrets/*
 !docker/secrets/fake.key
