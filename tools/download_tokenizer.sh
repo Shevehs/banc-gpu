@@ -9,16 +9,19 @@ set -euo pipefail
 REPO="${1:-Qwen/Qwen3.8-Flash-Next-FP8}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 TARGET="$HERE/tokenizer"
-mkdir -p "$TARGET"
-# Files of another model are removed first: only the files of $REPO stay.
-[ "$(cat "$TARGET/.repo" 2>/dev/null)" = "$REPO" ] || rm -f "$TARGET"/tokenizer*.json "$TARGET"/vocab.json "$TARGET"/merges.txt \
-  "$TARGET"/special_tokens_map.json "$TARGET"/LICENSE* "$TARGET/.repo"
-hf download "$REPO" --local-dir "$TARGET" \
+# Download aside, and replace the files of tools/tokenizer only once the download has worked: a failure (no Internet,
+# a wrong name) leaves the files that are there untouched.
+TMP="$(mktemp -d "$HERE/tokenizer.new.XXXXXX")"
+trap 'rm -rf "$TMP"' EXIT
+hf download "$REPO" --local-dir "$TMP" \
   --include "tokenizer.json" --include "tokenizer_config.json" --include "vocab.json" \
   --include "merges.txt" --include "special_tokens_map.json" --include "LICENSE*"
-rm -rf "$TARGET/.cache"
+rm -rf "$TMP/.cache"
+[ -f "$TMP/tokenizer.json" ] || { echo "WARNING: tokenizer.json missing; check the repo name."; exit 1; }
+mkdir -p "$TARGET"
+rm -f "$TARGET"/tokenizer*.json "$TARGET"/vocab.json "$TARGET"/merges.txt "$TARGET"/special_tokens_map.json "$TARGET"/LICENSE* "$TARGET/.repo"
+cp -R "$TMP"/. "$TARGET"/
+printf '%s\n' "$REPO" > "$TARGET/.repo"      # the name these files are for: BENCH_TOKENIZER=<this name> then uses them
 echo "Tokenizer of $REPO in $TARGET:"
 ls -la "$TARGET"
-[ -f "$TARGET/tokenizer.json" ] || { echo "WARNING: tokenizer.json missing; check the repo name."; exit 1; }
-printf '%s\n' "$REPO" > "$TARGET/.repo"      # the name these files are for: BENCH_TOKENIZER=<this name> then uses them
 echo "Check the model license before committing these files (git add tools/tokenizer)."

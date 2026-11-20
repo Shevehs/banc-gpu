@@ -642,7 +642,8 @@ their sizes. Set `BENCH_TOKENIZER` to the model's Hugging Face name (`org/model`
 
 A gated model also needs `HF_TOKEN`, used only for this download (in `.env` with Docker). The runs use the files
 in `tools/tokenizer/` when `BENCH_TOKENIZER` is empty or is the name they were downloaded for. For another model,
-set its name: Docker downloads it again, and on your machine you run the script again. `BENCH_TOKENIZER_REPO` is no longer
+set its name: Docker downloads it again, and on your machine you run the script again. A download replaces the files that
+are there only once it has worked. `BENCH_TOKENIZER_REPO` is no longer
 read: put the name in `BENCH_TOKENIZER`.
 
 Other ways:
@@ -1776,6 +1777,7 @@ durations), labels, agent names and error messages; no prompt or response conten
 | the interface form starts empty although `.env` is filled in | the interface reads only plain `export BENCH_NAME=value` lines (`$`, backticks and empty values are skipped), once, when it starts | write plain values, then restart the interface |
 | AgentX: a generated set is not the one I expected (old size or options) | the interface reuses an existing `traces-<preset>` folder | delete the folder and launch again, or generate it yourself with `tools/make_traces.py --overwrite` |
 | `<dir>/<label> already exists: change the label…` (`sweep.sh`, `agentx.sh`, test agents, or the log in the interface) | a run with this label is already in the results directory; nothing was started | use the next label (`-r2`), or replace the old results: `BENCH_OVERWRITE=1` (`--overwrite` for the test agents), or "Replace existing results" in the interface |
+| a tokenizer error after an update, with `BENCH_TOKENIZER_REPO` in `.env` | that variable is no longer read: nothing is downloaded | put the model's Hugging Face name in `BENCH_TOKENIZER` ([section 5.2](#52-the-tokenizer)) |
 | failure at concurrency N (`sweep.sh` / `agentx.sh` stop) | see `results/<label>/c<N>.log` | often tokenizer not found ([section 5.2](#52-the-tokenizer)) or target unreachable ([section 2.1](#21-run-on-your-machine)) |
 | `HFValidationError` or tokenizer not found in the AIPerf log | AIPerf launched by hand with `HF_HUB_OFFLINE=1`, or `BENCH_TOKENIZER` = a Hugging Face name absent from the local cache | go through `sweep.sh` with the tokenizer in `tools/tokenizer/` ([section 5.2](#52-the-tokenizer)) |
 | preempt / cache / MTP columns empty | `/metrics` not read, or not vLLM's | check `BENCH_METRICS`: vLLM's address, required through LiteLLM (launch warning, [section 2.1](#21-run-on-your-machine)) |

@@ -167,7 +167,7 @@ def test_the_download_script_writes_the_name_of_the_model_it_downloaded(tmp_path
     assert (tools / "tokenizer" / ".repo").read_text() == "org/model\n"
 
 
-def test_the_download_script_removes_the_files_of_another_model(tmp_path):
+def test_a_download_replaces_the_files_of_another_model(tmp_path):
     import subprocess
     tools = tmp_path / "tools"
     (tools / "tokenizer").mkdir(parents=True)
@@ -186,7 +186,40 @@ def test_the_download_script_removes_the_files_of_another_model(tmp_path):
                               env={"PATH": f"{fake}:/usr/bin:/bin"}, capture_output=True, text=True, timeout=30)
     assert run("org/new").returncode == 0
     assert sorted(p.name for p in (tools / "tokenizer").iterdir()) == [".repo", "tokenizer.json"]
-    (tools / "tokenizer" / "extra.txt").write_text("kept")
-    (tools / "tokenizer" / "vocab.json").write_text("same model")
-    assert run("org/new").returncode == 0                      # the same model again: its files are not removed
-    assert (tools / "tokenizer" / "vocab.json").exists()
+
+
+def test_a_failed_download_leaves_the_files_that_are_there(tmp_path):
+    """No Internet, or a wrong name: the files in tools/tokenizer (a copy by hand, or another model) are not touched."""
+    import subprocess
+    tools = tmp_path / "tools"
+    (tools / "tokenizer").mkdir(parents=True)
+    shutil.copy(ROOT / "tools" / "download_tokenizer.sh", tools / "download_tokenizer.sh")
+    (tools / "tokenizer" / "tokenizer.json").write_text("copied by hand")             # no .repo: not downloaded by the script
+    (tools / "tokenizer" / "vocab.json").write_text("copied by hand")
+    fake = tmp_path / "bin"
+    fake.mkdir()
+    hf = fake / "hf"
+    hf.write_text("#!/bin/sh\necho 'no Internet' >&2\nexit 1\n")
+    hf.chmod(0o755)
+    done = subprocess.run([shutil.which("bash"), str(tools / "download_tokenizer.sh"), "org/model"], cwd=tmp_path,
+                          env={"PATH": f"{fake}:/usr/bin:/bin"}, capture_output=True, text=True, timeout=30)
+    assert done.returncode != 0
+    assert (tools / "tokenizer" / "tokenizer.json").read_text() == "copied by hand"
+    assert (tools / "tokenizer" / "vocab.json").read_text() == "copied by hand"
+    assert not [p for p in tools.iterdir() if p.name.startswith("tokenizer.new")]     # the temporary folder is gone
+
+
+def test_a_download_without_tokenizer_json_leaves_the_files_that_are_there(tmp_path):
+    import subprocess
+    tools = tmp_path / "tools"
+    (tools / "tokenizer").mkdir(parents=True)
+    shutil.copy(ROOT / "tools" / "download_tokenizer.sh", tools / "download_tokenizer.sh")
+    (tools / "tokenizer" / "tokenizer.json").write_text("old")
+    fake = tmp_path / "bin"
+    fake.mkdir()
+    hf = fake / "hf"
+    hf.write_text("#!/bin/sh\nexit 0\n")                                      # the name exists but holds no tokenizer
+    hf.chmod(0o755)
+    done = subprocess.run([shutil.which("bash"), str(tools / "download_tokenizer.sh"), "org/model"], cwd=tmp_path,
+                          env={"PATH": f"{fake}:/usr/bin:/bin"}, capture_output=True, text=True, timeout=30)
+    assert done.returncode != 0 and (tools / "tokenizer" / "tokenizer.json").read_text() == "old"

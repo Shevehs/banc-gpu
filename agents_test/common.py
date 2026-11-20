@@ -59,8 +59,10 @@ _TOKENIZER = {"loaded": False, "tok": None}
 def tokenizer_root(name, local):
     """Folder or file to read the tokenizer from: the local folder `local` (tools/tokenizer) for an empty `name` and
     for the name its .repo file says it was downloaded for, otherwise `name` itself."""
+    if not name:
+        return str(local)
     marker = (local / ".repo").read_text().strip() if (local / ".repo").is_file() else None
-    return str(local) if not name or name == marker else name
+    return str(local) if name == marker and (local / "tokenizer.json").is_file() else name
 
 
 def tokenizer():

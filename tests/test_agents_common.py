@@ -163,6 +163,7 @@ def test_model_call_error_is_logged_then_raised(tmp_path):
 
 def test_tokenizer_root_uses_the_local_copy_for_an_empty_value_or_the_name_it_was_downloaded_for(tmp_path):
     (tmp_path / ".repo").write_text("org/model\n")
+    (tmp_path / "tokenizer.json").write_text("{}")
     assert common.tokenizer_root("", tmp_path) == str(tmp_path)
     assert common.tokenizer_root(None, tmp_path) == str(tmp_path)
     assert common.tokenizer_root("org/model", tmp_path) == str(tmp_path)
@@ -173,3 +174,8 @@ def test_tokenizer_root_uses_the_local_copy_for_an_empty_value_or_the_name_it_wa
 def test_tokenizer_root_without_a_marker_keeps_a_name_as_it_is(tmp_path):
     assert common.tokenizer_root("org/model", tmp_path) == "org/model"
     assert common.tokenizer_root("", tmp_path) == str(tmp_path)
+
+
+def test_tokenizer_root_ignores_a_marker_without_files(tmp_path):
+    (tmp_path / ".repo").write_text("org/model\n")
+    assert common.tokenizer_root("org/model", tmp_path) == "org/model"
