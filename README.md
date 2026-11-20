@@ -206,7 +206,7 @@ The interface is optional: `python -m interface.server` ([section 10](#10-interf
 You need Docker with Compose, and nothing else on this machine. You set everything in the same file as in 2.1,
 **`.env`**: the connection to your model, then a few optional choices. Compose reads it by itself: no `source`.
 
-The one difference are the addresses, which are those the container sees: `http://host.docker.internal:8000` for a vLLM on the machine that runs
+The one difference is the addresses, which are those the container sees: `http://host.docker.internal:8000` for a vLLM on the machine that runs
 Docker, not `127.0.0.1` (that would be the container itself). A vLLM on a Linux machine that runs Docker must listen on
 `0.0.0.0`, not on `127.0.0.1`.
 
