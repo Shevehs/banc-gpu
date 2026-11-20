@@ -120,14 +120,14 @@ uv venv --seed --python 3.12 .venv-aiperf && source .venv-aiperf/bin/activate
 pip install aiperf==0.13.0 "openai>=1.40" httpx
 ```
 
-**2. Point the bench at your vLLM**: copy the example file, then edit `target.env`. Set `BENCH_URL`, `BENCH_MODEL` and
-`BENCH_API_KEY`. If the target is a LiteLLM gateway, `BENCH_URL` is its address (`http://127.0.0.1:4000`), `BENCH_MODEL`
+**2. Point the bench at your vLLM**: copy the example file, then edit `.env`: it is the one file of the bench, also read
+by Docker Compose (2.2). Set `BENCH_URL`, `BENCH_MODEL` and `BENCH_API_KEY`. If the target is a LiteLLM gateway, `BENCH_URL` is its address (`http://127.0.0.1:4000`), `BENCH_MODEL`
 its model name, `BENCH_API_KEY` a LiteLLM key, and `BENCH_METRICS` becomes required: vLLM's `/metrics` address, because
 LiteLLM does not serve those metrics ([section 5.2](#52-set-the-connection)). Load the file in every terminal you use.
 
 ```bash
-cp tools/target.env.example target.env
-source target.env
+cp .env.example .env
+source .env
 ```
 
 **3. Check that it can reach the server**: download the tokenizer of your model, then read the server's configuration.
@@ -151,10 +151,10 @@ The interface is optional: `python -m interface.server` ([section 9](#9-interfac
 
 ### 2.2 Run in a Docker container
 
-You need Docker with Compose, and nothing else on this machine. You set everything in one file, **`.env`**: the
-connection to your model, then a few optional choices. (`target.env` is for 2.1, on the machine.)
+You need Docker with Compose, and nothing else on this machine. You set everything in the same file as in 2.1,
+**`.env`**: the connection to your model, then a few optional choices. Compose reads it by itself: no `source`.
 
-The addresses are those the container sees: `http://host.docker.internal:8000` for a vLLM on the machine that runs
+The one difference are the addresses, which are those the container sees: `http://host.docker.internal:8000` for a vLLM on the machine that runs
 Docker, not `127.0.0.1` (that would be the container itself).
 
 **1. Get the code and fill in the connection**
@@ -164,8 +164,8 @@ git clone https://github.com/Shevehs/banc-gpu.git ~/banc-gpu && cd ~/banc-gpu
 cp .env.example .env
 ```
 
-In `.env`, uncomment and fill in the connection lines at the top: `BENCH_URL`, `BENCH_MODEL`, `BENCH_API_KEY` and
-`BENCH_TOKENIZER`. The lines are plain `KEY=value`, with no `export`.
+In `.env`, fill in the connection lines at the top: `BENCH_URL`, `BENCH_MODEL`, `BENCH_API_KEY` and
+`BENCH_TOKENIZER`. Keep the `export` at the start of each line.
 
 **2. Only if your target is LiteLLM** (the bench then talks to a gateway, not to vLLM): `BENCH_METRICS` is required,
 because LiteLLM does not serve vLLM's metrics (GPU count, cache, preemptions). Give it vLLM's `/metrics` address. Then
@@ -174,24 +174,24 @@ pick your case:
 - **You already run LiteLLM** (on this machine or elsewhere). In `.env`:
 
   ```bash
-  BENCH_URL=http://host.docker.internal:4000     # or its address, as the container sees it
-  BENCH_MODEL=<the model name LiteLLM exposes (model_name in its configuration)>
-  BENCH_API_KEY=<a LiteLLM key>
-  BENCH_METRICS=http://host.docker.internal:8000/metrics     # vLLM's /metrics
+  export BENCH_URL=http://host.docker.internal:4000     # or its address, as the container sees it
+  export BENCH_MODEL=<the model name LiteLLM exposes (model_name in its configuration)>
+  export BENCH_API_KEY=<a LiteLLM key>
+  export BENCH_METRICS=http://host.docker.internal:8000/metrics     # vLLM's /metrics
   ```
 
 - **You want Compose to run LiteLLM** (with its database). In `.env`:
 
   ```bash
-  COMPOSE_PROFILES=gateway
-  PROMETHEUS_CONFIG=prometheus-gateway.yml
-  BENCH_LITELLM_SELECTOR='job="litellm"'
-  LITELLM_MASTER_KEY=sk-<anything long>
-  LITELLM_DB_PASSWORD=<letters and digits>
-  BENCH_URL=http://litellm:4000
-  BENCH_MODEL=bench                              # model_name of docker/litellm-config.yaml
-  BENCH_API_KEY=<the LITELLM_MASTER_KEY above, or a key of LiteLLM>
-  BENCH_METRICS=http://host.docker.internal:8000/metrics
+  export COMPOSE_PROFILES=gateway
+  export PROMETHEUS_CONFIG=prometheus-gateway.yml
+  export BENCH_LITELLM_SELECTOR='job="litellm"'
+  export LITELLM_MASTER_KEY=sk-<anything long>
+  export LITELLM_DB_PASSWORD=<letters and digits>
+  export BENCH_URL=http://litellm:4000
+  export BENCH_MODEL=bench                              # model_name of docker/litellm-config.yaml
+  export BENCH_API_KEY=<the LITELLM_MASTER_KEY above, or a key of LiteLLM>
+  export BENCH_METRICS=http://host.docker.internal:8000/metrics
   ```
 
   Then edit the two lines marked `EDIT` in `docker/litellm-config.yaml` (the model name, and the name vLLM serves).
@@ -199,7 +199,7 @@ pick your case:
 
 **3. Tokenizer (nothing to do in most cases)**: with the model's Hugging Face name in `BENCH_TOKENIZER` (a public
 model), or the files already in `tools/tokenizer/`, go to step 4. To have the container download it once instead, set
-`BENCH_TOKENIZER_REPO=org/model` in `.env` (plus `HF_TOKEN` for a gated model: the runs do not receive `HF_TOKEN`, so
+`export BENCH_TOKENIZER_REPO=org/model` in `.env` (plus `HF_TOKEN` for a gated model: the runs do not receive `HF_TOKEN`, so
 for a gated model use this download, not the name in `BENCH_TOKENIZER`).
 
 **4. Start, and open the interface**
@@ -273,7 +273,7 @@ Next steps: the other stress tests ([section 6](#6-stress-tests)), observation o
 ```mermaid
 flowchart LR
   subgraph client["Client machine (this repository)"]
-    env["target.env or .env<br/>BENCH_URL · BENCH_MODEL<br/>BENCH_METRICS · BENCH_API_KEY"]
+    env[".env<br/>BENCH_URL · BENCH_MODEL<br/>BENCH_METRICS · BENCH_API_KEY"]
     sweep["sweep.sh<br/>(AIPerf, synthetic load)"]
     agentx["agentx.sh<br/>(AIPerf, AgentX scenario)"]
     launcher["agents_test.launcher<br/>(3 simulated agents)"]
@@ -556,11 +556,15 @@ cd ~/banc-gpu && source .venv-aiperf/bin/activate
 ### 5.2 Set the connection
 
 ```bash
-cp tools/target.env.example target.env     # target.env is ignored by git: it contains the key
+cp .env.example .env     # .env is ignored by git: it contains the key
 ```
 
-Fill in `target.env` (keep the `export`s), then load it in each new terminal: `source target.env`.
+Fill in `.env` (keep the `export`s), then load it in each new terminal: `source .env`.
 The interface ([section 9](#9-interface)) also reads this file when it starts, so it does not need the `source`.
+With Docker Compose ([section 2.2](#22-run-in-a-docker-container)), it is the same file: Compose reads it, and the
+addresses are those the container sees.
+
+If you have a `target.env` from an earlier version, rename it to `.env`.
 
 **Why `BENCH_METRICS` must point to vLLM**
 
@@ -617,7 +621,7 @@ ls tools/tokenizer/tokenizer.json
 Without Hugging Face access, copy `tokenizer.json` and `tokenizer_config.json` from the weights folder into
 `tools/tokenizer/`.
 
-**Without a copy** (install on the machine): set in `target.env` the folder that already holds `tokenizer.json`, for example the one vLLM
+**Without a copy** (install on the machine): set in `.env` the folder that already holds `tokenizer.json`, for example the one vLLM
 downloaded. Give the absolute path of the folder, not of the file, and the one of the model actually served:
 
 ```bash
@@ -1038,12 +1042,12 @@ were used.
 The test agents are three profiles (`code_review` with sub-agents, step-by-step `pentest`, `report`).
 Their tools are simulated: they return fabricated text and act on no system.
 
-Like `sweep.sh` and `agentx.sh`, the launcher reads the variables of `target.env`: load it in this terminal first
+Like `sweep.sh` and `agentx.sh`, the launcher reads the variables of `.env`: load it in this terminal first
 ([section 5.2](#52-set-the-connection)). With Docker Compose, the `bench` container already has them from `.env`. `BENCH_URL`, `BENCH_MODEL` and `BENCH_METRICS` are the defaults of `--url`,
 `--model` and `--metrics`. An option typed on the command line wins over its variable. Two more rules:
 
 - `BENCH_METRICS` goes with `BENCH_URL`: it is used only when `--url` is not given. A run aimed at another URL never
-  reads the metrics of the server of `target.env`.
+  reads the metrics of the server of `.env`.
 - If `BENCH_URL` is the LiteLLM gateway, set `BENCH_METRICS` to vLLM's `/metrics`
   ([section 5.2](#52-set-the-connection)), as for the other tests.
 
@@ -1089,7 +1093,7 @@ Other options:
 - `--no-metrics`: does not read `/metrics`
 - `--overwrite`: replaces existing results with the same label
 
-The key has no option. The launcher reads `BENCH_API_KEY` from the environment, which `target.env` also sets.
+The key has no option. The launcher reads `BENCH_API_KEY` from the environment, which `.env` also sets.
 `BENCH_AGENT_KEYS` gives one key per profile ([section 7.5](#75-per-agent-view-through-litellm)). Without a key, the
 launcher sends the placeholder `bench`, which is fine for a vLLM started without `--api-key`.
 
@@ -1585,10 +1589,10 @@ sides of the tunnel (under Docker Compose, it is `BENCH_PORT`).
 
 The fields are not saved. They start with `BENCH_URL`, `BENCH_MODEL`, `BENCH_METRICS` and `BENCH_TOKENIZER` (and, under Docker Compose,
 `BENCH_PROMETHEUS` and `BENCH_LITELLM_SELECTOR`), taken
-from the terminal that started the interface (with Docker Compose: from `.env`) or, for what the terminal does not set,
-from `target.env` at the root of the repository. The file is read when the interface starts, never run: only plain `export BENCH_NAME=value`
+from the terminal that started the interface or, for what the terminal does not set,
+from `.env` at the root of the repository. The file is read when the interface starts, never run: only plain `export BENCH_NAME=value`
 lines count (no `$`, no backticks, no empty value). Restart the interface after editing it. Keys never go to the page.
-`BENCH_API_KEY` (terminal, `.env` with Docker Compose, or `target.env`) is used when the API key field is empty, and only while the target URL is the `BENCH_URL` one. The
+`BENCH_API_KEY` (the terminal, or `.env`) is used when the API key field is empty, and only while the target URL is the `BENCH_URL` one. The
 runs themselves do not inherit the other variables of the terminal.
 
 It accepts only:
@@ -1656,7 +1660,7 @@ of the chosen view.
 | `agents_test/launcher.py` | launch by levels |
 | `agents_test/common.py`, `metrics.py` | measured model call (streaming), `/metrics` reading |
 | `tools/server_config.py` | reading of the vLLM servers' configuration, GPU count deduced from the fingerprint, check that the model name is known |
-| `tools/download_tokenizer.sh`, `tools/target.env.example` | download of the default tokenizer, settings template |
+| `tools/download_tokenizer.sh`, `.env.example` | download of the default tokenizer, settings template |
 | `tools/tokenizer/` | the tokenizer files, copied by `download_tokenizer.sh` ([section 5.3](#53-copy-the-tokenizer)); not in the repository until you add them |
 | `tools/settings.py` | reads the `BENCH_*` variables |
 | `tools/fake_server.py` | fake server to check the pipeline (vLLM and LiteLLM metrics, `/admin?rate=…`) |
@@ -1666,7 +1670,7 @@ of the chosen view.
 | `pyproject.toml` | dependency groups (`runtime`, `dev` with `pytest` and `ruff`, `tokenizer` with the `tokenizers` library), pytest and ruff configuration; the repository is run from its root, not pip-installed |
 | `tests/` | tests (`python -m pytest`): golden reference outputs of the two report kinds and of the observation views (`tests/golden/`), validators, round-trip tests; lint with `ruff check .` |
 
-`.gitignore` also keeps out of the repository `target.env`, the AgentX traces folders (`traces-agentx*/`, and `traces-tiny/`, `traces-small/`, `traces-medium/`, `traces-large/` for generated sets), `prometheus.yml`,
+`.gitignore` also keeps out of the repository `.env`, the AgentX traces folders (`traces-agentx*/`, and `traces-tiny/`, `traces-small/`, `traces-medium/`, `traces-large/` for generated sets), `prometheus.yml`,
 `litellm.key`, `prometheus-data/`, `data/`, `/*.csv` and the results folders (`results*/`, `agents_test/results*/`).
 
 The test agents use no internal data. The logs contain numbers (times, tokens,
@@ -1676,8 +1680,8 @@ durations), labels, agent names and error messages; no prompt or response conten
 
 | Symptom | Likely cause | What to do |
 |---|---|---|
-| `ERROR: the server does not know the model` (`sweep.sh` / `agentx.sh` stop at once) | `BENCH_MODEL` is not set (so it is `bench`), or is not a name the server serves | set `BENCH_MODEL` to a name the message lists, for example by loading `target.env` ([section 5.2](#52-set-the-connection)) |
-| the interface form starts empty although `target.env` is filled in | the interface reads only plain `export BENCH_NAME=value` lines (`$`, backticks and empty values are skipped), once, when it starts | write plain values, then restart the interface |
+| `ERROR: the server does not know the model` (`sweep.sh` / `agentx.sh` stop at once) | `BENCH_MODEL` is not set (so it is `bench`), or is not a name the server serves | set `BENCH_MODEL` to a name the message lists, for example by loading `.env` ([section 5.2](#52-set-the-connection)) |
+| the interface form starts empty although `.env` is filled in | the interface reads only plain `export BENCH_NAME=value` lines (`$`, backticks and empty values are skipped), once, when it starts | write plain values, then restart the interface |
 | AgentX: a generated set is not the one I expected (old size or options) | the interface reuses an existing `traces-<preset>` folder | delete the folder and launch again, or generate it yourself with `tools/make_traces.py --overwrite` |
 | failure at concurrency N (`sweep.sh` / `agentx.sh` stop) | see `results/<label>/c<N>.log` | often tokenizer not found ([section 5.3](#53-copy-the-tokenizer)) or target unreachable ([section 5.4](#54-test-the-connection)) |
 | `HFValidationError` or tokenizer not found in the AIPerf log | AIPerf launched by hand with `HF_HUB_OFFLINE=1`, or `BENCH_TOKENIZER` = a Hugging Face name absent from the local cache | go through `sweep.sh` with the tokenizer in `tools/tokenizer/` ([section 5.3](#53-copy-the-tokenizer)) |
@@ -1744,7 +1748,7 @@ If you use it: bench server only, port open only to the test client, never in pr
 visible in `ps` on the client machine while AIPerf runs (AIPerf masks it in its own logs).
 
 - Use a dedicated bench key, and do not run the clients on a shared machine.
-- The key sits in `target.env`, or in `.env` with Docker Compose: both are ignored by git; keep them private (`chmod 600`).
+- The key sits in `.env`, which git ignores; keep it private (`chmod 600`).
 - The bench's own logs never contain it, and the interface masks it in the command it prints.
 
 **The interface only talks to local or private hosts, and only reads inside your own directories.**

@@ -32,7 +32,7 @@ def test_an_option_on_the_command_line_wins(monkeypatch):
 
 
 def test_the_metrics_variable_goes_with_the_url_variable(monkeypatch):
-    """A run aimed at another URL (the fake server, say) must not read the metrics of the server of target.env."""
+    """A run aimed at another URL (the fake server, say) must not read the metrics of the server of .env."""
     monkeypatch.setenv("BENCH_URL", "http://gateway:4000")
     monkeypatch.setenv("BENCH_METRICS", "http://real-vllm:8000/metrics")
     p = parse_args(["--label", "x", "--url", "http://127.0.0.1:8001"])

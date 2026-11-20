@@ -118,5 +118,4 @@ def test_the_connection_comes_from_dot_env_to_the_bench_container():
     example = (ROOT / ".env.example").read_text(encoding="utf-8")
     for name in ("BENCH_URL", "BENCH_MODEL", "BENCH_METRICS", "BENCH_API_KEY", "BENCH_TOKENIZER"):
         assert f'{name}: "${{{name}:-}}"' in bench, name       # empty when unset: the scripts' defaults apply
-        assert f"# {name}=" in example, name
-    assert "export " not in example.replace("`export`", "")      # .env lines are KEY=value
+        assert f"export {name}=" in example, name

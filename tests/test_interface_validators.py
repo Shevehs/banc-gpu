@@ -757,7 +757,7 @@ ENV_URL, ENV_KEY = "http://127.0.0.1:8000", "sk-from-the-terminal"
 
 @pytest.fixture
 def terminal(monkeypatch):
-    """The terminal that started the interface had loaded target.env (tests/conftest.py clears BENCH_* otherwise)."""
+    """The terminal that started the interface had loaded .env (tests/conftest.py clears BENCH_* otherwise)."""
     monkeypatch.setenv("BENCH_URL", ENV_URL)
     monkeypatch.setenv("BENCH_API_KEY", ENV_KEY)
 

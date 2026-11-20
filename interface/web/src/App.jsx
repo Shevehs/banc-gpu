@@ -813,7 +813,7 @@ export default function App() {
   const [connection, setConnection] = useState(CONNECTION);
   const [prometheus, setPrometheus] = useState(PROMETHEUS);
   const [test, setTest] = useState(null);       // result of "Test connection", kept when the tab changes
-  const [defaults, setDefaults] = useState(null);   // what the terminal that started the interface says (target.env), no key
+  const [defaults, setDefaults] = useState(null);   // what the terminal that started the interface says (.env), no key
   useEffect(() => {
     api("/api/defaults").then((d) => {
       setDefaults(d);
