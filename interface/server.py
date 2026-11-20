@@ -466,8 +466,12 @@ async def start_run(p):
         display = " ".join(f"{k}={'***' if k in SECRETS else repr(v) if ' ' in v else v}" for k, v in env.items()) \
             + (" " if env else "") + " ".join(f"'{c}'" if " " in c and not c.startswith("[writes") else c for c in display_command(cmd))
         f.write(f"$ cd {cwd}\n$ {display}\n\n"); f.flush()
-        proc = await asyncio.create_subprocess_exec(*cmd, cwd=str(cwd), env={**base_environment(), **env, "PYTHONUNBUFFERED": "1"},
-                                                    stdout=f, stderr=asyncio.subprocess.STDOUT, start_new_session=True)
+        try:
+            proc = await asyncio.create_subprocess_exec(*cmd, cwd=str(cwd), env={**base_environment(), **env, "PYTHONUNBUFFERED": "1"},
+                                                        stdout=f, stderr=asyncio.subprocess.STDOUT, start_new_session=True)
+        except BaseException:
+            f.close()                                       # no process: do not leave the log file open
+            raise
         RUNS[eid] = dict(id=eid, type=p.get("type"), label=p.get("label"), command=display,
                            start=time.time(), end=None, code=None, log=str(log), proc=proc)
     asyncio.create_task(follow(eid, proc, f))

@@ -105,10 +105,11 @@ def load(path):
         for i in raw if isinstance(raw, list) else []:
             if valid_item(i) and i["id"] not in seen:
                 seen.add(i["id"])
+                i["params"] = clean_params(i["params"])        # a hand-edited file cannot bring a key back
                 for k, default in (("late", False), ("run_id", None), ("code", None), ("error", None)):
                     i.setdefault(k, default)
                 items.append(i)
-    except (OSError, ValueError, AttributeError, TypeError):
+    except (OSError, ValueError, AttributeError, TypeError, RecursionError):
         return [], None
     for i in items:
         if i["state"] == "running":

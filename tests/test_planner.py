@@ -119,6 +119,7 @@ def queue(monkeypatch, tmp_path):
     monkeypatch.setattr(server, "PLANNED", [])
     monkeypatch.setattr(server, "PAUSE", [None])
     monkeypatch.setattr(server, "RUNS", {})
+    monkeypatch.setattr(server, "START_LOCK", asyncio.Lock())      # one lock per test: it binds to the loop that uses it
     return tmp_path
 
 
@@ -387,3 +388,17 @@ def test_the_planned_routes_are_registered():
     for route in ('web.post("/api/planned", plan_run)', 'web.get("/api/planned", list_planned)',
                   'web.post("/api/planned/resume", resume_planned)', 'web.post("/api/planned/{id}/cancel", cancel_planned)'):
         assert route in source
+
+
+def test_load_cleans_the_fields_of_a_hand_edited_file(tmp_path):
+    path = tmp_path / "planned.json"
+    edited = item("e")
+    edited["params"] = {"label": "e", "api_key": "sk-put-back", "agent_keys": "report=sk-x"}
+    path.write_text(json.dumps({"items": [edited], "paused": None}))
+    assert planner.load(path)[0][0]["params"] == {"label": "e"}
+
+
+def test_a_deeply_nested_file_gives_an_empty_queue(tmp_path):
+    path = tmp_path / "planned.json"
+    path.write_text("[" * 100000)
+    assert planner.load(path) == ([], None)
