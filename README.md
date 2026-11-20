@@ -384,17 +384,21 @@ vLLM is not part of it: it runs on your GPU server, as in [section 4.1](#41-what
 launch options (parallelism, context length, prefix cache, speculative decoding) are what the bench compares, so they
 stay yours.
 
-**Two files, two jobs**
+**On the machine, or in Docker: what changes**
 
-| File | What it holds | Read when | After a change |
-|---|---|---|---|
-| `target.env` | your model's connection: `BENCH_URL`, `BENCH_MODEL`, `BENCH_METRICS`, `BENCH_API_KEY`, `BENCH_TOKENIZER` | the interface starts, and the scripts `source` it | `docker compose restart bench` |
-| `.env` | the Compose choices: profiles, ports, interface token, LiteLLM keys, tokenizer download, Prometheus address and LiteLLM selector of the form, public-address switch, your user id on Linux | `docker compose up` | `docker compose up -d` |
+There are two ways to run the bench's client side. Sections 4.2 to 4.3, 5 and 7.2 install it on your machine. This
+section runs it in containers. The files are not the same:
 
-The connection to your model goes in `target.env`. Everything about the containers goes in `.env`, including the
-Prometheus address and the LiteLLM selector that the form starts with. Addresses are written as the container sees
-them (below).
-`restart` makes a new interface token unless `BENCH_TOKEN` is set in `.env`.
+| | On the machine | Docker Compose |
+|---|---|---|
+| `target.env`: the connection to your model (`BENCH_URL`, `BENCH_MODEL`, `BENCH_METRICS`, `BENCH_API_KEY`, `BENCH_TOKENIZER`) | yes | yes, the same file and variables |
+| addresses in `target.env` | `http://127.0.0.1:8000` | `http://host.docker.internal:8000`: `127.0.0.1` would be the container |
+| `.env`: the Compose choices (profiles, ports, interface token, LiteLLM keys, Prometheus address and LiteLLM selector of the form, tokenizer download) | does not exist | yes, copied from `.env.example` |
+| after changing `target.env` | restart the interface | `docker compose restart bench` |
+| after changing `.env` | nothing | `docker compose up -d` |
+
+In both cases the interface reads `target.env` once, when it starts, and the scripts need `source target.env`.
+With Compose, `restart` makes a new interface token unless `BENCH_TOKEN` is set in `.env`.
 
 **Start**
 
