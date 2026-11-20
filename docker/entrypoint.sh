@@ -13,7 +13,7 @@ if [[ "$NAME" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9._-]+$ ]] && [ ! -d "$NAM
   echo "Tokenizer: downloading $NAME into tools/tokenizer/ (once)"
   if ! ./tools/download_tokenizer.sh "$NAME"; then
     echo "WARNING: the tokenizer download failed (no Internet access, a gated model without HF_TOKEN, or a wrong name)."
-    echo "Copy tokenizer.json and tokenizer_config.json of the model into tools/tokenizer/ (README, section 5.2)."
+    echo "Copy tokenizer.json and tokenizer_config.json of the model into tools/tokenizer/ and leave BENCH_TOKENIZER empty (README, section 5.2)."
   fi
 fi
 unset HF_TOKEN
