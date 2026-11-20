@@ -246,6 +246,7 @@ function Launch({ onLaunched, c, params, setParams, kind, setKind }) {
       const r = await api("/api/runs", { method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ type: kind, ...c, ...launchFields(kind, p) }) });
       setMsg({ ok: true, text: `Run started: ${r.id}` });
+      if (p.overwrite) setParams({ ...params, [kind]: { ...p, overwrite: false } });     // replacing is asked again each time
       onLaunched(r.id);
     } catch (e) { setMsg({ ok: false, text: e.message }); }
   };

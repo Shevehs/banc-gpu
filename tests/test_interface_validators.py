@@ -1119,6 +1119,8 @@ def test_overwrite_is_off_unless_the_form_asks_for_it():
     assert server.synthetic_command({**base, "overwrite": "1"})[1]["BENCH_OVERWRITE"] == ""     # only a real true
     assert server.agentx_command(AGENTX)[1]["BENCH_OVERWRITE"] == ""
     assert server.agentx_command({**AGENTX, "overwrite": True})[1]["BENCH_OVERWRITE"] == "1"
+    assert server.agentx_command({**AGENTX, "overwrite": "1"})[1]["BENCH_OVERWRITE"] == ""
     agents = {**base, "agents": ["report"], "mode": "scripted", "duration": 60}
     assert "--overwrite" not in server.agents_command(agents)[0]
     assert "--overwrite" in server.agents_command({**agents, "overwrite": True})[0]
+    assert "--overwrite" not in server.agents_command({**agents, "overwrite": 1})[0]
