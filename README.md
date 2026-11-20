@@ -663,7 +663,7 @@ or both separated by a comma.
 | Variable | Meaning | Example |
 |---|---|---|
 | `BENCH_PORT` | port of the interface, published on `127.0.0.1` of this machine only (from another machine, use an SSH tunnel, [section 10](#10-interface)); change it if 8765 is taken | `8765` |
-| `BENCH_TOKEN` | token of the interface. Empty = a random one at each start, shown by `docker compose logs bench`; a fixed value gives an address you can keep | a long random string |
+| `BENCH_TOKEN` | token of the interface. Empty = a random one at each start, shown by `docker compose logs bench`; a fixed value gives an address you can keep. At least 16 characters, without spaces: a shorter or guessable one is ignored | a long random string |
 | `BENCH_UID`, `BENCH_GID` | Linux: your user and group (`id -u`, `id -g`). The container then runs as you and the results are yours, not root's | `1000` |
 | `BENCH_TOKENIZER_REPO` | Hugging Face name of the model: its tokenizer is downloaded once into `tools/tokenizer/` at the first start ([5.2](#52-the-tokenizer)) | `org/model` |
 | `HF_TOKEN` | Hugging Face token, only for a gated model. The runs do not receive it | — |
@@ -1785,6 +1785,7 @@ durations), labels, agent names and error messages; no prompt or response conten
 | Docker: the target is unreachable from the container but answers on the machine | `127.0.0.1` in `.env` is the container | `http://host.docker.internal:<port>` ([section 5.3](#53-docker-compose-settings)) |
 | Docker: the interface answers "host refused" | the browser address uses a port other than `BENCH_PORT` | open the exact address of `docker compose logs bench` |
 | Docker, Linux: results owned by root | the container runs as root | `BENCH_UID` and `BENCH_GID` in `.env` ([section 5.3](#53-docker-compose-settings)) |
+| Docker: the token in the interface address is text from `.env` (`# empty: …`), or the interface says "BENCH_TOKEN ignored" | an older `.env.example` had `BENCH_TOKEN=` followed by a comment: Compose takes the comment as the value | write an empty value as `""`, or a real token of at least 16 characters, in `.env`; then `docker compose up -d` |
 | Docker: LiteLLM cannot reach its database, `litellm-db` is healthy | a character other than a letter or a digit in `LITELLM_DB_PASSWORD` breaks its URL | letters and digits only, then `docker compose down -v` ([section 5.3](#53-docker-compose-settings)) |
 | Docker: `litellm-db` restarts again and again, or "password authentication failed" | `LITELLM_DB_PASSWORD` is empty, or changed after the first start | set it; after a change, `docker compose down -v` ([section 5.3](#53-docker-compose-settings)) |
 | LiteLLM does not start with `callbacks: ["prometheus"]` | `prometheus_client` module missing | `pip install prometheus_client` in LiteLLM's environment ([Appendix B](#appendix-b-litellm-per-key-setup-and-install-details)) |

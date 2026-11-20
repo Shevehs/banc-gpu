@@ -1124,3 +1124,19 @@ def test_overwrite_is_off_unless_the_form_asks_for_it():
     assert "--overwrite" not in server.agents_command(agents)[0]
     assert "--overwrite" in server.agents_command({**agents, "overwrite": True})[0]
     assert "--overwrite" not in server.agents_command({**agents, "overwrite": 1})[0]
+
+
+@pytest.mark.parametrize("value", ["", None, "   "])
+def test_choose_token_without_a_value_is_random(value):
+    token, warning = server.choose_token(value)
+    assert len(token) >= 24 and warning is None
+
+
+def test_choose_token_keeps_a_good_value():
+    assert server.choose_token("a-long-random-string-123") == ("a-long-random-string-123", None)
+
+
+@pytest.mark.parametrize("value", ["short", "# empty: random, shown by `docker compose logs bench`", "has some spaces in it ok", "#" + "x" * 30])
+def test_choose_token_refuses_a_guessable_value(value):
+    token, warning = server.choose_token(value)
+    assert token != value and len(token) >= 24 and "BENCH_TOKEN ignored" in warning

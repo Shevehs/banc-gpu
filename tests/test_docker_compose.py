@@ -119,3 +119,9 @@ def test_the_connection_comes_from_dot_env_to_the_bench_container():
     for name in ("BENCH_URL", "BENCH_MODEL", "BENCH_METRICS", "BENCH_API_KEY", "BENCH_TOKENIZER"):
         assert f'{name}: "${{{name}:-}}"' in bench, name       # empty when unset: the scripts' defaults apply
         assert f"export {name}=" in example, name
+
+
+def test_no_empty_value_is_followed_by_a_comment_in_the_example():
+    """Docker Compose takes the comment as the value of `NAME=   # comment`: an empty value must be written \"\"."""
+    example = (ROOT / ".env.example").read_text(encoding="utf-8")
+    assert not [line for line in example.splitlines() if re.search(r"=\s+#", line)]
