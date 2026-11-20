@@ -335,6 +335,11 @@ Next steps: the other stress tests ([section 6](#6-stress-tests)), observation o
 
 ## 3. How the pieces connect
 
+The pieces are the same in both ways of running the bench ([section 2](#2-quick-start)). First on your machine, then
+with Docker Compose.
+
+**On your machine**
+
 ```mermaid
 flowchart LR
   subgraph client["Client machine (this repository)"]
@@ -387,6 +392,50 @@ flowchart LR
 ```
 
 Solid arrows are traffic and file writes; dashed arrows are optional paths or metric reads.
+
+**With Docker Compose** ([section 4.4](#44-or-with-docker-compose))
+
+```mermaid
+flowchart LR
+  you["Your browser"]
+  subgraph host["Machine that runs Docker"]
+    env[".env<br/>(read by Compose)"]
+    folder[("Repository folder<br/>results*/ · traces · tools/tokenizer")]
+    subgraph compose["Docker Compose"]
+      bench["bench container<br/>interface.server (port 8765)<br/>sweep.sh · agentx.sh · agents_test<br/>observation.query · report"]
+      prom[("prometheus container<br/>(port 9090)")]
+      gw["litellm container (option)<br/>/v1 · /metrics/"]
+      db[("litellm-db container (option)<br/>PostgreSQL: virtual keys")]
+      fake["fake-server container (option)<br/>to try without a GPU"]
+    end
+  end
+  vllm["vLLM server(s)<br/>your GPU server, not part of Compose<br/>/v1 · /metrics"]
+  yours["Your real agents / users"]
+
+  you -->|"127.0.0.1:8765 + token"| bench
+  env -.->|"BENCH_URL · BENCH_MODEL<br/>BENCH_METRICS · BENCH_API_KEY"| bench
+  bench <-->|"folder mounted in /app"| folder
+  bench -->|"inference requests<br/>to BENCH_URL"| vllm
+  bench -.->|"BENCH_URL = http://litellm:4000"| gw
+  bench -.->|"BENCH_URL = http://fake-server:8001"| fake
+  gw --> db
+  gw -->|forwards| vllm
+  bench -. "/metrics (BENCH_METRICS)" .-> vllm
+  bench -->|"PromQL<br/>(observation)"| prom
+  prom -. "scrapes /metrics<br/>(job vllm)" .-> vllm
+  prom -. "scrapes /metrics/<br/>(job litellm)" .-> gw
+  yours -->|real traffic| gw
+  yours -.->|or directly| vllm
+```
+
+What changes with Docker:
+
+- The scripts, AIPerf and the interface run in the `bench` container. The repository folder is mounted in it, so the
+  results, the traces and the tokenizer stay on your machine.
+- Only `bench` (the interface) and `prometheus` publish a port, on `127.0.0.1` of the machine.
+- Addresses in `.env` are those the container sees: `host.docker.internal` for a vLLM on the machine that runs Docker,
+  `http://litellm:4000` for the LiteLLM of Compose.
+- vLLM is never part of Compose: it stays on your GPU server.
 
 Observation sends no load and starts nothing. Prometheus (a separate server) scrapes vLLM's `/metrics` (and LiteLLM's)
 and keeps the history, and `observation.query` only queries it.
