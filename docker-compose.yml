@@ -2,7 +2,8 @@
 #   docker compose up -d --build                     the interface and Prometheus (vLLM only)
 #   COMPOSE_PROFILES=gateway docker compose up -d    + LiteLLM, in front of your vLLM
 #   COMPOSE_PROFILES=try docker compose up -d        + a fake server, to try everything without a GPU
-# Choices (profile, Prometheus configuration, ports, key) go in a .env file: see .env.example.
+# Everything you set goes in one file, .env: the connection to your model, then the choices (profile, ports, keys).
+# See .env.example.
 # vLLM is not part of it: it runs on your GPU server, and the bench reaches it by its address
 # (host.docker.internal for a vLLM on the machine that runs Docker).
 name: banc-gpu
@@ -12,7 +13,7 @@ x-bench: &bench
   image: banc-gpu-bench
   working_dir: /app
   user: "${BENCH_UID:-0}:${BENCH_GID:-0}"          # your own user (id -u, id -g) keeps the results yours on Linux
-  volumes: [".:/app"]                               # results, traces, tokenizer, target.env stay in your folder
+  volumes: [".:/app"]                               # results, traces and tokenizer stay in your folder
   security_opt: ["no-new-privileges:true"]
   extra_hosts: ["host.docker.internal:host-gateway"]
 
@@ -23,6 +24,11 @@ services:
     command: ["python", "-m", "interface.server", "--host", "0.0.0.0", "--port", "8765", "--public-port", "${BENCH_PORT:-8765}"]
     ports: ["127.0.0.1:${BENCH_PORT:-8765}:8765"]   # the interface is reachable from this machine only
     environment:
+      BENCH_URL: "${BENCH_URL:-}"                    # the connection to your model: addresses as the container sees them
+      BENCH_MODEL: "${BENCH_MODEL:-}"
+      BENCH_METRICS: "${BENCH_METRICS:-}"
+      BENCH_API_KEY: "${BENCH_API_KEY:-}"
+      BENCH_TOKENIZER: "${BENCH_TOKENIZER:-}"
       BENCH_TOKEN: "${BENCH_TOKEN:-}"               # empty: a random token, shown by `docker compose logs bench`
       BENCH_PROMETHEUS: "${BENCH_PROMETHEUS:-http://prometheus:9090}"     # another Prometheus: its address here
       BENCH_LITELLM_SELECTOR: "${BENCH_LITELLM_SELECTOR:-}"

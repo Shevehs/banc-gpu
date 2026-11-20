@@ -1,5 +1,5 @@
 # The client side of the bench: AIPerf and the Python dependencies. The repository itself is not copied: Compose
-# mounts it at /app, so results, traces, the tokenizer and target.env stay in your folder (README, section 4.4).
+# mounts it at /app, so results, traces and the tokenizer stay in your folder (README, section 4.4).
 
 # Stage 1: some dependencies of AIPerf have no ready-made package on every processor (arm64) and are compiled here;
 # the compiler stays in this stage.

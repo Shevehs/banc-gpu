@@ -151,57 +151,56 @@ The interface is optional: `python -m interface.server` ([section 9](#9-interfac
 
 ### 2.2 Run in a Docker container
 
-You need Docker with Compose, and nothing else on this machine. There are two files to know:
+You need Docker with Compose, and nothing else on this machine. You set everything in one file, **`.env`**: the
+connection to your model, then a few optional choices. (`target.env` is for 2.1, on the machine.)
 
-- **`target.env`**: the connection to your model, the same file and variables as in 2.1. Its addresses are those the
-  container sees: `http://host.docker.internal:8000` for a vLLM on the machine that runs Docker, not `127.0.0.1`
-  (that would be the container itself).
-- **`.env`**: the choices of Docker Compose (ports, interface token, tokenizer download, LiteLLM). It is optional: a
-  first run needs `target.env` only.
+The addresses are those the container sees: `http://host.docker.internal:8000` for a vLLM on the machine that runs
+Docker, not `127.0.0.1` (that would be the container itself).
 
 **1. Get the code and fill in the connection**
 
 ```bash
 git clone https://github.com/Shevehs/banc-gpu.git ~/banc-gpu && cd ~/banc-gpu
-cp tools/target.env.example target.env
+cp .env.example .env
 ```
 
-Edit `target.env`: `BENCH_URL`, `BENCH_MODEL`, `BENCH_API_KEY`, and `BENCH_METRICS` if `BENCH_URL` is a LiteLLM
-gateway ([section 5.2](#52-set-the-connection)).
+In `.env`, uncomment and fill in the connection lines at the top: `BENCH_URL`, `BENCH_MODEL`, `BENCH_API_KEY` and
+`BENCH_TOKENIZER`. The lines are plain `KEY=value`, with no `export`.
 
-**2. Only if your target is LiteLLM** (the bench then talks to a gateway, not to vLLM): `BENCH_METRICS` is required, because
-LiteLLM does not serve vLLM's metrics (GPU count, cache, preemptions). Give it vLLM's `/metrics` address. Then pick
-your case:
+**2. Only if your target is LiteLLM** (the bench then talks to a gateway, not to vLLM): `BENCH_METRICS` is required,
+because LiteLLM does not serve vLLM's metrics (GPU count, cache, preemptions). Give it vLLM's `/metrics` address. Then
+pick your case:
 
-- **You already run LiteLLM** (on this machine or elsewhere). Only `target.env` changes:
+- **You already run LiteLLM** (on this machine or elsewhere). In `.env`:
 
   ```bash
-  export BENCH_URL=http://host.docker.internal:4000     # or its address, as the container sees it
-  export BENCH_MODEL=<the model name LiteLLM exposes (model_name in its configuration)>
-  export BENCH_API_KEY="<a LiteLLM key>"
-  export BENCH_METRICS="http://host.docker.internal:8000/metrics"     # vLLM's /metrics
+  BENCH_URL=http://host.docker.internal:4000     # or its address, as the container sees it
+  BENCH_MODEL=<the model name LiteLLM exposes (model_name in its configuration)>
+  BENCH_API_KEY=<a LiteLLM key>
+  BENCH_METRICS=http://host.docker.internal:8000/metrics     # vLLM's /metrics
   ```
 
-- **You want Compose to run LiteLLM** (with its database). Then:
-  1. in `.env` (`cp .env.example .env`): `COMPOSE_PROFILES=gateway`, `PROMETHEUS_CONFIG=prometheus-gateway.yml`,
-     `LITELLM_MASTER_KEY=sk-<anything long>`, `LITELLM_DB_PASSWORD=<letters and digits>`,
-     `BENCH_LITELLM_SELECTOR='job="litellm"'`;
-  2. in `docker/litellm-config.yaml`, edit the two lines marked `EDIT` (the model name and the name vLLM serves);
-  3. in `target.env`:
+- **You want Compose to run LiteLLM** (with its database). In `.env`:
 
-     ```bash
-     export BENCH_URL=http://litellm:4000
-     export BENCH_MODEL=bench                    # model_name of docker/litellm-config.yaml
-     export BENCH_API_KEY="<the LITELLM_MASTER_KEY of .env, or a key of LiteLLM>"
-     export BENCH_METRICS="http://host.docker.internal:8000/metrics"
-     ```
+  ```bash
+  COMPOSE_PROFILES=gateway
+  PROMETHEUS_CONFIG=prometheus-gateway.yml
+  BENCH_LITELLM_SELECTOR='job="litellm"'
+  LITELLM_MASTER_KEY=sk-<anything long>
+  LITELLM_DB_PASSWORD=<letters and digits>
+  BENCH_URL=http://litellm:4000
+  BENCH_MODEL=bench                              # model_name of docker/litellm-config.yaml
+  BENCH_API_KEY=<the LITELLM_MASTER_KEY above, or a key of LiteLLM>
+  BENCH_METRICS=http://host.docker.internal:8000/metrics
+  ```
 
+  Then edit the two lines marked `EDIT` in `docker/litellm-config.yaml` (the model name, and the name vLLM serves).
   More about it (keys per agent, no GPU, the database): [section 4.4](#44-or-with-docker-compose).
 
-**3. Tokenizer (nothing to do in most cases)**: with the model's Hugging Face name in `BENCH_TOKENIZER` of
-`target.env` (a public model), or the files already in `tools/tokenizer/`, go to step 4. To have the container download
-it once instead, copy `.env.example` to `.env` and set `BENCH_TOKENIZER_REPO=org/model` (plus `HF_TOKEN` for a gated
-model: the runs do not receive `HF_TOKEN`, so for a gated model use this download, not the name in `BENCH_TOKENIZER`).
+**3. Tokenizer (nothing to do in most cases)**: with the model's Hugging Face name in `BENCH_TOKENIZER` (a public
+model), or the files already in `tools/tokenizer/`, go to step 4. To have the container download it once instead, set
+`BENCH_TOKENIZER_REPO=org/model` in `.env` (plus `HF_TOKEN` for a gated model: the runs do not receive `HF_TOKEN`, so
+for a gated model use this download, not the name in `BENCH_TOKENIZER`).
 
 **4. Start, and open the interface**
 
@@ -217,14 +216,14 @@ interface refuses.
 terminal:
 
 ```bash
-docker compose exec bench bash -c 'source target.env && ./sweep.sh first-r1 "1 4 16"'
+docker compose exec bench ./sweep.sh first-r1 "1 4 16"
 docker compose exec bench python -m report aiperf results --target 30
 ```
 
 The results are in the `results/` folder of the repository, on your machine.
 
-**After a change**: `docker compose restart bench` after editing `target.env`; `docker compose up -d` after editing
-`.env`. `restart` makes a new interface token unless `BENCH_TOKEN` is set in `.env`.
+**After a change in `.env`**: `docker compose up -d`. The containers whose settings changed are recreated, and the
+interface gets a new token unless `BENCH_TOKEN` is set in `.env`.
 
 Options (LiteLLM with its database, a try without a GPU, ports, Linux, an existing Prometheus):
 [section 4.4](#44-or-with-docker-compose).
@@ -466,7 +465,7 @@ AIPerf also installs `aiohttp` (interface) and the `hf` command (tokenizer). Wit
 `docker-compose.yml` installs the client side in containers, instead of sections 4.3, 5.1 and 7.2 (Prometheus):
 
 - **`bench`**: AIPerf, the Python libraries and the interface ([section 9](#9-interface)). The repository is mounted
-  in the container, so `target.env`, the results, the traces and the tokenizer stay in your folder.
+  in the container, so the results, the traces and the tokenizer stay in your folder.
 - **`prometheus`**: the history for the observation ([section 7](#7-observation-real-use)).
 - **`litellm`** (option): the gateway, in front of your vLLM ([section 7.5](#75-per-agent-view-through-litellm)).
 - **`fake-server`** (option): a fake vLLM and LiteLLM, to try everything without a GPU
@@ -478,10 +477,11 @@ stay yours.
 
 **Start**: the steps are in [section 2.2](#22-run-in-a-docker-container). What it adds:
 
-- The addresses in `target.env` are those the container sees (`127.0.0.1` would be the container itself):
+- The addresses in `.env` are those the container sees (`127.0.0.1` would be the container itself):
   `http://host.docker.internal:8000` for a vLLM on the machine that runs Docker, otherwise the address of the server.
   A public address needs `BENCH_ALLOW_PUBLIC_URLS=1` in `.env`; a vLLM on a Linux machine that runs Docker must listen
   on `0.0.0.0`, not on `127.0.0.1`.
+- A `target.env` already in the folder is still read, for the connection lines that `.env` leaves empty.
 - The tokenizer must be the one of the measured model ([section 5.3](#53-copy-the-tokenizer)). With
   `BENCH_TOKENIZER_REPO` in `.env`, the container downloads it into `tools/tokenizer/` the first time it starts, if the
   folder has none yet. Without Internet access, copy the files yourself.
@@ -494,7 +494,7 @@ stay yours.
 **Run the scripts from a terminal**
 
 ```bash
-docker compose exec bench bash -c 'source target.env && ./sweep.sh trial-r1 "1 2 4"'
+docker compose exec bench ./sweep.sh trial-r1 "1 2 4"
 docker compose exec bench python -m report aiperf results --target 30
 ```
 
@@ -503,21 +503,22 @@ docker compose exec bench python -m report aiperf results --target 30
 - **With LiteLLM and its database** (profile `gateway`: the `litellm` and `litellm-db` containers; skip it if you
   already run LiteLLM, and neither image is downloaded):
   - in `.env`: `COMPOSE_PROFILES=gateway`, `PROMETHEUS_CONFIG=prometheus-gateway.yml`, `LITELLM_MASTER_KEY`,
-    `LITELLM_DB_PASSWORD` (letters and digits) and `BENCH_LITELLM_SELECTOR='job="litellm"'`;
+    `LITELLM_DB_PASSWORD` (letters and digits) and `BENCH_LITELLM_SELECTOR='job="litellm"'` (also in `.env`: the
+    connection, as in [section 2.2](#22-run-in-a-docker-container), step 2);
   - edit the two lines marked `EDIT` in `docker/litellm-config.yaml`;
   - `docker compose up -d`: the first start of LiteLLM prepares its database and takes a minute. Prometheus reads
     LiteLLM's metrics with the master key, which the `prometheus-key` container copies from `.env` into a volume:
     nothing to create by hand;
   - one key per agent, for the per-agent view ([section 7.5](#75-per-agent-view-through-litellm)): the same
     `/key/generate`, with `{"key_alias": "code-review"}`;
-  - in `target.env`: `BENCH_URL=http://litellm:4000`, the key of LiteLLM in `BENCH_API_KEY`, and
+  - in `.env`: `BENCH_URL=http://litellm:4000`, the key of LiteLLM in `BENCH_API_KEY`, and
     `BENCH_METRICS=http://host.docker.internal:8000/metrics` (vLLM's `/metrics`, as the container sees it);
   - Prometheus then holds the master key. To give it a read-only key or none instead, see
     [section 7.2](#72-install-and-start-prometheus-once): put a read-only key in `docker/secrets/litellm.key` and point
     `credentials_file` of `docker/prometheus-gateway.yml` to `/etc/prometheus/secrets/litellm.key`; or, for no key,
     uncomment `require_auth_for_metrics_endpoint: false` in `docker/litellm-config.yaml`.
 - **Without a GPU**: set `COMPOSE_PROFILES=try` and `PROMETHEUS_CONFIG=prometheus-fake.yml`, with
-  `BENCH_URL=http://fake-server:8001` in `target.env`.
+  `BENCH_URL=http://fake-server:8001` in `.env`.
 - **Ports**: `BENCH_PORT`, `PROMETHEUS_PORT` and `LITELLM_PORT`, if another service uses 8765, 9090 or 4000.
 - **Linux**: `BENCH_UID` and `BENCH_GID` (`id -u`, `id -g`) keep the results yours instead of root's, and run the
   container as you: set them.
