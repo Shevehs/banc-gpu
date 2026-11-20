@@ -1475,6 +1475,8 @@ sides of the tunnel (under Docker Compose, it is `BENCH_PORT`).
   - A generated set is written to `traces-<preset>` in the repository the first time and reused afterwards. The log
     of the run gives the `--max-model-len` that vLLM needs for it
     ([section 6.5](#65-agentx-with-generated-or-your-own-traces)).
+  - A label that already exists in the results directory stops the run. Tick "Replace existing results" to delete it
+    and start again.
 - **Runs**: live log, stop.
 - **Results**: tables, selected point, curve of the stress tests, updated as soon as a field changes; the "GPU" field is optional (deduced from the
   fingerprint when empty).

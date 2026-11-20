@@ -255,7 +255,7 @@ def synthetic_command(p):
         env["BENCH_DURATION"] = ""
         env["BENCH_REQUESTS_PER_CONCURRENCY"] = str(valid_number(p.get("requests_per_concurrency", 8), "requests per concurrency", 1, 1000, True))
     env["BENCH_EXTRA"] = valid_extra(p.get("extra")) or ""
-    env.update(BENCH_OVERWRITE="", BENCH_SEED="")
+    env.update(BENCH_OVERWRITE="1" if p.get("overwrite") is True else "", BENCH_SEED="")
     levels = str(p.get("levels") or "")
     if not LEVELS_OK.match(levels):
         raise Refusal("levels: integers separated by spaces")
@@ -325,7 +325,8 @@ def agentx_command(p):
            "BENCH_DURATION": str(duration), "BENCH_ROOT_DIR": results_dir(p.get("root") or "results-agentx"),
            "BENCH_AGENTX_DIR": f"traces-{generate}" if generate
            else local_path(p.get("traces_dir"), "traces directory") if p.get("traces_dir") else "",
-           "BENCH_SHORT_RUN": "1" if short else "", "BENCH_OVERWRITE": "", "BENCH_SEED": "", "BENCH_TOKENIZER": "",
+           "BENCH_SHORT_RUN": "1" if short else "", "BENCH_OVERWRITE": "1" if p.get("overwrite") is True else "",
+           "BENCH_SEED": "", "BENCH_TOKENIZER": "",
            "BENCH_MAX_CONTEXT": str(valid_number(p.get("max_context"), "max context", 1024, 10_000_000, True)) if p.get("max_context") else "",
            "BENCH_AGENTX_VARIANT": "256k" if p.get("variant") == "256k" and not generate else ""}
     tok = str(p.get("tokenizer") or "").strip()
@@ -381,6 +382,8 @@ def agents_command(p):
            "--output", str(ROOT / results_dir(p.get("root") or "agents_test/results-agents"))]
     if p.get("label_agents"):
         cmd.append("--label-agents")
+    if p.get("overwrite") is True:
+        cmd.append("--overwrite")
     if met:
         cmd += ["--metrics", " ".join(met)]
     return cmd, env, ROOT
