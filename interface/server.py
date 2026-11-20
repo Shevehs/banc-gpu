@@ -41,7 +41,25 @@ ROOT = HERE.parent
 DIST = HERE / "dist"
 LOGS_DIR = HERE / "logs"
 NAME_OK = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$")
-TOKEN = os.environ.get("BENCH_TOKEN") or secrets.token_urlsafe(24)
+MIN_TOKEN = 16
+
+
+def choose_token(value):
+    """The access token: `value` (BENCH_TOKEN) if it is usable, else a random one.
+
+    Returns (token, warning). A value is refused if it is shorter than MIN_TOKEN characters, contains white space
+    or starts with `#` (text of a comment that a .env file gave by mistake), or has a character outside ASCII (HTTP
+    headers carry it badly): it would be guessable or unusable."""
+    value = (value or "").strip()
+    if not value:
+        return secrets.token_urlsafe(24), None
+    if len(value) < MIN_TOKEN or re.search(r"\s", value) or value.startswith("#") or not value.isascii():
+        return secrets.token_urlsafe(24), (f"BENCH_TOKEN ignored (it must be at least {MIN_TOKEN} characters, ASCII, "
+                                           "without spaces, and not a comment): a random token is used")
+    return value, None
+
+
+TOKEN, TOKEN_WARNING = choose_token(os.environ.get("BENCH_TOKEN"))
 PORT = [8765]
 PUBLIC_PORT = [8765]      # the port the browser uses (it differs from PORT behind a published container port)
 # AIPerf options allowed in "extra options": name -> number of expected values
@@ -802,7 +820,7 @@ async def guard(req, handler):
         origin = req.headers.get("Origin")
         if origin and origin not in {f"http://{h}" for h in hosts}:
             return web.json_response({"error": "origin refused"}, status=403)
-        if not secrets.compare_digest(req.headers.get("X-Bench-Token", ""), TOKEN):
+        if not secrets.compare_digest(req.headers.get("X-Bench-Token", "").encode(errors="replace"), TOKEN.encode()):
             return web.json_response({"error": "token missing or invalid: open the address shown at startup"}, status=401)
         if req.method == "POST" and req.content_type != "application/json":
             return web.json_response({"error": "JSON expected"}, status=415)
@@ -967,6 +985,8 @@ def main():
     p = a.parse_args()
     PORT[0] = p.port
     PUBLIC_PORT[0] = p.public_port or p.port
+    if TOKEN_WARNING:
+        print(f"WARNING: {TOKEN_WARNING}", flush=True)
     if p.host not in ("127.0.0.1", "localhost", "::1"):
         print(f"WARNING: listening on {p.host}: the token is the only protection unless the port is published on "
               "127.0.0.1 only (Docker Compose does that).", flush=True)
