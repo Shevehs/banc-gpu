@@ -299,7 +299,7 @@ These are the usual messages of the connection check ([section 2.1](#21-run-on-y
 
 - **`[config] ERROR: the server does not know the model …`**: the name in `BENCH_MODEL` is not one the server
   serves. It is `bench` when the variable is not set. Set `BENCH_MODEL` to a name the server serves. The message lists
-  them when the server can say; otherwise read `/v1/models` with the first command above.
+  them when the server can say; otherwise read `/v1/models` with the first command of the check (step 3 of [2.1](#21-run-on-your-machine), step 5 of [2.2](#22-run-in-a-docker-container)).
 - **The same error at the start of `sweep.sh` or `agentx.sh`**: both scripts make this check themselves. They stop
   before any measurement, with nothing created. Only a clear refusal of the name stops them: an unreachable server or
   a refused key does not.
@@ -1724,7 +1724,7 @@ of the chosen view.
 | `agentx.sh`, `tools/download_agentx_traces.sh` | AgentX stress test; local copy of the traces |
 | `observation/query.py`, `analysis.py` | observation mode: Prometheus queries (`python -m observation.query`), indicators and verdicts (windows, periods, agents) |
 | `tools/prometheus.yml.example`, `tools/prometheus-fake.yml` | Prometheus configuration (production; check without a GPU) |
-| `docker-compose.yml`, `.env.example`, `docker/` | the client side in Docker: the image, `docker/prometheus*.yml`, `docker/litellm-config.yaml` ([section 5.3](#53-docker-compose-settings)) |
+| `docker-compose.yml`, `.env.example`, `docker/` | the client side in Docker: the image, `docker/prometheus*.yml`, `docker/litellm-config.yaml` ([section 5.3](#53-docker-compose-settings), [6.2](#62-the-litellm-of-docker-compose)) |
 | `agents_test/agents.py` | the three test agents and their simulated tools |
 | `agents_test/profiles.py` | sizes of the three profiles, and the number of calls of one task |
 | `agents_test/launcher.py` | launch by levels |
@@ -1759,7 +1759,7 @@ durations), labels, agent names and error messages; no prompt or response conten
 | `err` > 0 | requests refused or timed out | key, model name, `--max-model-len`, `--max-num-seqs` |
 | agent throughput "—" | empty measurement window | `--warmup` shorter than `--duration`, levels long enough |
 | cache about 0 for the agents | prefix cache disabled | restart vLLM without `--no-enable-prefix-caching` |
-| `WARNING … autonomous mode … made N calls per task instead of M` (`report agents`) | the model stopped calling tools: output cap too small for a tool call at this scale, or vLLM started without `--enable-auto-tool-choice --tool-call-parser <parser>` | add the options ([section 4](#4-requirements), optional options), or use `scripted` mode |
+| `WARNING … autonomous mode … made N calls per task instead of M` (`report agents`) | the model stopped calling tools: output cap too small for a tool call at this scale, or vLLM started without `--enable-auto-tool-choice --tool-call-parser <parser>` | add the options ([section 4.2](#42-check-the-vllm-in-place), optional options), or use `scripted` mode |
 | TP/PP/DP "n/a" in the interface | no fingerprint | correct model and key; default `--fingerprint-mode`; through a gateway, vLLM's address in `BENCH_METRICS`; or target vLLM directly |
 | the interface says a run is in progress and so no one-token completion (no fingerprint) | connection test during a run | normal: a one-token completion would skew the measurement |
 | AgentX: "Scenario invariants violated" | `BENCH_DURATION` < 900 s, or AIPerf launched by hand on local traces | `BENCH_DURATION` ≥ 900 (or `BENCH_SHORT_RUN=1` for a simple check); go through `agentx.sh` |
