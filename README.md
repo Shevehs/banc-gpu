@@ -18,7 +18,7 @@ Two families of measurements:
 > **Status.** Written from the code of **vLLM at commit [`7f855f6`](https://github.com/vllm-project/vllm/tree/7f855f605892656ebf7265642e5d22a34a6ae731)**
 > and tested with **AIPerf 0.13.0** against a fake server ([Appendix E](#appendix-e-try-the-bench-without-a-gpu)).
 > Against a real vLLM it has only been tried on a small local server (vLLM 0.33.0), **not yet on a GPU server**.
-> On your first real run, compare your outputs with the example in [section 2.3](#23-what-the-connection-check-shows).
+> On your first real run, compare your outputs with the example in [section 2.1](#21-run-on-your-machine).
 > Unfamiliar terms: see [Appendix G](#appendix-g-glossary). What is verified, documented or still unchecked is
 > listed in [Appendix F](#appendix-f-validation-status).
 
@@ -28,7 +28,7 @@ Two families of measurements:
 - [2. Quick start](#2-quick-start)
   - [2.1 Run on your machine](#21-run-on-your-machine)
   - [2.2 Run in a Docker container](#22-run-in-a-docker-container)
-  - [2.3 What the connection check shows](#23-what-the-connection-check-shows)
+  - [2.3 If something looks wrong](#23-if-something-looks-wrong)
   - [2.4 Read the first report](#24-read-the-first-report)
 - [3. How the pieces connect](#3-how-the-pieces-connect)
 - [4. Requirements and installation](#4-requirements-and-installation)
@@ -129,13 +129,42 @@ cp .env.example .env
 source .env
 ```
 
-**3. Check that it can reach the server**: download the tokenizer of your model, then read the server's configuration.
-The second command must print `[config]` lines ([section 2.3](#23-what-the-connection-check-shows)).
+**3. Check that it can reach the server**: download the tokenizer of your model, then ask the server for its models
+and its configuration.
 
 ```bash
 ./tools/download_tokenizer.sh <Hugging Face repository of your model>
+curl -s -H "Authorization: Bearer $BENCH_API_KEY" "$BENCH_URL/v1/models"
 python tools/server_config.py --url "$BENCH_URL" --model "$BENCH_MODEL" --metrics "$BENCH_METRICS" > /dev/null
 ```
+
+**You should see** the model, then `[config]` lines. The exact wording is set by `tools/server_config.py`.
+
+The `[config]` lines give:
+
+- the fingerprint (vLLM version, decoded TP / PP / DP / EP), from the target or, when the target is a gateway that
+  does not pass it on, from the first vLLM server of `BENCH_METRICS`;
+- the number of GPUs deduced from it;
+- then, for each `/metrics` URL: the vLLM version, whether the prefix cache is on, and the number of speculative
+  tokens read from the metrics (0 = no speculative decoding).
+
+Example for a TP 8 server with expert parallelism and 3 speculative tokens:
+
+```
+[config] target fingerprint: vllm-<version>-tp8-ep-<hash> -> TP 8, PP 1, DP 1, EP yes
+[config] GPUs deduced: 8 (TP 8 × PP 1 × DP 1 × 1 vLLM server(s))
+[config] http://10.0.0.5:8000/metrics : vLLM <version>; prefix cache False; speculative tokens (metrics) 3; /server_info absent or not read (VLLM_SERVER_DEV_MODE not enabled?)
+```
+
+Through a gateway, the first word of the fingerprint line is `vLLM` instead of `target`: the fingerprint was read from vLLM.
+
+Check that the **prefix cache** and the **parallelism** are those of the measurement you are about to make.
+
+The GPU count is the TP x PP x DP of the fingerprint, times the number of vLLM servers recognised in `BENCH_METRICS`
+(all assumed identical to the one that answered). The reports reuse it when `--gpu` is not given
+([section 6.2](#62-reading-the-aiperf-report-synthetic-and-agentx)).
+
+If something looks wrong: [section 2.3](#23-if-something-looks-wrong).
 
 **4. Run a first measurement and build the report**: the first command sends load at 1, 4 and 16 simultaneous
 requests; the second one builds the report. The number of GPUs is deduced from the server's configuration; add
@@ -213,9 +242,16 @@ docker compose logs bench | grep "Bench interface"
 Open the whole address it prints, token included: the link of Docker Desktop opens the bare address, which the
 interface refuses.
 
-**5. Check the connection**: press "Test connection" in the interface (tab "Configuration"), or run the two
-commands of [section 2.3](#23-what-the-connection-check-shows) in the container. It must show the model and `[config]`
-lines.
+**5. Check the connection**: press "Test connection" in the interface (tab "Configuration"), or run the checks in the
+container (the quotes make it read its own variables):
+
+```bash
+docker compose exec bench bash -c 'curl -s -H "Authorization: Bearer $BENCH_API_KEY" "$BENCH_URL/v1/models"'
+docker compose exec bench bash -c 'python tools/server_config.py --url "$BENCH_URL" --model "$BENCH_MODEL" --metrics "$BENCH_METRICS" > /dev/null'
+```
+
+It shows the same as step 3 of [section 2.1](#21-run-on-your-machine): the model, then the `[config]` lines. If
+something looks wrong: [section 2.3](#23-if-something-looks-wrong).
 
 **6. Run a first measurement and build the report**: from the interface (tab "Launch stress tests"), or from a
 terminal:
@@ -233,50 +269,9 @@ interface gets a new token unless `BENCH_TOKEN` is set in `.env`.
 Options (LiteLLM with its database, a try without a GPU, ports, Linux, an existing Prometheus):
 [section 4.4](#44-or-with-docker-compose).
 
-### 2.3 What the connection check shows
+### 2.3 If something looks wrong
 
-On your machine:
-
-```bash
-curl -s -H "Authorization: Bearer $BENCH_API_KEY" "$BENCH_URL/v1/models"
-python tools/server_config.py --url "$BENCH_URL" --model "$BENCH_MODEL" --metrics "$BENCH_METRICS" > /dev/null
-```
-
-With Docker Compose, run them in the container (the quotes make it read its own variables), or press "Test
-connection" in the interface:
-
-```bash
-docker compose exec bench bash -c 'curl -s -H "Authorization: Bearer $BENCH_API_KEY" "$BENCH_URL/v1/models"'
-docker compose exec bench bash -c 'python tools/server_config.py --url "$BENCH_URL" --model "$BENCH_MODEL" --metrics "$BENCH_METRICS" > /dev/null'
-```
-
-**You should see** the model, then `[config]` lines. The exact wording is set by `tools/server_config.py`.
-
-The `[config]` lines give:
-
-- the fingerprint (vLLM version, decoded TP / PP / DP / EP), from the target or, when the target is a gateway that
-  does not pass it on, from the first vLLM server of `BENCH_METRICS`;
-- the number of GPUs deduced from it;
-- then, for each `/metrics` URL: the vLLM version, whether the prefix cache is on, and the number of speculative
-  tokens read from the metrics (0 = no speculative decoding).
-
-Example for a TP 8 server with expert parallelism and 3 speculative tokens:
-
-```
-[config] target fingerprint: vllm-<version>-tp8-ep-<hash> -> TP 8, PP 1, DP 1, EP yes
-[config] GPUs deduced: 8 (TP 8 × PP 1 × DP 1 × 1 vLLM server(s))
-[config] http://10.0.0.5:8000/metrics : vLLM <version>; prefix cache False; speculative tokens (metrics) 3; /server_info absent or not read (VLLM_SERVER_DEV_MODE not enabled?)
-```
-
-Through a gateway, the first word of the fingerprint line is `vLLM` instead of `target`: the fingerprint was read from vLLM.
-
-Check that the **prefix cache** and the **parallelism** are those of the measurement you are about to make.
-
-The GPU count is the TP x PP x DP of the fingerprint, times the number of vLLM servers recognised in `BENCH_METRICS`
-(all assumed identical to the one that answered). The reports reuse it when `--gpu` is not given
-([section 6.2](#62-reading-the-aiperf-report-synthetic-and-agentx)).
-
-**If something looks wrong**, these are the usual messages and what to do:
+These are the usual messages of the connection check ([section 2.1](#21-run-on-your-machine), step 3) and what to do:
 
 - **`[config] ERROR: the server does not know the model …`**: the name in `BENCH_MODEL` is not one the server
   serves. It is `bench` when the variable is not set. Set `BENCH_MODEL` to a name the server serves. The message lists
@@ -423,7 +418,7 @@ a VM on the same private network as the GPU servers. Do not run the clients on t
 ### 4.2 Check the vLLM in place
 
 The bench never starts vLLM: it measures the one that runs. But the way that vLLM was launched changes the meaning of
-some measurements. Before each mode, check its options; the connection test ([section 2.3](#23-what-the-connection-check-shows))
+some measurements. Before each mode, check its options; the connection test ([section 2.1](#21-run-on-your-machine))
 prints the prefix cache, the version and the parallelism of the vLLM in place.
 
 In practice:
@@ -611,7 +606,7 @@ the keys, and `BENCH_API_KEY` and `HF_TOKEN` are visible with `docker inspect` o
 
 The Quick start ([section 2](#2-quick-start)) is enough to get going. This section explains the one file of settings,
 `.env`: what each setting means, and the tokenizer. To check that the connection works, see
-[section 2.3](#23-what-the-connection-check-shows).
+[section 2.1](#21-run-on-your-machine).
 
 ### 5.1 The settings
 
@@ -1060,12 +1055,12 @@ Like `sweep.sh` and `agentx.sh`, the launcher reads the variables of `.env`: loa
 
 Without the variables, the defaults are `http://127.0.0.1:8000`, the model name `bench` and `<url>/metrics`.
 
-Then check that `BENCH_MODEL` is a name the server serves ([section 2.3](#23-what-the-connection-check-shows)). Unlike `sweep.sh`
+Then check that `BENCH_MODEL` is a name the server serves ([section 2.1](#21-run-on-your-machine)). Unlike `sweep.sh`
 and `agentx.sh`, the launcher does not check it, and the tasks would fail at once.
 
 vLLM must run with the prefix cache enabled (without `--no-enable-prefix-caching`). If you have just run the synthetic
 test, restart vLLM ([section 4.2](#42-check-the-vllm-in-place)). Check that the `[config]` line says `prefix cache True`
-([section 2.3](#23-what-the-connection-check-shows)), then start the test agents:
+([section 2.1](#21-run-on-your-machine)), then start the test agents:
 
 ```bash
 python -m agents_test.launcher --levels "1 2 4 8" --duration 900 --warmup 300 --scale 1 --label conf-a-r1
@@ -1690,9 +1685,9 @@ durations), labels, agent names and error messages; no prompt or response conten
 | `ERROR: the server does not know the model` (`sweep.sh` / `agentx.sh` stop at once) | `BENCH_MODEL` is not set (so it is `bench`), or is not a name the server serves | set `BENCH_MODEL` to a name the message lists, for example by loading `.env` ([section 5.1](#51-the-settings)) |
 | the interface form starts empty although `.env` is filled in | the interface reads only plain `export BENCH_NAME=value` lines (`$`, backticks and empty values are skipped), once, when it starts | write plain values, then restart the interface |
 | AgentX: a generated set is not the one I expected (old size or options) | the interface reuses an existing `traces-<preset>` folder | delete the folder and launch again, or generate it yourself with `tools/make_traces.py --overwrite` |
-| failure at concurrency N (`sweep.sh` / `agentx.sh` stop) | see `results/<label>/c<N>.log` | often tokenizer not found ([section 5.2](#52-the-tokenizer)) or target unreachable ([section 2.3](#23-what-the-connection-check-shows)) |
+| failure at concurrency N (`sweep.sh` / `agentx.sh` stop) | see `results/<label>/c<N>.log` | often tokenizer not found ([section 5.2](#52-the-tokenizer)) or target unreachable ([section 2.1](#21-run-on-your-machine)) |
 | `HFValidationError` or tokenizer not found in the AIPerf log | AIPerf launched by hand with `HF_HUB_OFFLINE=1`, or `BENCH_TOKENIZER` = a Hugging Face name absent from the local cache | go through `sweep.sh` with the tokenizer in `tools/tokenizer/` ([section 5.2](#52-the-tokenizer)) |
-| preempt / cache / MTP columns empty | `/metrics` not read, or not vLLM's | check `BENCH_METRICS`: vLLM's address, required through LiteLLM (launch warning, [section 2.3](#23-what-the-connection-check-shows)) |
+| preempt / cache / MTP columns empty | `/metrics` not read, or not vLLM's | check `BENCH_METRICS`: vLLM's address, required through LiteLLM (launch warning, [section 2.1](#21-run-on-your-machine)) |
 | `err` > 0 | requests refused or timed out | key, model name, `--max-model-len`, `--max-num-seqs` |
 | agent throughput "—" | empty measurement window | `--warmup` shorter than `--duration`, levels long enough |
 | cache about 0 for the agents | prefix cache disabled | restart vLLM without `--no-enable-prefix-caching` |
