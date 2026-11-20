@@ -121,8 +121,9 @@ pip install aiperf==0.13.0 "openai>=1.40" httpx
 ```
 
 **2. Point the bench at your vLLM**: copy the example file, then edit `target.env`. Set `BENCH_URL`, `BENCH_MODEL` and
-`BENCH_API_KEY`, and also `BENCH_METRICS` if `BENCH_URL` is a LiteLLM gateway
-(see [section 5.2](#52-set-the-connection)). Load it in every terminal you use.
+`BENCH_API_KEY`. If the target is a LiteLLM gateway, `BENCH_URL` is its address (`http://127.0.0.1:4000`), `BENCH_MODEL`
+its model name, `BENCH_API_KEY` a LiteLLM key, and `BENCH_METRICS` becomes required: vLLM's `/metrics` address, because
+LiteLLM does not serve those metrics ([section 5.2](#52-set-the-connection)). Load the file in every terminal you use.
 
 ```bash
 cp tools/target.env.example target.env
@@ -168,12 +169,41 @@ cp tools/target.env.example target.env
 Edit `target.env`: `BENCH_URL`, `BENCH_MODEL`, `BENCH_API_KEY`, and `BENCH_METRICS` if `BENCH_URL` is a LiteLLM
 gateway ([section 5.2](#52-set-the-connection)).
 
-**2. Tokenizer (nothing to do in most cases)**: with the model's Hugging Face name in `BENCH_TOKENIZER` of
-`target.env` (a public model), or the files already in `tools/tokenizer/`, go to step 3. To have the container download
+**2. Only if your target is LiteLLM** (the bench then talks to a gateway, not to vLLM): `BENCH_METRICS` is required, because
+LiteLLM does not serve vLLM's metrics (GPU count, cache, preemptions). Give it vLLM's `/metrics` address. Then pick
+your case:
+
+- **You already run LiteLLM** (on this machine or elsewhere). Only `target.env` changes:
+
+  ```bash
+  export BENCH_URL=http://host.docker.internal:4000     # or its address, as the container sees it
+  export BENCH_MODEL=<the model name LiteLLM exposes (model_name in its configuration)>
+  export BENCH_API_KEY="<a LiteLLM key>"
+  export BENCH_METRICS="http://host.docker.internal:8000/metrics"     # vLLM's /metrics
+  ```
+
+- **You want Compose to run LiteLLM** (with its database). Then:
+  1. in `.env` (`cp .env.example .env`): `COMPOSE_PROFILES=gateway`, `PROMETHEUS_CONFIG=prometheus-gateway.yml`,
+     `LITELLM_MASTER_KEY=sk-<anything long>`, `LITELLM_DB_PASSWORD=<letters and digits>`,
+     `BENCH_LITELLM_SELECTOR='job="litellm"'`;
+  2. in `docker/litellm-config.yaml`, edit the two lines marked `EDIT` (the model name and the name vLLM serves);
+  3. in `target.env`:
+
+     ```bash
+     export BENCH_URL=http://litellm:4000
+     export BENCH_MODEL=bench                    # model_name of docker/litellm-config.yaml
+     export BENCH_API_KEY="<the LITELLM_MASTER_KEY of .env, or a key of LiteLLM>"
+     export BENCH_METRICS="http://host.docker.internal:8000/metrics"
+     ```
+
+  More about it (keys per agent, no GPU, the database): [section 4.4](#44-or-with-docker-compose).
+
+**3. Tokenizer (nothing to do in most cases)**: with the model's Hugging Face name in `BENCH_TOKENIZER` of
+`target.env` (a public model), or the files already in `tools/tokenizer/`, go to step 4. To have the container download
 it once instead, copy `.env.example` to `.env` and set `BENCH_TOKENIZER_REPO=org/model` (plus `HF_TOKEN` for a gated
 model: the runs do not receive `HF_TOKEN`, so for a gated model use this download, not the name in `BENCH_TOKENIZER`).
 
-**3. Start, and open the interface**
+**4. Start, and open the interface**
 
 ```bash
 docker compose up -d --build
@@ -183,7 +213,7 @@ docker compose logs bench | grep "Bench interface"
 Open the whole address it prints, token included: the link of Docker Desktop opens the bare address, which the
 interface refuses.
 
-**4. Run a first measurement and build the report**: from the interface (tab "Launch stress tests"), or from a
+**5. Run a first measurement and build the report**: from the interface (tab "Launch stress tests"), or from a
 terminal:
 
 ```bash
