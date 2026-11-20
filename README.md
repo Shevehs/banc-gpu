@@ -619,7 +619,7 @@ vLLM must be launched **with** `--no-enable-prefix-caching`.
 ./sweep.sh trial-r1 "1 2 4 8 16 32 64"
 ```
 
-- One **label** per run (`trial-r1`). A label already used is refused (`BENCH_OVERWRITE=1` replaces it).
+- One **label** per run (`trial-r1`). A label already used is refused (`BENCH_OVERWRITE=1` replaces it; in the interface, tick "Replace existing results").
 - A list of **concurrencies**: one level per value.
 - Settings by variables, in front of the command:
 
@@ -1595,6 +1595,7 @@ durations), labels, agent names and error messages; no prompt or response conten
 | `ERROR: the server does not know the model` (`sweep.sh` / `agentx.sh` stop at once) | `BENCH_MODEL` is not set (so it is `bench`), or is not a name the server serves | set `BENCH_MODEL` to a name the message lists, for example by loading `target.env` ([section 5.2](#52-set-the-connection)) |
 | the interface form starts empty although `target.env` is filled in | the interface reads only plain `export BENCH_NAME=value` lines (`$`, backticks and empty values are skipped), once, when it starts | write plain values, then restart the interface |
 | AgentX: a generated set is not the one I expected (old size or options) | the interface reuses an existing `traces-<preset>` folder | delete the folder and launch again, or generate it yourself with `tools/make_traces.py --overwrite` |
+| `<dir>/<label> already exists: change the label…` (`sweep.sh`, `agentx.sh`, test agents, or the log in the interface) | a run with this label is already in the results directory; nothing was started | use the next label (`-r2`), or replace the old results: `BENCH_OVERWRITE=1` (`--overwrite` for the test agents), or "Replace existing results" in the interface |
 | failure at concurrency N (`sweep.sh` / `agentx.sh` stop) | see `results/<label>/c<N>.log` | often tokenizer not found ([section 5.3](#53-copy-the-tokenizer)) or target unreachable ([section 5.4](#54-test-the-connection)) |
 | `HFValidationError` or tokenizer not found in the AIPerf log | AIPerf launched by hand with `HF_HUB_OFFLINE=1`, or `BENCH_TOKENIZER` = a Hugging Face name absent from the local cache | go through `sweep.sh` with the tokenizer in `tools/tokenizer/` ([section 5.3](#53-copy-the-tokenizer)) |
 | preempt / cache / MTP columns empty | `/metrics` not read, or not vLLM's | check `BENCH_METRICS`: vLLM's address, required through LiteLLM (launch warning, [section 5.4](#54-test-the-connection)) |
