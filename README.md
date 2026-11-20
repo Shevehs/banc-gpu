@@ -155,8 +155,8 @@ You need Docker with Compose, and nothing else on this machine. There are two fi
 - **`target.env`**: the connection to your model, the same file and variables as in 2.1. Its addresses are those the
   container sees: `http://host.docker.internal:8000` for a vLLM on the machine that runs Docker, not `127.0.0.1`
   (that would be the container itself).
-- **`.env`**: the choices of Docker Compose (ports, interface token, tokenizer download, LiteLLM). It is optional for
-  a first run.
+- **`.env`**: the choices of Docker Compose (ports, interface token, tokenizer download, LiteLLM). It is optional: a
+  first run needs `target.env` only.
 
 **1. Get the code and fill in the connection**
 
@@ -168,12 +168,9 @@ cp tools/target.env.example target.env
 Edit `target.env`: `BENCH_URL`, `BENCH_MODEL`, `BENCH_API_KEY`, and `BENCH_METRICS` if `BENCH_URL` is a LiteLLM
 gateway ([section 5.2](#52-set-the-connection)).
 
-**2. Choose the tokenizer**: put the model's Hugging Face name in `.env`; the container downloads its tokenizer the
-first time it starts (add `HF_TOKEN` for a gated model).
-
-```bash
-cp .env.example .env     # then set BENCH_TOKENIZER_REPO=org/model in it
-```
+**2. Tokenizer (nothing to do in most cases)**: with the model's Hugging Face name in `BENCH_TOKENIZER` of
+`target.env`, or the files already in `tools/tokenizer/`, go to step 3. To have the container download it once instead,
+copy `.env.example` to `.env` and set `BENCH_TOKENIZER_REPO=org/model` (plus `HF_TOKEN` for a gated model).
 
 **3. Start, and open the interface**
 
