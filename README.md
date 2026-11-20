@@ -26,10 +26,9 @@ Two families of measurements:
 
 - [1. Choose a mode](#1-choose-a-mode)
 - [2. Quick start](#2-quick-start)
-  - [2.1 Get the code and install the dependencies](#21-get-the-code-and-install-the-dependencies)
-  - [2.2 Point the bench at your vLLM](#22-point-the-bench-at-your-vllm)
-  - [2.3 Check that it can reach the server](#23-check-that-it-can-reach-the-server)
-  - [2.4 Run a first measurement and read it](#24-run-a-first-measurement-and-read-it)
+  - [2.1 Run on your machine](#21-run-on-your-machine)
+  - [2.2 Run in a Docker container](#22-run-in-a-docker-container)
+  - [2.3 Read the first report](#23-read-the-first-report)
 - [3. How the pieces connect](#3-how-the-pieces-connect)
 - [4. Requirements and installation](#4-requirements-and-installation)
   - [4.1 What must already be in place](#41-what-must-already-be-in-place)
@@ -96,11 +95,24 @@ requires restarting vLLM (see [section 4.2](#42-check-the-vllm-in-place)).
 
 ## 2. Quick start
 
-A first synthetic measurement, on a vLLM that is already running. You need [uv](https://docs.astral.sh/uv/), which
-installs the right Python for the bench ([how to install it](#43-install-the-bench-dependencies)). With Docker
-Compose, you need neither uv nor Python on this machine: [section 4.4](#44-or-with-docker-compose).
+A first synthetic measurement, on a vLLM that is already running and serves the model with
+`--no-enable-prefix-caching` for this run (see [section 4.2](#42-check-the-vllm-in-place)).
 
-### 2.1 Get the code and install the dependencies
+The bench's client side (the scripts, AIPerf and the interface) can run in two ways. Pick one:
+
+- **[2.1 On your machine](#21-run-on-your-machine)**: you install Python tools and run the scripts in a terminal.
+- **[2.2 In a Docker container](#22-run-in-a-docker-container)**: nothing to install except Docker; the bench and
+  Prometheus run in containers.
+
+Both give the same report ([2.3](#23-read-the-first-report)). vLLM itself is not part of either: it runs on your
+GPU server.
+
+### 2.1 Run on your machine
+
+You need [uv](https://docs.astral.sh/uv/), which installs the right Python for the bench
+([how to install it](#43-install-the-bench-dependencies)).
+
+**1. Get the code and install the dependencies**
 
 ```bash
 git clone https://github.com/Shevehs/banc-gpu.git ~/banc-gpu && cd ~/banc-gpu
@@ -108,36 +120,88 @@ uv venv --seed --python 3.12 .venv-aiperf && source .venv-aiperf/bin/activate
 pip install aiperf==0.13.0 "openai>=1.40" httpx
 ```
 
-### 2.2 Point the bench at your vLLM
-
-Copy the example file, then edit `target.env`: set `BENCH_URL`, `BENCH_MODEL` and `BENCH_API_KEY`, and also
-`BENCH_METRICS` if `BENCH_URL` is a LiteLLM gateway (see [section 5.2](#52-set-the-connection)).
+**2. Point the bench at your vLLM**: copy the example file, then edit `target.env`. Set `BENCH_URL`, `BENCH_MODEL` and
+`BENCH_API_KEY`, and also `BENCH_METRICS` if `BENCH_URL` is a LiteLLM gateway
+(see [section 5.2](#52-set-the-connection)). Load it in every terminal you use.
 
 ```bash
 cp tools/target.env.example target.env
 source target.env
 ```
 
-### 2.3 Check that it can reach the server
-
-Download the tokenizer of your model, then read the server's configuration. The second command must print `[config]`
-lines ([section 5.4](#54-test-the-connection)).
+**3. Check that it can reach the server**: download the tokenizer of your model, then read the server's configuration.
+The second command must print `[config]` lines ([section 5.4](#54-test-the-connection)).
 
 ```bash
 ./tools/download_tokenizer.sh <Hugging Face repository of your model>
 python tools/server_config.py --url "$BENCH_URL" --model "$BENCH_MODEL" --metrics "$BENCH_METRICS" > /dev/null
 ```
 
-### 2.4 Run a first measurement and read it
-
-vLLM must already serve the model with `--no-enable-prefix-caching` for this run
-(see [section 4.2](#42-check-the-vllm-in-place)). The first command sends load at 1, 4 and 16 simultaneous requests; the
-second one builds the report. The number of GPUs is deduced from the server's configuration; add `--gpu N` to force it.
+**4. Run a first measurement and build the report**: the first command sends load at 1, 4 and 16 simultaneous
+requests; the second one builds the report. The number of GPUs is deduced from the server's configuration; add
+`--gpu N` to force it.
 
 ```bash
 ./sweep.sh first-r1 "1 4 16"
 python -m report aiperf results --target 30
 ```
+
+The interface is optional: `python -m interface.server` ([section 9](#9-interface)).
+
+### 2.2 Run in a Docker container
+
+You need Docker with Compose, and nothing else on this machine. There are two files to know:
+
+- **`target.env`**: the connection to your model, the same file and variables as in 2.1. Its addresses are those the
+  container sees: `http://host.docker.internal:8000` for a vLLM on the machine that runs Docker, not `127.0.0.1`
+  (that would be the container itself).
+- **`.env`**: the choices of Docker Compose (ports, interface token, tokenizer download, LiteLLM). It is optional for
+  a first run.
+
+**1. Get the code and fill in the connection**
+
+```bash
+git clone https://github.com/Shevehs/banc-gpu.git ~/banc-gpu && cd ~/banc-gpu
+cp tools/target.env.example target.env
+```
+
+Edit `target.env`: `BENCH_URL`, `BENCH_MODEL`, `BENCH_API_KEY`, and `BENCH_METRICS` if `BENCH_URL` is a LiteLLM
+gateway ([section 5.2](#52-set-the-connection)).
+
+**2. Choose the tokenizer**: put the model's Hugging Face name in `.env`; the container downloads its tokenizer the
+first time it starts (add `HF_TOKEN` for a gated model).
+
+```bash
+cp .env.example .env     # then set BENCH_TOKENIZER_REPO=org/model in it
+```
+
+**3. Start, and open the interface**
+
+```bash
+docker compose up -d --build
+docker compose logs bench | grep "Bench interface"
+```
+
+Open the whole address it prints, token included: the link of Docker Desktop opens the bare address, which the
+interface refuses.
+
+**4. Run a first measurement and build the report**: from the interface (tab "Launch stress tests"), or from a
+terminal:
+
+```bash
+docker compose exec bench bash -c 'source target.env && ./sweep.sh first-r1 "1 4 16"'
+docker compose exec bench python -m report aiperf results --target 30
+```
+
+The results are in the `results/` folder of the repository, on your machine.
+
+**After a change**: `docker compose restart bench` after editing `target.env`; `docker compose up -d` after editing
+`.env`. `restart` makes a new interface token unless `BENCH_TOKEN` is set in `.env`.
+
+Options (LiteLLM with its database, a try without a GPU, ports, Linux, an existing Prometheus):
+[section 4.4](#44-or-with-docker-compose).
+
+### 2.3 Read the first report
 
 The report prints one line per level, then the selected point. This is a real output, from a small test on a small server
 (your figures will differ):
@@ -384,40 +448,15 @@ vLLM is not part of it: it runs on your GPU server, as in [section 4.1](#41-what
 launch options (parallelism, context length, prefix cache, speculative decoding) are what the bench compares, so they
 stay yours.
 
-**On the machine, or in Docker: what changes**
+**Start**: the steps are in [section 2.2](#22-run-in-a-docker-container). What it adds:
 
-There are two ways to run the bench's client side. Sections 4.2 to 4.3, 5 and 7.2 install it on your machine. This
-section runs it in containers. The files are not the same:
-
-| | On the machine | Docker Compose |
-|---|---|---|
-| `target.env`: the connection to your model (`BENCH_URL`, `BENCH_MODEL`, `BENCH_METRICS`, `BENCH_API_KEY`, `BENCH_TOKENIZER`) | yes | yes, the same file and variables |
-| addresses in `target.env` | `http://127.0.0.1:8000` | `http://host.docker.internal:8000`: `127.0.0.1` would be the container |
-| `.env`: the Compose choices (profiles, ports, interface token, LiteLLM keys, Prometheus address and LiteLLM selector of the form, tokenizer download) | does not exist | yes, copied from `.env.example` |
-| after changing `target.env` | restart the interface | `docker compose restart bench` |
-| after changing `.env` | nothing | `docker compose up -d` |
-
-In both cases the interface reads `target.env` once, when it starts, and the scripts need `source target.env`.
-With Compose, `restart` makes a new interface token unless `BENCH_TOKEN` is set in `.env`.
-
-**Start**
-
-Get the code (`git clone https://github.com/Shevehs/banc-gpu.git ~/banc-gpu && cd ~/banc-gpu`), then fill in `target.env` ([section 5.2](#52-set-the-connection)) with the addresses as the
-container sees them (`127.0.0.1` would be the container itself): `http://host.docker.internal:8000` for a vLLM on the machine that runs Docker, otherwise the
-address of the server (a public address needs `BENCH_ALLOW_PUBLIC_URLS=1` in `.env`; a vLLM on a Linux machine that
-runs Docker must listen on `0.0.0.0`, not on `127.0.0.1`).
-
-The tokenizer must be the one of the measured model ([section 5.3](#53-copy-the-tokenizer)). Put the model's Hugging
-Face name in `.env` (`BENCH_TOKENIZER_REPO=org/model`, plus `HF_TOKEN` for a gated model): the container downloads its
-tokenizer into `tools/tokenizer/` the first time it starts, if the folder has none yet. Without Internet access, copy
-the files yourself.
-
-```bash
-docker compose up -d --build
-docker compose logs bench
-```
-
-The log shows the address to open, with its token.
+- The addresses in `target.env` are those the container sees (`127.0.0.1` would be the container itself):
+  `http://host.docker.internal:8000` for a vLLM on the machine that runs Docker, otherwise the address of the server.
+  A public address needs `BENCH_ALLOW_PUBLIC_URLS=1` in `.env`; a vLLM on a Linux machine that runs Docker must listen
+  on `0.0.0.0`, not on `127.0.0.1`.
+- The tokenizer must be the one of the measured model ([section 5.3](#53-copy-the-tokenizer)). With
+  `BENCH_TOKENIZER_REPO` in `.env`, the container downloads it into `tools/tokenizer/` the first time it starts, if the
+  folder has none yet. Without Internet access, copy the files yourself.
 
 - The interface listens on `127.0.0.1` of this machine only: from another machine, use an SSH tunnel
   ([section 9](#9-interface)).
