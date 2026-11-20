@@ -9,7 +9,7 @@ model_list:
 litellm_settings:
   callbacks: ["prometheus"]                    # the metrics Prometheus scrapes
   # require_auth_for_metrics_endpoint: false   # uncomment: no key for the metrics; readable by anything that reaches LiteLLM
-  custom_prometheus_metadata_labels: ["metadata.agent"]    # per-agent view, way 2 (README, section 7.5)
+  custom_prometheus_metadata_labels: ["metadata.agent"]    # per-agent view, way 2 (README, section 8.5)
 
 general_settings:
   master_key: os.environ/LITELLM_MASTER_KEY

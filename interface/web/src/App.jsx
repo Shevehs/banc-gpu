@@ -198,7 +198,7 @@ function Configuration({ c, setC, prom, setProm, test, setTest, defaults }) {
 
       <h3>Prometheus</h3>
       <p className="note">The observation queries a Prometheus that scrapes vLLM's /metrics (and LiteLLM's for the per-agent view).
-        No load is generated. The scrape interval is read from Prometheus. Setup: README, section 7.</p>
+        No load is generated. The scrape interval is read from Prometheus. Setup: README, section 8.</p>
       <div className="grid">
         <Field label="Prometheus URL"><input value={prom.prometheus} onChange={setP("prometheus")} /></Field>
         <Field label="Prometheus key" help="optional; empty if Prometheus does not require a token">
@@ -553,7 +553,7 @@ function ObservationChart({ rows, view, o, setO }) {
       <p className="note">
         {view === "windows" && "Green: the window holds the target; red: it does not; grey: no verdict, or the window is not counted (hover for the reason). "}
         {limit !== null && "Dashed line: the target. "}
-        {view === "windows" && "The share at the target and the interactivity are interpolated when vLLM has no histogram bound at the target (README, section 7.1)."}
+        {view === "windows" && "The share at the target and the interactivity are interpolated when vLLM has no histogram bound at the target (README, section 8.1)."}
       </p>
     </>
   );

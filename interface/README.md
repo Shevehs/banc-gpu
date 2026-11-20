@@ -76,16 +76,16 @@ The interface never starts vLLM: it measures the one that is running. Options to
   empty); and Prometheus (URL, key, vLLM and LiteLLM selectors, the label that tells agents apart; the scrape interval is
   read from Prometheus).
 - **Launch stress tests**: one of the three stress tests: synthetic (AIPerf), AgentX or test agents
-  (repository README, section 6). For AgentX, the "Trace set" list also generates a set (`tiny` to `large`, written to
-  `traces-<preset>` the first time) or takes your own folder (repository README, section 6.5). For the test agents, "Label the agents" and "Per-agent keys" give every
-  request the identity of its profile, for the per-agent view through LiteLLM (repository README, section 7.5).
+  (repository README, section 7). For AgentX, the "Trace set" list also generates a set (`tiny` to `large`, written to
+  `traces-<preset>` the first time) or takes your own folder (repository README, section 7.5). For the test agents, "Label the agents" and "Per-agent keys" give every
+  request the identity of its profile, for the per-agent view through LiteLLM (repository README, section 8.5).
 - **Runs**: the runs started since the interface server was started, a live log, and stop. Logs are kept in `interface/logs/`.
 - **Results**: analysis of a results directory, shown as soon as a field changes (table, selected point, warnings,
   throughput-per-GPU vs. interactivity curve with the target). The "GPUs" field is optional: empty, the count of each run is deduced
   from its fingerprint (`server_config.json`).
 - **Observation**: nothing to start. Prometheus and the GPUs come from Configuration; range ("Since", or start
   and end), window length: a chart, drawn as soon as a field changes, with the choice of the variables on x (the date by default) and y,
-  by window, by period (6-hour ranges or hours) and by agent (repository README, section 7). The warnings are folded under the verdict, grouped by kind. A "refresh every
+  by window, by period (6-hour ranges or hours) and by agent (repository README, section 8). The warnings are folded under the verdict, grouped by kind. A "refresh every
   minute" box follows real usage live. The ranges of the runs
   started from the interface (since its server was started) are marked "run in progress" and discarded from the
   verdicts. It works while a run is in progress.

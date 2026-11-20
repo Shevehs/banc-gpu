@@ -5,7 +5,7 @@ replays a folder of your own traces (`BENCH_AGENTX_DIR`). This page says what a 
 size you need, and how to build traces from your own agent's logs.
 
 AIPerf is the load-testing tool that `agentx.sh` runs: it replays each trace against your vLLM server
-([README, section 6.3](../README.md#63-agentx-stress-test)). Run the commands of this page from the root of the
+([README, section 7.3](../README.md#73-agentx-stress-test)). Run the commands of this page from the root of the
 repository. The generator uses only the Python standard library.
 
 A run on a local folder is marked `submission_valid=false` by AIPerf: it is not comparable to the published AgentX
@@ -216,7 +216,7 @@ its `Session` class as an example.
 - **Think time**: the delay between the end of a call and the next request. Keep the real values: they decide how many
   calls are in flight at the same time.
 - **Long sessions**: `--max-model-len` must cover the longest call. `BENCH_MAX_CONTEXT` discards the sessions that go
-  above a limit ([README, section 6.6](../README.md#66-context-shorter-than-the-traces)).
+  above a limit ([README, section 7.6](../README.md#76-context-shorter-than-the-traces)).
 
 ## Check your traces
 
