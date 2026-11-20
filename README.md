@@ -531,7 +531,7 @@ If LiteLLM or Prometheus already run under their own Compose, see [section 7.2](
 (`BENCH_PROMETHEUS`), and write the vLLM and LiteLLM addresses as the `bench` container reaches them:
 `host.docker.internal:<port>`, or the service name if you attach `bench` to the network of the other Compose
 (`networks:` with `external: true`, in a `docker-compose.override.yml`). Keep `.env` private (`chmod 600 .env`): it holds
-the keys, and `HF_TOKEN` is visible with `docker inspect`.
+the keys, and `BENCH_API_KEY` and `HF_TOKEN` are visible with `docker inspect` on this machine.
 
 [↑ Back to top](#top)
 
