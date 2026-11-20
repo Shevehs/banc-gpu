@@ -481,7 +481,8 @@ stay yours.
   `http://host.docker.internal:8000` for a vLLM on the machine that runs Docker, otherwise the address of the server.
   A public address needs `BENCH_ALLOW_PUBLIC_URLS=1` in `.env`; a vLLM on a Linux machine that runs Docker must listen
   on `0.0.0.0`, not on `127.0.0.1`.
-- A `target.env` already in the folder is still read, for the connection lines that `.env` leaves empty.
+- Keep the whole connection in `.env`. A `target.env` left in the folder is read by the interface only, and only for
+  the lines `.env` leaves empty; the scripts run with `docker compose exec` ignore it, unless you `source` it.
 - The tokenizer must be the one of the measured model ([section 5.3](#53-copy-the-tokenizer)). With
   `BENCH_TOKENIZER_REPO` in `.env`, the container downloads it into `tools/tokenizer/` the first time it starts, if the
   folder has none yet. Without Internet access, copy the files yourself.
