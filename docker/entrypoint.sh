@@ -9,7 +9,7 @@ if [ -n "${BENCH_TOKENIZER_REPO:-}" ] && { [ ! -f tools/tokenizer/tokenizer.json
   echo "Tokenizer: downloading ${BENCH_TOKENIZER_REPO} into tools/tokenizer/ (once)"
   if ! ./tools/download_tokenizer.sh "$BENCH_TOKENIZER_REPO"; then
     echo "WARNING: the tokenizer download failed (no Internet access, a gated model without HF_TOKEN, or a wrong name)."
-    echo "Copy tokenizer.json and tokenizer_config.json of the model into tools/tokenizer/ (README, section 5.3)."
+    echo "Copy tokenizer.json and tokenizer_config.json of the model into tools/tokenizer/ (README, section 5.2)."
   fi
 fi
 unset HF_TOKEN

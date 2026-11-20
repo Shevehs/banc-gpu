@@ -68,7 +68,7 @@ The interface never starts vLLM: it measures the one that is running. Options to
 
 ## What it does
 
-- **Configuration**: the target (the `BENCH_*` variables of `.env`, repository README section 5.2), with a "Test
+- **Configuration**: the target (the `BENCH_*` variables of `.env`, repository README section 5.1), with a "Test
   connection" button (which also shows the vLLM server configuration: version, prefix cache, number of speculative tokens,
   TP/PP/DP/EP parallelism read from the fingerprint (the target's, or vLLM's when the target is a gateway that gives none), the number of GPUs deduced from it, a warning when a
   metrics URL is not vLLM's `/metrics` and, only if vLLM is started with `VLLM_SERVER_DEV_MODE=1`, the speculative

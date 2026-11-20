@@ -18,7 +18,7 @@ Two families of measurements:
 > **Status.** Written from the code of **vLLM at commit [`7f855f6`](https://github.com/vllm-project/vllm/tree/7f855f605892656ebf7265642e5d22a34a6ae731)**
 > and tested with **AIPerf 0.13.0** against a fake server ([Appendix E](#appendix-e-try-the-bench-without-a-gpu)).
 > Against a real vLLM it has only been tried on a small local server (vLLM 0.33.0), **not yet on a GPU server**.
-> On your first real run, compare your outputs with the example in [section 5.4](#54-test-the-connection).
+> On your first real run, compare your outputs with the example in [section 2.3](#23-what-the-connection-check-shows).
 > Unfamiliar terms: see [Appendix G](#appendix-g-glossary). What is verified, documented or still unchecked is
 > listed in [Appendix F](#appendix-f-validation-status).
 
@@ -28,18 +28,17 @@ Two families of measurements:
 - [2. Quick start](#2-quick-start)
   - [2.1 Run on your machine](#21-run-on-your-machine)
   - [2.2 Run in a Docker container](#22-run-in-a-docker-container)
-  - [2.3 Read the first report](#23-read-the-first-report)
+  - [2.3 What the connection check shows](#23-what-the-connection-check-shows)
+  - [2.4 Read the first report](#24-read-the-first-report)
 - [3. How the pieces connect](#3-how-the-pieces-connect)
 - [4. Requirements and installation](#4-requirements-and-installation)
   - [4.1 What must already be in place](#41-what-must-already-be-in-place)
   - [4.2 Check the vLLM in place](#42-check-the-vllm-in-place)
   - [4.3 Install the bench dependencies](#43-install-the-bench-dependencies)
   - [4.4 Or with Docker Compose](#44-or-with-docker-compose)
-- [5. Configure the client](#5-configure-the-client)
-  - [5.1 Activate the environment](#51-activate-the-environment)
-  - [5.2 Set the connection](#52-set-the-connection)
-  - [5.3 Copy the tokenizer](#53-copy-the-tokenizer)
-  - [5.4 Test the connection](#54-test-the-connection)
+- [5. The settings file](#5-the-settings-file)
+  - [5.1 The settings](#51-the-settings)
+  - [5.2 The tokenizer](#52-the-tokenizer)
 - [6. Stress tests](#6-stress-tests)
   - [6.1 Synthetic stress test](#61-synthetic-stress-test)
   - [6.2 Reading the AIPerf report (synthetic and AgentX)](#62-reading-the-aiperf-report-synthetic-and-agentx)
@@ -104,7 +103,7 @@ The bench's client side (the scripts, AIPerf and the interface) can run in two w
 - **[2.2 In a Docker container](#22-run-in-a-docker-container)**: nothing to install except Docker; the bench and
   Prometheus run in containers.
 
-Both give the same report ([2.3](#23-read-the-first-report)). vLLM itself is not part of either: it runs on your
+Both give the same report ([2.4](#24-read-the-first-report)). vLLM itself is not part of either: it runs on your
 GPU server.
 
 ### 2.1 Run on your machine
@@ -123,7 +122,7 @@ pip install aiperf==0.13.0 "openai>=1.40" httpx
 **2. Point the bench at your vLLM**: copy the example file, then edit `.env`: it is the one file of the bench, also read
 by Docker Compose (2.2). Set `BENCH_URL`, `BENCH_MODEL` and `BENCH_API_KEY`. If the target is a LiteLLM gateway, `BENCH_URL` is its address (`http://127.0.0.1:4000`), `BENCH_MODEL`
 its model name, `BENCH_API_KEY` a LiteLLM key, and `BENCH_METRICS` becomes required: vLLM's `/metrics` address, because
-LiteLLM does not serve those metrics ([section 5.2](#52-set-the-connection)). Load the file in every terminal you use.
+LiteLLM does not serve those metrics ([section 5.1](#51-the-settings)). Load the file in every terminal you use.
 
 ```bash
 cp .env.example .env
@@ -131,7 +130,7 @@ source .env
 ```
 
 **3. Check that it can reach the server**: download the tokenizer of your model, then read the server's configuration.
-The second command must print `[config]` lines ([section 5.4](#54-test-the-connection)).
+The second command must print `[config]` lines ([section 2.3](#23-what-the-connection-check-shows)).
 
 ```bash
 ./tools/download_tokenizer.sh <Hugging Face repository of your model>
@@ -146,6 +145,8 @@ requests; the second one builds the report. The number of GPUs is deduced from t
 ./sweep.sh first-r1 "1 4 16"
 python -m report aiperf results --target 30
 ```
+
+In each new terminal: `cd ~/banc-gpu && source .venv-aiperf/bin/activate && source .env`.
 
 The interface is optional: `python -m interface.server` ([section 9](#9-interface)).
 
@@ -212,7 +213,11 @@ docker compose logs bench | grep "Bench interface"
 Open the whole address it prints, token included: the link of Docker Desktop opens the bare address, which the
 interface refuses.
 
-**5. Run a first measurement and build the report**: from the interface (tab "Launch stress tests"), or from a
+**5. Check the connection**: press "Test connection" in the interface (tab "Configuration"), or run the two
+commands of [section 2.3](#23-what-the-connection-check-shows) in the container. It must show the model and `[config]`
+lines.
+
+**6. Run a first measurement and build the report**: from the interface (tab "Launch stress tests"), or from a
 terminal:
 
 ```bash
@@ -228,7 +233,72 @@ interface gets a new token unless `BENCH_TOKEN` is set in `.env`.
 Options (LiteLLM with its database, a try without a GPU, ports, Linux, an existing Prometheus):
 [section 4.4](#44-or-with-docker-compose).
 
-### 2.3 Read the first report
+### 2.3 What the connection check shows
+
+On your machine:
+
+```bash
+curl -s -H "Authorization: Bearer $BENCH_API_KEY" "$BENCH_URL/v1/models"
+python tools/server_config.py --url "$BENCH_URL" --model "$BENCH_MODEL" --metrics "$BENCH_METRICS" > /dev/null
+```
+
+With Docker Compose, run them in the container (the quotes make it read its own variables), or press "Test
+connection" in the interface:
+
+```bash
+docker compose exec bench bash -c 'curl -s -H "Authorization: Bearer $BENCH_API_KEY" "$BENCH_URL/v1/models"'
+docker compose exec bench bash -c 'python tools/server_config.py --url "$BENCH_URL" --model "$BENCH_MODEL" --metrics "$BENCH_METRICS" > /dev/null'
+```
+
+**You should see** the model, then `[config]` lines. The exact wording is set by `tools/server_config.py`.
+
+The `[config]` lines give:
+
+- the fingerprint (vLLM version, decoded TP / PP / DP / EP), from the target or, when the target is a gateway that
+  does not pass it on, from the first vLLM server of `BENCH_METRICS`;
+- the number of GPUs deduced from it;
+- then, for each `/metrics` URL: the vLLM version, whether the prefix cache is on, and the number of speculative
+  tokens read from the metrics (0 = no speculative decoding).
+
+Example for a TP 8 server with expert parallelism and 3 speculative tokens:
+
+```
+[config] target fingerprint: vllm-<version>-tp8-ep-<hash> -> TP 8, PP 1, DP 1, EP yes
+[config] GPUs deduced: 8 (TP 8 × PP 1 × DP 1 × 1 vLLM server(s))
+[config] http://10.0.0.5:8000/metrics : vLLM <version>; prefix cache False; speculative tokens (metrics) 3; /server_info absent or not read (VLLM_SERVER_DEV_MODE not enabled?)
+```
+
+Through a gateway, the first word of the fingerprint line is `vLLM` instead of `target`: the fingerprint was read from vLLM.
+
+Check that the **prefix cache** and the **parallelism** are those of the measurement you are about to make.
+
+The GPU count is the TP x PP x DP of the fingerprint, times the number of vLLM servers recognised in `BENCH_METRICS`
+(all assumed identical to the one that answered). The reports reuse it when `--gpu` is not given
+([section 6.2](#62-reading-the-aiperf-report-synthetic-and-agentx)).
+
+**If something looks wrong**, these are the usual messages and what to do:
+
+- **`[config] ERROR: the server does not know the model …`**: the name in `BENCH_MODEL` is not one the server
+  serves. It is `bench` when the variable is not set. Set `BENCH_MODEL` to a name the server serves. The message lists
+  them when the server can say; otherwise read `/v1/models` with the first command above.
+- **The same error at the start of `sweep.sh` or `agentx.sh`**: both scripts make this check themselves. They stop
+  before any measurement, with nothing created. Only a clear refusal of the name stops them: an unreachable server or
+  a refused key does not.
+- **`[config] WARNING: … is not vLLM's /metrics`**: the address in `BENCH_METRICS` is not vLLM's. Either it points to
+  LiteLLM, which answers "HTTP 401: key required", or it exposes no `vllm:` metric at all. Put vLLM's `/metrics`
+  address in `BENCH_METRICS` ([section 5.1](#51-the-settings)).
+- **No fingerprint, and the output says the server did not respond**: the key or the target is wrong, or the model
+  name (the `ERROR` line above names it when the server refuses it). Fix it before going on.
+- **No fingerprint and no other message**: the vLLM version does not produce it, `--fingerprint-mode none` is set, or
+  the target is a gateway that drops the field and vLLM could not be asked. vLLM is asked directly (one token, with
+  the model it lists, and no key) when `BENCH_METRICS` points at it; if vLLM has its own `--api-key`, target vLLM
+  directly, or note the launch command with your results.
+- **"TP 1, PP 1, DP 1, EP no (or hidden…)"**: this is true for a server without parallelism, but it is also what a
+  server launched with `--fingerprint-mode hash` shows. Check the launch command.
+
+More cases are in the troubleshooting table ([section 10.3](#103-troubleshooting)).
+
+### 2.4 Read the first report
 
 The report prints one line per level, then the selected point. This is a real output, from a small test on a small server
 (your figures will differ):
@@ -345,7 +415,7 @@ expose them. A launch warning says so if it points elsewhere.
 | **Prometheus** (observation only) | A separate server that scrapes vLLM's `/metrics` (and LiteLLM's) and keeps the history; vLLM does not provide one. A single binary ([download](https://prometheus.io/download/)), or the `prom/prometheus` Docker image. Configuration provided: `tools/prometheus.yml.example` ([section 7.2](#72-install-and-start-prometheus-once)). | `curl -s http://<host>:9090/-/ready` |
 | **uv** on the client machine (not needed with Docker Compose, [section 4.4](#44-or-with-docker-compose)) | Installs the Python that AIPerf 0.13 requires (3.11 to 3.13) for the bench's environment; see [section 4.3](#43-install-the-bench-dependencies). | `uv --version` |
 | **bash** | Tested with bash 5; written to also run on the old bash 3.2, verified only with a bash 3.2 built on Linux. | `bash --version` |
-| **Network** | The client machine reaches vLLM (and LiteLLM). No Internet access is needed once the tokenizer is copied into `tools/tokenizer/` ([section 5.3](#53-copy-the-tokenizer)). | — |
+| **Network** | The client machine reaches vLLM (and LiteLLM). No Internet access is needed once the tokenizer is copied into `tools/tokenizer/` ([section 5.2](#52-the-tokenizer)). | — |
 
 The **client machine** is the one that runs the measurements: the same machine as vLLM for a local trial, or
 a VM on the same private network as the GPU servers. Do not run the clients on the servers being measured.
@@ -353,7 +423,7 @@ a VM on the same private network as the GPU servers. Do not run the clients on t
 ### 4.2 Check the vLLM in place
 
 The bench never starts vLLM: it measures the one that runs. But the way that vLLM was launched changes the meaning of
-some measurements. Before each mode, check its options; the connection test ([section 5.4](#54-test-the-connection))
+some measurements. Before each mode, check its options; the connection test ([section 2.3](#23-what-the-connection-check-shows))
 prints the prefix cache, the version and the parallelism of the vLLM in place.
 
 In practice:
@@ -462,7 +532,7 @@ AIPerf also installs `aiohttp` (interface) and the `hf` command (tokenizer). Wit
 
 ### 4.4 Or with Docker Compose
 
-`docker-compose.yml` installs the client side in containers, instead of sections 4.3, 5.1 and 7.2 (Prometheus):
+`docker-compose.yml` installs the client side in containers, instead of sections 4.3 and 7.2 (Prometheus):
 
 - **`bench`**: AIPerf, the Python libraries and the interface ([section 9](#9-interface)). The repository is mounted
   in the container, so the results, the traces and the tokenizer stay in your folder.
@@ -481,7 +551,7 @@ stay yours.
   `http://host.docker.internal:8000` for a vLLM on the machine that runs Docker, otherwise the address of the server.
   A public address needs `BENCH_ALLOW_PUBLIC_URLS=1` in `.env`; a vLLM on a Linux machine that runs Docker must listen
   on `0.0.0.0`, not on `127.0.0.1`.
-- The tokenizer must be the one of the measured model ([section 5.3](#53-copy-the-tokenizer)). With
+- The tokenizer must be the one of the measured model ([section 5.2](#52-the-tokenizer)). With
   `BENCH_TOKENIZER_REPO` in `.env`, the container downloads it into `tools/tokenizer/` the first time it starts, if the
   folder has none yet. Without Internet access, copy the files yourself.
 - The interface listens on `127.0.0.1` of this machine only: from another machine, use an SSH tunnel
@@ -537,34 +607,26 @@ the keys, and `BENCH_API_KEY` and `HF_TOKEN` are visible with `docker inspect` o
 
 ---
 
-## 5. Configure the client
+## 5. The settings file
 
-The Quick start ([section 2](#2-quick-start)) is enough to get going. This section explains what each setting
-means and how to check it. The commands shown are those of the install on your machine; with Docker Compose, the same
-variables go in `.env`, and the "Test connection" button of the interface does the check of 5.4.
+The Quick start ([section 2](#2-quick-start)) is enough to get going. This section explains the one file of settings,
+`.env`: what each setting means, and the tokenizer. To check that the connection works, see
+[section 2.3](#23-what-the-connection-check-shows).
 
-### 5.1 Activate the environment
+### 5.1 The settings
 
-Not needed with Docker Compose.
-
-In each new terminal:
+One file, `.env`, holds the settings of the bench, for both ways of running it ([section 2](#2-quick-start)).
 
 ```bash
-cd ~/banc-gpu && source .venv-aiperf/bin/activate
+cp .env.example .env     # .env is ignored by git: it contains the keys
 ```
 
-### 5.2 Set the connection
-
-```bash
-cp .env.example .env     # .env is ignored by git: it contains the key
-```
-
-Fill in `.env` (keep the `export`s), then load it in each new terminal: `source .env`.
-The interface ([section 9](#9-interface)) also reads this file when it starts, so it does not need the `source`.
-With Docker Compose ([section 2.2](#22-run-in-a-docker-container)), it is the same file: Compose reads it, and the
-addresses are those the container sees.
-
-If you have a `target.env` from an earlier version, rename it to `.env`.
+- Keep plain `export NAME=value` lines (no `$VAR`, no backticks, no command).
+- **On your machine**: load it in each terminal with `source .env`. The interface ([section 9](#9-interface)) also
+  reads it when it starts.
+- **With Docker Compose**: Compose reads it, with no `source`. The addresses are those the container sees
+  (`host.docker.internal` for the machine that runs Docker, not `127.0.0.1`).
+- A `target.env` from an earlier version: rename it to `.env`.
 
 **Why `BENCH_METRICS` must point to vLLM**
 
@@ -589,7 +651,7 @@ answers "HTTP 401: key required", or there is no `vllm:` metric at all.
 | `BENCH_MODEL` | name served by vLLM (`--served-model-name`) or LiteLLM alias. `sweep.sh` and `agentx.sh` stop if the server does not know it | `bench` |
 | `BENCH_METRICS` | `/metrics` address **of vLLM** (never LiteLLM's or Prometheus'), one per replica, separated by spaces. Empty = `BENCH_URL/metrics`, which only suits a `BENCH_URL` that points to vLLM directly. If `BENCH_URL` points to LiteLLM, give vLLM's address | `http://10.0.0.5:8000/metrics` |
 | `BENCH_API_KEY` | the target's key (vLLM's `--api-key`, or a LiteLLM key). Sent to the target only; it is not written to the bench's logs, but see [Appendix A](#appendix-a-security-notes) (visible in `ps` while AIPerf runs) | — |
-| `BENCH_TOKENIZER` | empty = `tools/tokenizer/` ([section 5.3](#53-copy-the-tokenizer)); otherwise the absolute path of a folder that holds `tokenizer.json` (no copy), or a Hugging Face name (AIPerf downloads it; the test agents, which only read a local folder, then estimate the sizes) | empty |
+| `BENCH_TOKENIZER` | empty = `tools/tokenizer/` ([section 5.2](#52-the-tokenizer)); otherwise the absolute path of a folder that holds `tokenizer.json` (no copy), or a Hugging Face name (AIPerf downloads it; the test agents, which only read a local folder, then estimate the sizes) | empty |
 
 Settings are read from the `BENCH_*` variables.
 
@@ -606,7 +668,7 @@ Settings are read from the `BENCH_*` variables.
 Do not put `HF_HUB_OFFLINE=1` in this file: with a local tokenizer, AIPerf fails when this
 variable is set (`sweep.sh` removes it for AIPerf anyway).
 
-### 5.3 Copy the tokenizer
+### 5.2 The tokenizer
 
 With Docker Compose: `BENCH_TOKENIZER_REPO` in `.env` downloads it once at start ([section 4.4](#44-or-with-docker-compose)).
 
@@ -629,61 +691,6 @@ export BENCH_TOKENIZER=$HOME/.cache/huggingface/hub/models--<organization>--<mod
 ```
 
 Check the model's license before versioning these files.
-
-### 5.4 Test the connection
-
-```bash
-curl -s -H "Authorization: Bearer $BENCH_API_KEY" "$BENCH_URL/v1/models"
-python tools/server_config.py --url "$BENCH_URL" --model "$BENCH_MODEL" --metrics "$BENCH_METRICS" > /dev/null
-```
-
-**You should see** the model, then `[config]` lines. The exact wording is set by `tools/server_config.py`.
-
-The `[config]` lines give:
-
-- the fingerprint (vLLM version, decoded TP / PP / DP / EP), from the target or, when the target is a gateway that
-  does not pass it on, from the first vLLM server of `BENCH_METRICS`;
-- the number of GPUs deduced from it;
-- then, for each `/metrics` URL: the vLLM version, whether the prefix cache is on, and the number of speculative
-  tokens read from the metrics (0 = no speculative decoding).
-
-Example for a TP 8 server with expert parallelism and 3 speculative tokens:
-
-```
-[config] target fingerprint: vllm-<version>-tp8-ep-<hash> -> TP 8, PP 1, DP 1, EP yes
-[config] GPUs deduced: 8 (TP 8 × PP 1 × DP 1 × 1 vLLM server(s))
-[config] http://10.0.0.5:8000/metrics : vLLM <version>; prefix cache False; speculative tokens (metrics) 3; /server_info absent or not read (VLLM_SERVER_DEV_MODE not enabled?)
-```
-
-Through a gateway, the first word of the fingerprint line is `vLLM` instead of `target`: the fingerprint was read from vLLM.
-
-Check that the **prefix cache** and the **parallelism** are those of the measurement you are about to make.
-
-The GPU count is the TP x PP x DP of the fingerprint, times the number of vLLM servers recognised in `BENCH_METRICS`
-(all assumed identical to the one that answered). The reports reuse it when `--gpu` is not given
-([section 6.2](#62-reading-the-aiperf-report-synthetic-and-agentx)).
-
-**If something looks wrong**, these are the usual messages and what to do:
-
-- **`[config] ERROR: the server does not know the model …`**: the name in `BENCH_MODEL` is not one the server
-  serves. It is `bench` when the variable is not set. Set `BENCH_MODEL` to a name the server serves. The message lists
-  them when the server can say; otherwise read `/v1/models` with the first command above.
-- **The same error at the start of `sweep.sh` or `agentx.sh`**: both scripts make this check themselves. They stop
-  before any measurement, with nothing created. Only a clear refusal of the name stops them: an unreachable server or
-  a refused key does not.
-- **`[config] WARNING: … is not vLLM's /metrics`**: the address in `BENCH_METRICS` is not vLLM's. Either it points to
-  LiteLLM, which answers "HTTP 401: key required", or it exposes no `vllm:` metric at all. Put vLLM's `/metrics`
-  address in `BENCH_METRICS` ([section 5.2](#52-set-the-connection)).
-- **No fingerprint, and the output says the server did not respond**: the key or the target is wrong, or the model
-  name (the `ERROR` line above names it when the server refuses it). Fix it before going on.
-- **No fingerprint and no other message**: the vLLM version does not produce it, `--fingerprint-mode none` is set, or
-  the target is a gateway that drops the field and vLLM could not be asked. vLLM is asked directly (one token, with
-  the model it lists, and no key) when `BENCH_METRICS` points at it; if vLLM has its own `--api-key`, target vLLM
-  directly, or note the launch command with your results.
-- **"TP 1, PP 1, DP 1, EP no (or hidden…)"**: this is true for a server without parallelism, but it is also what a
-  server launched with `--fingerprint-mode hash` shows. Check the launch command.
-
-More cases are in the troubleshooting table ([section 10.3](#103-troubleshooting)).
 
 [↑ Back to top](#top)
 
@@ -1043,22 +1050,22 @@ The test agents are three profiles (`code_review` with sub-agents, step-by-step 
 Their tools are simulated: they return fabricated text and act on no system.
 
 Like `sweep.sh` and `agentx.sh`, the launcher reads the variables of `.env`: load it in this terminal first
-([section 5.2](#52-set-the-connection)). With Docker Compose, the `bench` container already has them from `.env`. `BENCH_URL`, `BENCH_MODEL` and `BENCH_METRICS` are the defaults of `--url`,
+([section 5.1](#51-the-settings)). With Docker Compose, the `bench` container already has them from `.env`. `BENCH_URL`, `BENCH_MODEL` and `BENCH_METRICS` are the defaults of `--url`,
 `--model` and `--metrics`. An option typed on the command line wins over its variable. Two more rules:
 
 - `BENCH_METRICS` goes with `BENCH_URL`: it is used only when `--url` is not given. A run aimed at another URL never
   reads the metrics of the server of `.env`.
 - If `BENCH_URL` is the LiteLLM gateway, set `BENCH_METRICS` to vLLM's `/metrics`
-  ([section 5.2](#52-set-the-connection)), as for the other tests.
+  ([section 5.1](#51-the-settings)), as for the other tests.
 
 Without the variables, the defaults are `http://127.0.0.1:8000`, the model name `bench` and `<url>/metrics`.
 
-Then check that `BENCH_MODEL` is a name the server serves ([section 5.4](#54-test-the-connection)). Unlike `sweep.sh`
+Then check that `BENCH_MODEL` is a name the server serves ([section 2.3](#23-what-the-connection-check-shows)). Unlike `sweep.sh`
 and `agentx.sh`, the launcher does not check it, and the tasks would fail at once.
 
 vLLM must run with the prefix cache enabled (without `--no-enable-prefix-caching`). If you have just run the synthetic
 test, restart vLLM ([section 4.2](#42-check-the-vllm-in-place)). Check that the `[config]` line says `prefix cache True`
-([section 5.4](#54-test-the-connection)), then start the test agents:
+([section 2.3](#23-what-the-connection-check-shows)), then start the test agents:
 
 ```bash
 python -m agents_test.launcher --levels "1 2 4 8" --duration 900 --warmup 300 --scale 1 --label conf-a-r1
@@ -1554,7 +1561,7 @@ Open **the exact address printed** (it contains an access token). On a remote VM
 sides of the tunnel (under Docker Compose, it is `BENCH_PORT`).
 
 - **Configuration**: where the servers are.
-  - The target: URL, model, vLLM metrics URL and API key (same meanings as [section 5.2](#52-set-the-connection)), with a
+  - The target: URL, model, vLLM metrics URL and API key (same meanings as [section 5.1](#51-the-settings)), with a
     "Test connection" button that shows the server configuration (version, prefix cache, TP/PP/DP/EP…).
   - The GPUs behind the target. The connection test fills the field in from the fingerprint if it is empty.
   - Prometheus: URL, optional key, vLLM and LiteLLM selectors, and the label that tells agents apart. The scrape
@@ -1661,7 +1668,7 @@ of the chosen view.
 | `agents_test/common.py`, `metrics.py` | measured model call (streaming), `/metrics` reading |
 | `tools/server_config.py` | reading of the vLLM servers' configuration, GPU count deduced from the fingerprint, check that the model name is known |
 | `tools/download_tokenizer.sh`, `.env.example` | download of the default tokenizer, settings template |
-| `tools/tokenizer/` | the tokenizer files, copied by `download_tokenizer.sh` ([section 5.3](#53-copy-the-tokenizer)); not in the repository until you add them |
+| `tools/tokenizer/` | the tokenizer files, copied by `download_tokenizer.sh` ([section 5.2](#52-the-tokenizer)); not in the repository until you add them |
 | `tools/settings.py` | reads the `BENCH_*` variables |
 | `tools/fake_server.py` | fake server to check the pipeline (vLLM and LiteLLM metrics, `/admin?rate=…`) |
 | `report/` | reporting: `python -m report aiperf\|agents <root> --target N [--gpu N]` |
@@ -1680,12 +1687,12 @@ durations), labels, agent names and error messages; no prompt or response conten
 
 | Symptom | Likely cause | What to do |
 |---|---|---|
-| `ERROR: the server does not know the model` (`sweep.sh` / `agentx.sh` stop at once) | `BENCH_MODEL` is not set (so it is `bench`), or is not a name the server serves | set `BENCH_MODEL` to a name the message lists, for example by loading `.env` ([section 5.2](#52-set-the-connection)) |
+| `ERROR: the server does not know the model` (`sweep.sh` / `agentx.sh` stop at once) | `BENCH_MODEL` is not set (so it is `bench`), or is not a name the server serves | set `BENCH_MODEL` to a name the message lists, for example by loading `.env` ([section 5.1](#51-the-settings)) |
 | the interface form starts empty although `.env` is filled in | the interface reads only plain `export BENCH_NAME=value` lines (`$`, backticks and empty values are skipped), once, when it starts | write plain values, then restart the interface |
 | AgentX: a generated set is not the one I expected (old size or options) | the interface reuses an existing `traces-<preset>` folder | delete the folder and launch again, or generate it yourself with `tools/make_traces.py --overwrite` |
-| failure at concurrency N (`sweep.sh` / `agentx.sh` stop) | see `results/<label>/c<N>.log` | often tokenizer not found ([section 5.3](#53-copy-the-tokenizer)) or target unreachable ([section 5.4](#54-test-the-connection)) |
-| `HFValidationError` or tokenizer not found in the AIPerf log | AIPerf launched by hand with `HF_HUB_OFFLINE=1`, or `BENCH_TOKENIZER` = a Hugging Face name absent from the local cache | go through `sweep.sh` with the tokenizer in `tools/tokenizer/` ([section 5.3](#53-copy-the-tokenizer)) |
-| preempt / cache / MTP columns empty | `/metrics` not read, or not vLLM's | check `BENCH_METRICS`: vLLM's address, required through LiteLLM (launch warning, [section 5.4](#54-test-the-connection)) |
+| failure at concurrency N (`sweep.sh` / `agentx.sh` stop) | see `results/<label>/c<N>.log` | often tokenizer not found ([section 5.2](#52-the-tokenizer)) or target unreachable ([section 2.3](#23-what-the-connection-check-shows)) |
+| `HFValidationError` or tokenizer not found in the AIPerf log | AIPerf launched by hand with `HF_HUB_OFFLINE=1`, or `BENCH_TOKENIZER` = a Hugging Face name absent from the local cache | go through `sweep.sh` with the tokenizer in `tools/tokenizer/` ([section 5.2](#52-the-tokenizer)) |
+| preempt / cache / MTP columns empty | `/metrics` not read, or not vLLM's | check `BENCH_METRICS`: vLLM's address, required through LiteLLM (launch warning, [section 2.3](#23-what-the-connection-check-shows)) |
 | `err` > 0 | requests refused or timed out | key, model name, `--max-model-len`, `--max-num-seqs` |
 | agent throughput "—" | empty measurement window | `--warmup` shorter than `--duration`, levels long enough |
 | cache about 0 for the agents | prefix cache disabled | restart vLLM without `--no-enable-prefix-caching` |
@@ -1939,7 +1946,7 @@ The observation is checked with a Prometheus that scrapes the fake server (`tool
 In Docker: `COMPOSE_PROFILES=try` and `BENCH_URL=http://fake-server:8001` in `.env` ([section 4.4](#44-or-with-docker-compose)); the fake server then listens on `0.0.0.0` (`--host`) so that the other containers
 reach it, and Prometheus uses `docker/prometheus-fake.yml`.
 
-Run it in the background, in a terminal you keep open and where the environment is active ([section 5.1](#51-activate-the-environment)); without it, the `python` command is not found:
+Run it in the background, in a terminal you keep open and where the environment is active ([section 2.1](#21-run-on-your-machine)); without it, the `python` command is not found:
 
 ```bash
 python tools/fake_server.py --port 8001 --token-delay 0.02 \
