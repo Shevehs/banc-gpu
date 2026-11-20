@@ -129,7 +129,7 @@ def test_load_target_env_reads_the_exports_without_running_anything(monkeypatch,
     monkeypatch.setattr(os, "environ", os.environ.copy())
     for n in ("URL", "MODEL", "METRICS", "TOKENIZER", "API_KEY"):
         monkeypatch.delenv("BENCH_" + n, raising=False)
-    f = tmp_path / "target.env"
+    f = tmp_path / "settings.env"
     f.write_text('# comment\nexport BENCH_URL=http://h:8000\nexport BENCH_MODEL="org/model-4bit"  # served name\n'
                  "BENCH_METRICS='http://h:8001/metrics http://h:8002/metrics'\nexport BENCH_TOKENIZER=\"\"\n"
                  "export BENCH_API_KEY=$(cat secret)\nexport DO_NOT_TRACK=1\nexport BENCH_BAD=\"a;b$(x)\"\n")
@@ -144,7 +144,7 @@ def test_load_target_env_reads_the_exports_without_running_anything(monkeypatch,
 def test_load_target_env_keeps_what_the_terminal_already_set(monkeypatch, tmp_path):
     monkeypatch.setattr(os, "environ", os.environ.copy())
     monkeypatch.setenv("BENCH_MODEL", "from-terminal")
-    f = tmp_path / "target.env"
+    f = tmp_path / "settings.env"
     f.write_text("export BENCH_MODEL=from-file\n")
     assert load_target_env(f) == [] and read_setting("MODEL") == "from-terminal"
 
@@ -157,7 +157,7 @@ def test_load_target_env_keeps_a_hash_inside_a_value_and_ignores_a_comment_after
     monkeypatch.setattr(os, "environ", os.environ.copy())
     for n in ("URL", "MODEL"):
         os.environ.pop("BENCH_" + n, None)
-    f = tmp_path / "target.env"
+    f = tmp_path / "settings.env"
     f.write_text("export BENCH_URL=http://h:8000/#x\r\nexport BENCH_MODEL=m   # the model\r\n")
     assert load_target_env(f) == ["BENCH_URL", "BENCH_MODEL"]
     assert read_setting("URL") == "http://h:8000/#x" and read_setting("MODEL") == "m"
@@ -166,7 +166,7 @@ def test_load_target_env_keeps_a_hash_inside_a_value_and_ignores_a_comment_after
 def test_load_target_env_takes_only_the_target_settings(monkeypatch, tmp_path):
     monkeypatch.setattr(os, "environ", os.environ.copy())
     os.environ.pop("BENCH_ALLOWED_DIRS", None)
-    f = tmp_path / "target.env"
+    f = tmp_path / "settings.env"
     f.write_text("export BENCH_ALLOWED_DIRS=/\nexport BENCH_ALLOW_PUBLIC_URLS=1\nexport BENCH_PROMETHEUS_KEY=x\n")
     assert load_target_env(f) == [] and "BENCH_ALLOWED_DIRS" not in os.environ
 
@@ -174,7 +174,7 @@ def test_load_target_env_takes_only_the_target_settings(monkeypatch, tmp_path):
 def test_load_target_env_survives_a_bom_and_a_file_that_is_not_text(monkeypatch, tmp_path):
     monkeypatch.setattr(os, "environ", os.environ.copy())
     os.environ.pop("BENCH_MODEL", None)
-    f = tmp_path / "target.env"
+    f = tmp_path / "settings.env"
     f.write_bytes("\ufeffexport BENCH_MODEL=m\n".encode("utf-8"))
     assert load_target_env(f) == ["BENCH_MODEL"]
     f.write_bytes(b"\xff\xfe\x00bad")

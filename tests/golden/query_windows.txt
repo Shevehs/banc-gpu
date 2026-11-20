@@ -11,12 +11,12 @@ start               end avg conc requests  err   tput/GPU  at target inter P10�
 2024-05-14 18:00  21:00      5.0     8000    0       37.0       95%*       40.0          500       3    60%   67%     97%  does not hold
 2024-05-14 21:00  00:00     15.0     6000    0       27.8       82%*       20.0          500       0    60%   67%     40%  undetermined
 
-* interpolated share: no histogram bound at 33.3 ms; start vLLM with --custom-histogram-buckets (README, section 7.1). "undetermined": the target falls in a bucket that straddles 90 %.
+* interpolated share: no histogram bound at 33.3 ms; start vLLM with --custom-histogram-buckets (README, section 8.1). "undetermined": the target falls in a bucket that straddles 90 %.
 ≥ and ≤: bounds read from the histogram buckets (< or >: beyond the last bound). err: /v1 requests with 4xx or 5xx seen by vLLM ("—" if not exposed). avg conc: requests in flight on average.
 
 Highest mean concurrency that holds: 12.5 requests in flight (2024-05-14 09:00, 41.7 tokens/s per GPU).
    WARNING: windows with equal or lower concurrency do not hold (2024-05-14 18:00): see err, preemptions and TTFT.
-   WARNING: 1 busier window(s) with an undetermined verdict (histogram bounds, README section 7.1): the limit may be higher.
+   WARNING: 1 busier window(s) with an undetermined verdict (histogram bounds, README section 8.1): the limit may be higher.
    WARNING: requests waited in the server queue in windows that hold.
    WARNING: KV cache 95 % full or more in at least one window.
    WARNING: 2024-05-14 03:00: fewer than 50 completed requests: percentiles unreliable.

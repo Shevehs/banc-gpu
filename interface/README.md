@@ -15,7 +15,7 @@ python -m interface.server
 
 then open **the exact address printed at startup** (it contains an access token: `http://127.0.0.1:8765/?token=…`).
 
-Under Docker ([repository README, section 4.4](../README.md#44-or-with-docker-compose)), the container starts the
+Under Docker ([repository README, section 5.3](../README.md#53-docker-compose-settings)), the container starts the
 server with `--host 0.0.0.0` on purpose: Compose only publishes the port on `127.0.0.1` of the machine.
 
 - `--public-port`: the port the browser uses, when it is not `--port`.
@@ -55,12 +55,12 @@ The interface never starts vLLM: it measures the one that is running. Options to
   `DO_NOT_TRACK` are passed on.
 - The form starts with `BENCH_URL`, `BENCH_MODEL`, `BENCH_METRICS` and `BENCH_TOKENIZER` (and `BENCH_PROMETHEUS`,
   `BENCH_LITELLM_SELECTOR`, which Docker sets) of the terminal that started the
-  interface, or else of `target.env` at the root of the repository (`GET /api/defaults`, behind the same token as the rest of the
-  API). `target.env` is read once, when the interface starts, and never run: only plain `export BENCH_NAME=value`
+  interface, or else of `.env` at the root of the repository (`GET /api/defaults`, behind the same token as the rest of the
+  API). `.env` is read once, when the interface starts, and never run: only plain `export BENCH_NAME=value`
   lines are taken, and only the target settings (`BENCH_URL`, `BENCH_MODEL`, `BENCH_METRICS`, `BENCH_TOKENIZER`,
   `BENCH_API_KEY`); the terminal wins. No key is ever sent to the page: the
   response only says whether `BENCH_API_KEY` exists and for which target. When the API key field is empty, the server
-  uses `BENCH_API_KEY` for the run, but only if the form's target URL is the `BENCH_URL` of the terminal or of `target.env` (same scheme,
+  uses `BENCH_API_KEY` for the run, but only if the form's target URL is the `BENCH_URL` of the terminal or of `.env` (same scheme,
   host, port and path, case and a trailing slash ignored). A key meant for one server never goes to another.
 - The API key goes to the target; no key is sent to vLLM: neither to its `/metrics` nor, for the fingerprint through a gateway, to its `/v1`. In observation, only the "Prometheus key"
   (if filled in, `BENCH_PROMETHEUS_KEY`) is sent, to Prometheus; LiteLLM's key belongs in Prometheus's configuration,
@@ -68,7 +68,7 @@ The interface never starts vLLM: it measures the one that is running. Options to
 
 ## What it does
 
-- **Configuration**: the target (the `BENCH_*` variables of `target.env`, repository README section 5.2), with a "Test
+- **Configuration**: the target (the `BENCH_*` variables of `.env`, repository README section 5.1), with a "Test
   connection" button (which also shows the vLLM server configuration: version, prefix cache, number of speculative tokens,
   TP/PP/DP/EP parallelism read from the fingerprint (the target's, or vLLM's when the target is a gateway that gives none), the number of GPUs deduced from it, a warning when a
   metrics URL is not vLLM's `/metrics` and, only if vLLM is started with `VLLM_SERVER_DEV_MODE=1`, the speculative
@@ -76,9 +76,9 @@ The interface never starts vLLM: it measures the one that is running. Options to
   empty); and Prometheus (URL, key, vLLM and LiteLLM selectors, the label that tells agents apart; the scrape interval is
   read from Prometheus).
 - **Launch stress tests**: one of the three stress tests: synthetic (AIPerf), AgentX or test agents
-  (repository README, section 6). For AgentX, the "Trace set" list also generates a set (`tiny` to `large`, written to
-  `traces-<preset>` the first time) or takes your own folder (repository README, section 6.5). For the test agents, "Label the agents" and "Per-agent keys" give every
-  request the identity of its profile, for the per-agent view through LiteLLM (repository README, section 7.5). "Replace existing results"
+  (repository README, section 7). For AgentX, the "Trace set" list also generates a set (`tiny` to `large`, written to
+  `traces-<preset>` the first time) or takes your own folder (repository README, section 7.5). For the test agents, "Label the agents" and "Per-agent keys" give every
+  request the identity of its profile, for the per-agent view through LiteLLM (repository README, section 8.5). "Replace existing results"
   deletes the results of the same label (same directory) and starts again; without it, an existing label stops the run.
 - **Runs**: the runs started since the interface server was started, a live log, and stop. Logs are kept in `interface/logs/`.
 - **Results**: analysis of a results directory, shown as soon as a field changes (table, selected point, warnings,
@@ -86,7 +86,7 @@ The interface never starts vLLM: it measures the one that is running. Options to
   from its fingerprint (`server_config.json`).
 - **Observation**: nothing to start. Prometheus and the GPUs come from Configuration; range ("Since", or start
   and end), window length: a chart, drawn as soon as a field changes, with the choice of the variables on x (the date by default) and y,
-  by window, by period (6-hour ranges or hours) and by agent (repository README, section 7). The warnings are folded under the verdict, grouped by kind. A "refresh every
+  by window, by period (6-hour ranges or hours) and by agent (repository README, section 8). The warnings are folded under the verdict, grouped by kind. A "refresh every
   minute" box follows real usage live. The ranges of the runs
   started from the interface (since its server was started) are marked "run in progress" and discarded from the
   verdicts. It works while a run is in progress.

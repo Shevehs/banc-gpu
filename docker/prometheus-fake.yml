@@ -1,4 +1,4 @@
-# Prometheus of the Docker Compose to try the bench without a GPU (README, section 4.4): the fake server plays vLLM and LiteLLM.
+# Prometheus of the Docker Compose to try the bench without a GPU (README, section 5.3): the fake server plays vLLM and LiteLLM.
 global:
   scrape_interval: 5s
 

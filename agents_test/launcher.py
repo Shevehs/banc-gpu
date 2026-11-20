@@ -9,7 +9,7 @@ cache, speculative decoding, KV cache) are read from --metrics: by default <url>
 is right when --url is vLLM; with a gateway, give the vLLM /metrics URLs (one per replica).
 --url, --model and --metrics default to the variables BENCH_URL, BENCH_MODEL and BENCH_METRICS (as for sweep.sh
 and agentx.sh); an option given on the command line wins. BENCH_METRICS goes with BENCH_URL: it is used only when
---url is not given, so that a run aimed at another URL never reads the metrics of the server of target.env.
+--url is not given, so that a run aimed at another URL never reads the metrics of the server of .env.
 API key: environment variable BENCH_API_KEY (never as an argument, so it does not appear in
 logs or in the process list).
 
@@ -75,7 +75,7 @@ def parse_args(argv=None):
     empty variable counts as not set), then from the built-in defaults. An option given on the command line wins.
 
     BENCH_METRICS goes with BENCH_URL: it is used only when --url is not given. A run aimed at another URL (the fake
-    server of Appendix E, for example) then never reads the metrics of the server of target.env."""
+    server of Appendix E, for example) then never reads the metrics of the server of .env."""
     p = build_parser().parse_args(argv)
     url_given = bool(p.url)
     p.url = p.url or settings.read_setting("URL", DEFAULT_URL)

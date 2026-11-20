@@ -13,7 +13,7 @@ Usage: python -m observation.query --prometheus http://127.0.0.1:9090 --target 3
   --target : target interactivity per request (tokens/s). A window "holds" if at least 90 % of the completed
             requests reach it (same threshold as the P10 interactivity of the stress tests, measured here by vLLM),
             with no preemption and no failed request (and a P95 TTFT <= --ttft-max if given). "Undetermined":
-            the target falls in a histogram bucket that straddles 90 % (bounds to add, README section 7.1).
+            the target falls in a histogram bucket that straddles 90 % (bounds to add, README section 8.1).
   --gpu   : number of GPUs behind the vLLM selector, all replicas included (required here: Prometheus does not
             see the server fingerprint)
   --exclude : ranges to discard (stress test on the same server: the synthetic load would mix with real usage)
@@ -554,7 +554,7 @@ def windows_view(rows, args):
         print(f"{r['start']:<17}{r['end']:>6}" + format_row(r))
     if any(r["share_exact"] is False for r in rows):
         print(f"\n* interpolated share: no histogram bound at {1000 / args.target:.1f} ms; start vLLM with "
-              "--custom-histogram-buckets (README, section 7.1). \"undetermined\": the target falls in a bucket "
+              "--custom-histogram-buckets (README, section 8.1). \"undetermined\": the target falls in a bucket "
               "that straddles 90 %.")
     print("≥ and ≤: bounds read from the histogram buckets (< or >: beyond the last bound). "
           "err: /v1 requests with 4xx or 5xx seen by vLLM (\"—\" if not exposed). avg conc: requests in flight "
@@ -575,7 +575,7 @@ def windows_view(rows, args):
                         and (r["mean_concurrency"] or 0) > m["mean_concurrency"]]
         if undetermined:
             print(f"   WARNING: {len(undetermined)} busier window(s) with an undetermined verdict "
-                  "(histogram bounds, README section 7.1): the limit may be higher.")
+                  "(histogram bounds, README section 8.1): the limit may be higher.")
         if not [r for r in failed if r["mean_concurrency"] > m["mean_concurrency"]]:
             print("   WARNING: no busier window fails: the limit is not reached in this range.")
     else:
