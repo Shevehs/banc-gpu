@@ -389,10 +389,11 @@ stay yours.
 | File | What it holds | Read when | After a change |
 |---|---|---|---|
 | `target.env` | your model's connection: `BENCH_URL`, `BENCH_MODEL`, `BENCH_METRICS`, `BENCH_API_KEY`, `BENCH_TOKENIZER` | the interface starts, and the scripts `source` it | `docker compose restart bench` |
-| `.env` | the Compose choices: profiles, ports, interface token, LiteLLM keys, tokenizer download | `docker compose up` | `docker compose up -d` |
+| `.env` | the Compose choices: profiles, ports, interface token, LiteLLM keys, tokenizer download, Prometheus address and LiteLLM selector of the form, public-address switch, your user id on Linux | `docker compose up` | `docker compose up -d` |
 
-If you would type it in the interface form, it goes in `target.env`. If it is about the containers, it goes in
-`.env`. Addresses in `target.env` are written as the container sees them (below).
+The connection to your model goes in `target.env`. Everything about the containers goes in `.env`, including the
+Prometheus address and the LiteLLM selector that the form starts with. Addresses are written as the container sees
+them (below).
 `restart` makes a new interface token unless `BENCH_TOKEN` is set in `.env`.
 
 **Start**
