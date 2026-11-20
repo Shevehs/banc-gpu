@@ -701,6 +701,8 @@ Keep `.env` private (`chmod 600 .env`): it holds the keys, and `BENCH_API_KEY` a
 LiteLLM is a gateway in front of vLLM. Through it, you measure the added latency and the cost of the gateway, and you can
 follow your agents one by one. This section gathers what is specific to it.
 
+**Your target is vLLM, not LiteLLM?** Skip to [section 7, the stress tests](#7-stress-tests).
+
 ### 6.1 Point the bench at LiteLLM
 
 In `.env` ([section 5.1](#51-the-generic-settings)):
