@@ -539,9 +539,13 @@ the keys, and `HF_TOKEN` is visible with `docker inspect`.
 
 ## 5. Configure the client
 
+This section is written for the install on your machine ([section 2.1](#21-run-on-your-machine)). With Docker Compose
+([section 2.2](#22-run-in-a-docker-container)) you set the same variables in `.env`; the notes marked **With Docker
+Compose** say what changes.
+
 ### 5.1 Activate the environment
 
-Not needed with Docker Compose ([section 4.4](#44-or-with-docker-compose)).
+**With Docker Compose**: not needed.
 
 In each new terminal:
 
@@ -557,6 +561,10 @@ cp tools/target.env.example target.env     # target.env is ignored by git: it co
 
 Fill in `target.env` (keep the `export`s), then load it in each new terminal: `source target.env`.
 The interface ([section 9](#9-interface)) also reads this file when it starts, so it does not need the `source`.
+
+**With Docker Compose**: the same variables go in `.env` instead, as plain `KEY=value` lines (no `export`), with the
+addresses as the container sees them ([section 2.2](#22-run-in-a-docker-container)). There is no `target.env` and no
+`source`.
 
 **Why `BENCH_METRICS` must point to vLLM**
 
@@ -627,6 +635,14 @@ Check the model's license before versioning these files.
 ```bash
 curl -s -H "Authorization: Bearer $BENCH_API_KEY" "$BENCH_URL/v1/models"
 python tools/server_config.py --url "$BENCH_URL" --model "$BENCH_MODEL" --metrics "$BENCH_METRICS" > /dev/null
+```
+
+**With Docker Compose**: run the same two commands in the container (the quotes make the container read its own
+variables), or press "Test connection" in the interface.
+
+```bash
+docker compose exec bench bash -c 'curl -s -H "Authorization: Bearer $BENCH_API_KEY" "$BENCH_URL/v1/models"'
+docker compose exec bench bash -c 'python tools/server_config.py --url "$BENCH_URL" --model "$BENCH_MODEL" --metrics "$BENCH_METRICS" > /dev/null'
 ```
 
 **You should see** the model, then `[config]` lines. The exact wording is set by `tools/server_config.py`.
