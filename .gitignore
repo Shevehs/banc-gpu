@@ -4,6 +4,8 @@ node_modules/
 results*/
 agents_test/results*/
 interface/logs/
+interface/planned.json
+interface/planned.json.tmp
 .DS_Store
 *.env
 !*.env.example

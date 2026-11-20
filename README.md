@@ -1579,6 +1579,7 @@ A single short pass is not enough to settle on a figure. For each server configu
    that meets the target and the first that does not).
    - **15 min** each (`BENCH_DURATION=900`), **three repetitions** (`conf-a-r1`, `-r2`, `-r3`), each a separate run
      of the same command.
+   - In the interface, the three repetitions can be planned one after another ([section 10](#10-interface)).
    - Keep the median, the min–max spread and the estimate interpolated at the target.
    - More than 10% spread between repetitions (indicative threshold) means a disturbed machine: redo.
 3. **Without speculative decoding** (if the model uses it): restart vLLM without `--speculative-config` and redo the
@@ -1637,7 +1638,15 @@ sides of the tunnel (under Docker Compose, it is `BENCH_PORT`).
     ([section 7.5](#75-agentx-with-generated-or-your-own-traces)).
   - A label that already exists in the results directory stops the run. Tick "Replace existing results" to delete it
     and start again.
-- **Runs**: live log, stop.
+  - "Start": now, after the current run, or at a date and time (read in your browser's time zone). A planned run goes
+    into a queue: the runs start one after another, in the order of their time.
+  - A planned run uses `BENCH_API_KEY` (the terminal or `.env`, for the target of `BENCH_URL`): keys are not stored. A
+    key typed in the form is accepted only if it is that same key. Per-agent keys cannot be planned.
+  - The queue is saved, so it survives a restart of the interface, but the interface must be running at the start time,
+    which is compared with the clock of the machine that runs it. A run in progress when the interface stops is
+    marked "interrupted" and pauses the queue.
+- **Runs**: live log, stop. The planned runs are listed above ("Planned"), each with "cancel". If a planned run fails
+  or is stopped, the queue waits: press "resume" to go on.
 - **Results**: tables, selected point, curve of the stress tests, updated as soon as a field changes; the "GPU" field is optional (deduced from the
   fingerprint when empty).
 - **Observation** (own tab): nothing to start. Prometheus and the GPUs come from Configuration (the GPUs are required,
@@ -1659,7 +1668,7 @@ sides of the tunnel (under Docker Compose, it is `BENCH_PORT`).
   - The ranges of the runs started from the interface (plus one minute) are discarded ("run in progress"). Those of
     runs started by hand are only discarded if you give them to `observation.query --exclude`.
 
-The fields are not saved. They start with `BENCH_URL`, `BENCH_MODEL`, `BENCH_METRICS` and `BENCH_TOKENIZER` (and, under Docker Compose,
+The fields are not saved (only the queue of planned runs is, without any key). They start with `BENCH_URL`, `BENCH_MODEL`, `BENCH_METRICS` and `BENCH_TOKENIZER` (and, under Docker Compose,
 `BENCH_PROMETHEUS` and `BENCH_LITELLM_SELECTOR`), taken
 from the terminal that started the interface or, for what the terminal does not set,
 from `.env` at the root of the repository. The file is read when the interface starts, never run: only plain `export BENCH_NAME=value`
@@ -1675,7 +1684,7 @@ It accepts only:
 
 Other behaviors:
 
-- one run at a time;
+- one run at a time (a planned run waits for the end of the run in progress);
 - test-agents runs started here write to `agents_test/results-agents` by default (the command line writes to
   `results-agents`); the other runs use the same folders as the command line;
 - observation can be displayed during a run.
@@ -1702,6 +1711,9 @@ results-agents/table_agents.csv                # report agents
 ```
 
 Runs started from the interface put the test-agents results in `agents_test/results-agents/` instead.
+
+The interface also writes `interface/planned.json`: the queue of planned runs, with no key
+([section 10](#10-interface)).
 
 Observation writes nothing by default: the history is in Prometheus (`prometheus-data/` if you start the binary
 yourself); `observation.query --output f.csv` writes the windows of a query, and `--view-output f.csv` the rows
@@ -1737,13 +1749,13 @@ of the chosen view.
 | `tools/settings.py` | reads the `BENCH_*` variables |
 | `tools/fake_server.py` | fake server to check the pipeline (vLLM and LiteLLM metrics, `/admin?rate=…`) |
 | `report/` | reporting: `python -m report aiperf\|agents <root> --target N [--gpu N]` |
-| `interface/` | local interface (compiled React + Python server) |
+| `interface/` | local interface (compiled React + Python server); `interface/planner.py` holds the queue of planned runs, saved in `interface/planned.json` |
 | `.github/workflows/ci.yml` | continuous integration: `ruff check .` and `python -m pytest` on every push to `main` and on every pull request against `main` |
 | `pyproject.toml` | dependency groups (`runtime`, `dev` with `pytest` and `ruff`, `tokenizer` with the `tokenizers` library), pytest and ruff configuration; the repository is run from its root, not pip-installed |
 | `tests/` | tests (`python -m pytest`): golden reference outputs of the two report kinds and of the observation views (`tests/golden/`), validators, round-trip tests; lint with `ruff check .` |
 
 `.gitignore` also keeps out of the repository `.env`, the AgentX traces folders (`traces-agentx*/`, and `traces-tiny/`, `traces-small/`, `traces-medium/`, `traces-large/` for generated sets), `prometheus.yml`,
-`litellm.key`, `prometheus-data/`, `data/`, `/*.csv` and the results folders (`results*/`, `agents_test/results*/`).
+`litellm.key`, `prometheus-data/`, `data/`, `/*.csv`, the results folders (`results*/`, `agents_test/results*/`), the interface logs (`interface/logs/`) and the queue of planned runs (`interface/planned.json`).
 
 The test agents use no internal data. The logs contain numbers (times, tokens,
 durations), labels, agent names and error messages; no prompt or response content.
@@ -1764,6 +1776,8 @@ durations), labels, agent names and error messages; no prompt or response conten
 | cache about 0 for the agents | prefix cache disabled | restart vLLM without `--no-enable-prefix-caching` |
 | `WARNING … autonomous mode … made N calls per task instead of M` (`report agents`) | the model stopped calling tools: output cap too small for a tool call at this scale, or vLLM started without `--enable-auto-tool-choice --tool-call-parser <parser>` | add the options ([section 4.2](#42-check-the-vllm-in-place), optional options), or use `scripted` mode |
 | TP/PP/DP "n/a" in the interface | no fingerprint | correct model and key; default `--fingerprint-mode`; through a gateway, vLLM's address in `BENCH_METRICS`; or target vLLM directly |
+| my planned run did not start | the interface was not running at the start time (it starts the run when it is back, marked "started late"); the queue is paused after a failed or stopped run; a run is in progress (the planned run waits for its end) | keep the interface running; press "resume" in the Runs tab; wait, or stop the run in progress |
+| planned run refused | the key typed in the form is not stored, and `BENCH_API_KEY` is not set for this target; or per-agent keys were typed | put the key in `.env` as `BENCH_API_KEY` ([section 5.1](#51-the-generic-settings)), for the same URL as `BENCH_URL`, then restart the interface; for per-agent keys, start the run now |
 | the interface says a run is in progress and so no one-token completion (no fingerprint) | connection test during a run | normal: a one-token completion would skew the measurement |
 | AgentX: "Scenario invariants violated" | `BENCH_DURATION` < 900 s, or AIPerf launched by hand on local traces | `BENCH_DURATION` ≥ 900 (or `BENCH_SHORT_RUN=1` for a simple check); go through `agentx.sh` |
 | AgentX: `err` > 0 in the report | requests longer than `--max-model-len` (AIPerf removes them from its metrics; the report counts them in `err`) | raise it; `BENCH_AGENTX_VARIANT=256k` for a model at about 256,000 tokens; or `BENCH_MAX_CONTEXT` about `--max-model-len` − 2,048 to discard traces that are too long ([section 7.6](#76-context-shorter-than-the-traces)) |
@@ -1823,6 +1837,8 @@ visible in `ps` on the client machine while AIPerf runs (AIPerf masks it in its 
 - Use a dedicated bench key, and do not run the clients on a shared machine.
 - The key sits in `.env`, which git ignores; keep it private (`chmod 600`).
 - The bench's own logs never contain it, and the interface masks it in the command it prints.
+- The interface never stores a key. `interface/planned.json` (planned runs) holds the form fields without any key: a
+  planned run takes `BENCH_API_KEY` when it starts.
 
 **The interface only talks to local or private hosts, and only reads inside your own directories.**
 
@@ -1977,6 +1993,7 @@ The tests in `tests/` cover:
 - the two report kinds (`aiperf`, `agents`) and the observation views (windows, period, agents), against reference
   outputs (golden tests in `tests/golden/`);
 - the settings reading and the module structure;
+- the planned runs of the interface (`tests/test_planner.py`: the queue, its file, the checks before a run is planned);
 - the input checks of the interface and the file formats (round trips between what the tools write and what the reports read);
 - the shell scripts, the server configuration reading and the fake server.
 
