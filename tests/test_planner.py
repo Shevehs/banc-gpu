@@ -19,11 +19,21 @@ def item(label="a", start_at=None, created=NOW, state="waiting"):
 
 
 # ------------------------------------------------------------------ planner.py
-def test_clean_params_drops_the_keys_and_the_start_time():
-    p = {**FORM, "api_key": "sk-secret", "agent_keys": "report=sk-x", "start_at": 5}
+def test_clean_params_keeps_only_the_fields_a_run_reads():
+    p = {**FORM, "api_key": "sk-secret", "agent_keys": "report=sk-x", "start_at": 5, "prometheus_key": "x", "other": 1}
     cleaned = planner.clean_params(p)
-    assert "api_key" not in cleaned and "agent_keys" not in cleaned and "start_at" not in cleaned
-    assert cleaned["label"] == "plan-r1" and "api_key" in p        # the original is untouched
+    assert set(cleaned) == set(FORM) and cleaned["label"] == "plan-r1"
+    assert "api_key" in p                                            # the original is untouched
+
+
+def test_every_field_the_builders_read_is_kept():
+    """A field that a run reads but the file drops would change a planned run: compare with server.py itself."""
+    import re
+    source = open(server.__file__, encoding="utf-8").read()
+    read = set(re.findall(r'p\.get\("([a-z_0-9]+)"', source)) | set(re.findall(r'p\["([a-z_0-9]+)"\]', source))
+    not_run_fields = {"api_key", "agent_keys", "start_at", "by", "gpu", "litellm", "period", "prometheus", "prometheus_key",
+                      "target", "ttft_max", "view", "vllm"}      # secrets, the start time, and the observation form
+    assert read - not_run_fields <= planner.PARAM_FIELDS
 
 
 def test_make_item_accepts_a_time_or_none():
@@ -32,7 +42,7 @@ def test_make_item_accepts_a_time_or_none():
     assert after["start_at"] is None and after["state"] == "waiting" and after["label"] == "plan-r1"
 
 
-@pytest.mark.parametrize("start", [NOW - 3600, NOW + 31 * 24 * 3600, "tomorrow", True, [1]])
+@pytest.mark.parametrize("start", [NOW - 3600, NOW + 31 * 24 * 3600, "tomorrow", True, [1], float("nan"), float("inf"), -float("inf"), 10 ** 400])
 def test_make_item_refuses_a_bad_start_time(start):
     with pytest.raises(ValueError):
         planner.make_item(FORM, start, NOW, 1)
@@ -86,7 +96,13 @@ def test_a_run_in_progress_when_the_interface_stopped_is_interrupted_and_pauses(
     assert paused and "x" in paused
 
 
-@pytest.mark.parametrize("content", [None, "not json", "[]", '{"items": [{"nothing": 1}]}'])
+@pytest.mark.parametrize("content", [None, "not json", "[]", '{"items": [{"nothing": 1}]}', '{"items": 5}', '{"items": "x"}',
+                                      '{"items": [{"id": "a", "params": {}}]}', '{"items": [{"id": 1, "params": {}, "state": "waiting"}]}',
+                                      '{"items": [{"id": "a", "type": "synthetic", "label": "l", "params": [], "state": "waiting", "created": 1}]}',
+                                      '{"items": [{"id": "a", "type": "synthetic", "label": "l", "params": {}, "state": "nope", "created": 1}]}',
+                                      '{"items": [{"id": "a", "type": "synthetic", "label": "l", "params": {}, "state": "waiting", "created": "x"}]}',
+                                      '{"items": [{"id": "a", "type": "synthetic", "label": "l", "params": {}, "state": "waiting", "created": 1, "start_at": "soon"}]}',
+                                      '{"items": [{"id": "a", "type": "synthetic", "label": "l", "params": {}, "state": "waiting", "created": NaN}]}'])
 def test_a_missing_or_broken_file_gives_an_empty_queue(tmp_path, content):
     path = tmp_path / "planned.json"
     if content is not None:
@@ -136,11 +152,10 @@ def test_a_key_typed_in_the_form_is_refused_unless_env_has_the_key(queue, monkey
     status, answer = post(typed)
     assert status == 400 and ".env" in answer["error"]
     monkeypatch.setenv("BENCH_URL", FORM["url"])
-    monkeypatch.setenv("BENCH_API_KEY", "sk-from-env")
+    monkeypatch.setenv("BENCH_API_KEY", "sk-typed-in-the-form")
     status, _ = post(typed)
     assert status == 200
-    assert "sk-typed-in-the-form" not in (queue / "planned.json").read_text()
-    assert "sk-from-env" not in (queue / "planned.json").read_text()
+    assert "sk-typed-in-the-form" not in (queue / "planned.json").read_text()      # the file never holds a key
 
 
 def test_per_agent_keys_cannot_be_planned(queue):
@@ -252,3 +267,123 @@ def test_the_list_hides_the_form_fields(queue):
     post({**FORM, "start_at": None})
     data = json.loads(asyncio.run(server.list_planned(None)).text)
     assert data["paused"] is None and "params" not in data["items"][0] and data["items"][0]["label"] == "plan-r1"
+
+
+def test_load_keeps_the_valid_items_once_and_drops_the_others(tmp_path):
+    good = item("good", NOW + 5)
+    good["params"] = {"label": "good"}
+    data = {"items": [good, dict(good), {"id": "bad"}, "text", None, {**good, "id": "g2", "label": "g2", "state": "running"}], "paused": 7}
+    path = tmp_path / "planned.json"
+    path.write_text(json.dumps(data))
+    loaded, paused = planner.load(path)
+    assert [i["id"] for i in loaded] == ["good", "g2"]               # the repeated id and the invalid ones are gone
+    assert loaded[1]["state"] == "interrupted" and paused and "g2" in paused
+
+
+def test_trim_removes_the_oldest_finished_items_from_the_list_it_returns():
+    items = [item(f"f{n}", created=NOW + n, state="done") for n in range(planner.KEEP_FINISHED + 2)]
+    kept = planner.trim(items)
+    assert [i["label"] for i in kept][0] == "f2" and len(kept) == planner.KEEP_FINISHED
+
+
+def test_saving_the_queue_also_trims_it_in_memory(queue):
+    server.PLANNED[:] = [item(f"f{n}", created=NOW + n, state="done") for n in range(planner.KEEP_FINISHED + 4)]
+    server.save_planned()
+    assert len(server.PLANNED) == planner.KEEP_FINISHED
+
+
+def test_a_key_typed_in_the_form_must_be_the_key_of_env(queue, monkeypatch):
+    monkeypatch.setenv("BENCH_URL", FORM["url"])
+    monkeypatch.setenv("BENCH_API_KEY", "sk-from-env")
+    status, answer = post({**FORM, "api_key": "sk-another", "start_at": None})
+    assert status == 400 and "differs" in answer["error"]
+    assert post({**FORM, "api_key": "sk-from-env", "start_at": None})[0] == 200
+
+
+def test_a_start_that_fails_for_any_reason_fails_the_item_and_pauses(queue, monkeypatch):
+    async def breaks(p):
+        raise OSError("bash is missing")
+    monkeypatch.setattr(server, "start_run", breaks)
+    assert post({**FORM, "start_at": None})[0] == 200
+    asyncio.run(server.tick(NOW))
+    assert server.PLANNED[0]["state"] == "failed" and "bash is missing" in server.PLANNED[0]["error"]
+    assert server.PAUSE[0]
+    asyncio.run(server.tick(NOW + 5))                              # paused: it is not tried again every few seconds
+
+
+def test_an_item_that_cannot_say_its_folder_does_not_block_planning(queue):
+    server.PLANNED.append({**item("broken"), "params": {"label": "../x", "root": 5}})
+    assert post({**FORM, "start_at": None})[0] == 200
+
+
+def test_the_scheduler_does_nothing_while_the_interface_stops(queue, monkeypatch):
+    started = started_by_a_fake(monkeypatch)
+    assert post({**FORM, "start_at": None})[0] == 200
+    server.STOPPING[0] = True
+    try:
+        asyncio.run(server.tick(NOW))
+    finally:
+        server.STOPPING[0] = False
+    assert started == [] and server.PLANNED[0]["state"] == "waiting"
+
+
+def test_a_stopped_run_is_not_recorded_as_failed_during_shutdown(queue, monkeypatch):
+    started_by_a_fake(monkeypatch)
+    assert post({**FORM, "start_at": None})[0] == 200
+    asyncio.run(server.tick(NOW))
+    server.RUNS["run-1"]["code"] = -15
+    server.STOPPING[0] = True
+    try:
+        asyncio.run(server.tick(NOW + 5))
+    finally:
+        server.STOPPING[0] = False
+    assert server.PLANNED[0]["state"] == "running" and server.PAUSE[0] is None      # it becomes "interrupted" at the next load
+
+
+def test_two_starts_at_once_give_one_run(queue, monkeypatch):
+    """The check "no run in progress" and the start go together: a manual launch cannot slip in between."""
+    spawned = []
+
+    async def fake_exec(*cmd, **kw):
+        await asyncio.sleep(0.05)
+        spawned.append(cmd)
+        return SimpleNamespace(pid=1, wait=lambda: asyncio.sleep(3600))
+    monkeypatch.setattr(server.asyncio, "create_subprocess_exec", fake_exec)
+    monkeypatch.setattr(server, "LOGS_DIR", queue / "logs")
+    monkeypatch.setattr(server, "follow", lambda *a: asyncio.sleep(0))
+    body = {**FORM, "tokenizer": "", "requests_per_concurrency": 2}
+
+    async def both():
+        return await asyncio.gather(server.start_run(body), server.start_run({**body, "label": "other"}), return_exceptions=True)
+    results = asyncio.run(both())
+    assert len(spawned) == 1 and sum(isinstance(r, server.Busy) for r in results) == 1
+
+
+class GuardReq:
+    def __init__(self, path, method="POST", token="t", content_type="application/json", origin=None, host="127.0.0.1:8765"):
+        self.path, self.method, self.content_type, self.host = path, method, content_type, host
+        self.headers = {"X-Bench-Token": token, **({"Origin": origin} if origin else {})}
+
+
+@pytest.mark.parametrize("path", ["/api/planned", "/api/planned/resume", "/api/planned/p1-001/cancel"])
+def test_the_guard_protects_the_planned_routes(monkeypatch, path):
+    monkeypatch.setattr(server, "TOKEN", "t")
+    monkeypatch.setattr(server, "PUBLIC_PORT", [8765])
+
+    async def handler(req):
+        return server.web.json_response({"ok": True})
+
+    def status(**kw):
+        return asyncio.run(server.guard(GuardReq(path, **kw), handler)).status
+    assert status() == 200
+    assert status(token="wrong") == 401 and status(token="") == 401
+    assert status(content_type="text/plain") == 415
+    assert status(origin="http://evil.example") == 403
+    assert status(host="evil.example") == 403
+
+
+def test_the_planned_routes_are_registered():
+    source = open(server.__file__, encoding="utf-8").read()
+    for route in ('web.post("/api/planned", plan_run)', 'web.get("/api/planned", list_planned)',
+                  'web.post("/api/planned/resume", resume_planned)', 'web.post("/api/planned/{id}/cancel", cancel_planned)'):
+        assert route in source

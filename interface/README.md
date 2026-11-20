@@ -83,7 +83,9 @@ The interface never starts vLLM: it measures the one that is running. Options to
   "Start" chooses when the run goes: now, after the current run, or at a date and time (read in the browser's time
   zone). A planned run goes into a queue saved in `interface/planned.json` (ignored by git), which survives a restart of
   the interface; the runs start one after another, in the order of their time. Keys are never stored, so a planned run
-  uses `BENCH_API_KEY` (the terminal, or `.env`; only for the target of `BENCH_URL`), and per-agent keys typed in the form cannot be planned.
+  uses `BENCH_API_KEY` (the terminal, or `.env`; only for the target of `BENCH_URL`); a key typed in the form is
+  accepted only if it is that same key, and per-agent keys typed in the form cannot be planned. The start time is
+  compared with the clock of the machine that runs the interface.
 - **Runs**: the runs started since the interface server was started, a live log, and stop. Logs are kept in `interface/logs/`.
   The planned runs are listed above them, each with "cancel". If a planned run fails, is stopped, or was interrupted by
   a restart, the queue is paused with the reason shown: "resume" goes on. A run that starts more than two minutes after

@@ -7,19 +7,36 @@ An item is a dict: id, type, label, params (the form fields, without any key), c
 None for "after the current run"), state, late, run_id, code, error.
 States: waiting, running, done, failed, cancelled, interrupted."""
 import json
+import math
 import os
 import time
 
-# Form fields that are secrets: never written to the file. A planned run uses the keys of .env instead.
-SECRET_FIELDS = ("api_key", "agent_keys")
+# The form fields the three run builders of interface/server.py read: only these are written to the file (a list of
+# what is kept, not of what is dropped: a key, or any other field, never reaches the disk). A planned run uses the
+# keys of .env instead of the typed ones.
+PARAM_FIELDS = frozenset((
+    "type", "label", "url", "model", "metrics", "tokenizer", "root", "levels", "overwrite", "extra", "isl", "osl",
+    "temperature", "duration", "requests_per_concurrency", "generate", "traces_dir", "variant", "short_run",
+    "max_context", "agents", "mode", "warmup", "scale", "latency_factor", "label_agents"))
+STATES = ("waiting", "running", "done", "failed", "cancelled", "interrupted")
 KEEP_FINISHED = 30        # finished items kept in the file and the list
 LATE_AFTER = 120          # seconds after its start time at which a run counts as late
 MAX_AHEAD = 30 * 24 * 3600
 
 
 def clean_params(p):
-    """The form fields `p` without the secret ones (a copy)."""
-    return {k: v for k, v in p.items() if k not in SECRET_FIELDS and k != "start_at"}
+    """The form fields of `p` that a run reads (a copy): no key, no start time, nothing else."""
+    return {k: v for k, v in p.items() if k in PARAM_FIELDS}
+
+
+def is_number(v):
+    """True for a finite int or float (not a bool, not NaN, not infinity)."""
+    if not isinstance(v, (int, float)) or isinstance(v, bool):
+        return False
+    try:
+        return math.isfinite(v)
+    except OverflowError:                                    # an integer too large for a float
+        return False
 
 
 def make_item(p, start_at, now, number):
@@ -29,7 +46,7 @@ def make_item(p, start_at, now, number):
     Raises:
         ValueError: if `start_at` is not a number, is more than a minute in the past or more than 30 days ahead."""
     if start_at is not None:
-        if isinstance(start_at, bool) or not isinstance(start_at, (int, float)):
+        if not is_number(start_at):
             raise ValueError("start time: a number of seconds expected")
         if start_at < now - 60:
             raise ValueError("start time: it is in the past")
@@ -58,10 +75,9 @@ def is_late(item, now):
 
 def trim(items):
     """The items without the oldest finished ones (all waiting and running items are kept)."""
-    active = [i for i in items if i["state"] in ("waiting", "running")]
-    finished = [i for i in items if i["state"] not in ("waiting", "running")]
-    finished.sort(key=lambda i: i["created"])
-    return [i for i in items if i in active or i in finished[-KEEP_FINISHED:]]
+    finished = sorted((i for i in items if i["state"] not in ("waiting", "running")), key=lambda i: i["created"])
+    dropped = {id(i) for i in finished[:max(0, len(finished) - KEEP_FINISHED)]}
+    return [i for i in items if id(i) not in dropped]
 
 
 def public_view(item):
@@ -69,14 +85,30 @@ def public_view(item):
     return {k: v for k, v in item.items() if k != "params"}
 
 
+def valid_item(i):
+    """True if `i` has every field the queue reads, with the right type (the file may have been edited by hand)."""
+    return (isinstance(i, dict) and all(isinstance(i.get(k), str) for k in ("id", "type", "label"))
+            and isinstance(i.get("params"), dict) and i.get("state") in STATES and is_number(i.get("created"))
+            and (i.get("start_at") is None or is_number(i["start_at"])))
+
+
 def load(path):
-    """Items and pause reason saved in `path`: (items, paused). An item that was running when the interface stopped
-    becomes `interrupted` and pauses the queue. A missing or unreadable file gives ([], None)."""
+    """Items and pause reason saved in `path`: (items, paused). An item that is not valid, or whose id repeats, is
+    left out. An item that was running when the interface stopped becomes `interrupted` and pauses the queue.
+    A missing, unreadable or broken file gives ([], None)."""
     try:
         data = json.loads(open(path, encoding="utf-8").read())
-        items = [i for i in data.get("items", []) if isinstance(i, dict) and "id" in i and "params" in i]
+        raw = data.get("items", [])
         paused = data.get("paused")
-    except (OSError, ValueError, AttributeError):
+        paused = paused if isinstance(paused, str) else None
+        items, seen = [], set()
+        for i in raw if isinstance(raw, list) else []:
+            if valid_item(i) and i["id"] not in seen:
+                seen.add(i["id"])
+                for k, default in (("late", False), ("run_id", None), ("code", None), ("error", None)):
+                    i.setdefault(k, default)
+                items.append(i)
+    except (OSError, ValueError, AttributeError, TypeError):
         return [], None
     for i in items:
         if i["state"] == "running":

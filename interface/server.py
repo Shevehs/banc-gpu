@@ -53,6 +53,8 @@ COUNTER = [0]
 PLANNED_FILE = HERE / "planned.json"
 PLANNED = []              # planned runs (interface/planner.py), most recent last
 PAUSE = [None]            # why the queue is paused (a planned run failed or was stopped), else None
+STOPPING = [False]        # True once the interface is shutting down: the scheduler then does nothing
+START_LOCK = asyncio.Lock()     # one run starts at a time: the check "no run in progress" and the start go together
 
 
 class Refusal(Exception):
@@ -449,24 +451,25 @@ async def start_run(p):
     Raises:
         Busy: if a run is already in progress.
         Refusal: if a field is invalid."""
-    if any(e["code"] is None for e in RUNS.values()):
-        raise Busy("a run is already in progress: wait for it to finish or stop it")
-    factory = {"synthetic": synthetic_command, "agents": agents_command, "agentx": agentx_command}.get(p.get("type"))
-    if not factory:
-        raise Refusal("unknown run type")
-    cmd, env, cwd = factory(p)
-    LOGS_DIR.mkdir(exist_ok=True)
-    COUNTER[0] += 1
-    eid = f"{time.strftime('%Y%m%d-%H%M%S')}-{COUNTER[0]:03d}-{p.get('label', '')}"
-    log = LOGS_DIR / f"{eid}.log"
-    f = open(log, "w", encoding="utf-8")
-    display = " ".join(f"{k}={'***' if k in SECRETS else repr(v) if ' ' in v else v}" for k, v in env.items()) \
-        + (" " if env else "") + " ".join(f"'{c}'" if " " in c and not c.startswith("[writes") else c for c in display_command(cmd))
-    f.write(f"$ cd {cwd}\n$ {display}\n\n"); f.flush()
-    proc = await asyncio.create_subprocess_exec(*cmd, cwd=str(cwd), env={**base_environment(), **env, "PYTHONUNBUFFERED": "1"},
-                                                stdout=f, stderr=asyncio.subprocess.STDOUT, start_new_session=True)
-    RUNS[eid] = dict(id=eid, type=p.get("type"), label=p.get("label"), command=display,
-                       start=time.time(), end=None, code=None, log=str(log), proc=proc)
+    async with START_LOCK:
+        if any(e["code"] is None for e in RUNS.values()):
+            raise Busy("a run is already in progress: wait for it to finish or stop it")
+        factory = {"synthetic": synthetic_command, "agents": agents_command, "agentx": agentx_command}.get(p.get("type"))
+        if not factory:
+            raise Refusal("unknown run type")
+        cmd, env, cwd = factory(p)
+        LOGS_DIR.mkdir(exist_ok=True)
+        COUNTER[0] += 1
+        eid = f"{time.strftime('%Y%m%d-%H%M%S')}-{COUNTER[0]:03d}-{p.get('label', '')}"
+        log = LOGS_DIR / f"{eid}.log"
+        f = open(log, "w", encoding="utf-8")
+        display = " ".join(f"{k}={'***' if k in SECRETS else repr(v) if ' ' in v else v}" for k, v in env.items()) \
+            + (" " if env else "") + " ".join(f"'{c}'" if " " in c and not c.startswith("[writes") else c for c in display_command(cmd))
+        f.write(f"$ cd {cwd}\n$ {display}\n\n"); f.flush()
+        proc = await asyncio.create_subprocess_exec(*cmd, cwd=str(cwd), env={**base_environment(), **env, "PYTHONUNBUFFERED": "1"},
+                                                    stdout=f, stderr=asyncio.subprocess.STDOUT, start_new_session=True)
+        RUNS[eid] = dict(id=eid, type=p.get("type"), label=p.get("label"), command=display,
+                           start=time.time(), end=None, code=None, log=str(log), proc=proc)
     asyncio.create_task(follow(eid, proc, f))
     return eid
 
@@ -825,22 +828,33 @@ def check_plannable(p):
     if not factory:
         raise Refusal("unknown run type")
     factory(without)                                      # the same checks as a run started now
-    if typed and not target_key(without):
+    env_key = target_key(without)
+    if typed and not env_key:
         raise Refusal("the key typed in the form is not stored, so a planned run cannot use it: put it in .env "
                       "(BENCH_API_KEY, for this target URL), or start the run now")
+    if typed and typed != env_key:
+        raise Refusal("the key typed in the form differs from BENCH_API_KEY of .env, which a planned run uses: "
+                      "clear the field, or change .env")
     folder = result_folder(p)
     if p.get("overwrite") is not True and folder.is_dir() and any(folder.iterdir()):
         raise Refusal(f"{folder.relative_to(ROOT)} already exists: change the label, or tick \"Replace existing results\"")
     for i in PLANNED:
-        if i["state"] == "waiting" and result_folder(i["params"]) == folder:
+        if i["state"] != "waiting":
+            continue
+        try:
+            same = result_folder({**i["params"], "type": i["type"]}) == folder
+        except (Refusal, AttributeError, TypeError):
+            continue                                       # an item that cannot say its folder is not a duplicate
+        if same:
             raise Refusal("a planned run already has this label in this results directory")
 
 
 def save_planned():
     """Write the queue to its file (a failure is not fatal: the queue still works until the interface stops)."""
+    PLANNED[:] = planner.trim(PLANNED)
     try:
         planner.save(PLANNED_FILE, PLANNED, PAUSE[0])
-    except OSError as e:
+    except (OSError, TypeError, ValueError) as e:
         print(f"WARNING: cannot save the planned runs: {e}", flush=True)
 
 
@@ -887,6 +901,8 @@ async def resume_planned(req):
 async def tick(now):
     """One step of the scheduler: record the end of the planned run in progress (a failure pauses the queue), then,
     if the queue is not paused and no run is in progress, start the next planned run that is due."""
+    if STOPPING[0]:
+        return                                            # the runs are being stopped: nothing to record, nothing to start
     for i in PLANNED:
         if i["state"] == "running":
             run = RUNS.get(i["run_id"])
@@ -907,9 +923,9 @@ async def tick(now):
         item["late"] = planner.is_late(item, now)
     except Busy:
         return
-    except Refusal as e:
-        item["state"], item["error"] = "failed", str(e)
-        PAUSE[0] = f"{item['label']} could not start: {e}"
+    except Exception as e:  # noqa: BLE001  (a refused field, a missing bash...: the item fails, the queue pauses)
+        item["state"], item["error"] = "failed", str(e) or type(e).__name__
+        PAUSE[0] = f"{item['label']} could not start: {item['error']}"
     save_planned()
 
 
@@ -929,6 +945,7 @@ async def scheduler(app):
 
 async def clean_shutdown(app):
     """When the interface stops, also stop the runs in progress (otherwise they would keep going alone)."""
+    STOPPING[0] = True
     for e in RUNS.values():
         if e["code"] is None:
             try:

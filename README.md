@@ -1640,9 +1640,11 @@ sides of the tunnel (under Docker Compose, it is `BENCH_PORT`).
     and start again.
   - "Start": now, after the current run, or at a date and time (read in your browser's time zone). A planned run goes
     into a queue: the runs start one after another, in the order of their time.
-  - A planned run uses `BENCH_API_KEY` (the terminal or `.env`, for the target of `BENCH_URL`), never a key typed in
-    the form: keys are not stored. Per-agent keys cannot be planned.
-  - The queue is saved, so it survives a restart of the interface, but the interface must be running at the start time.
+  - A planned run uses `BENCH_API_KEY` (the terminal or `.env`, for the target of `BENCH_URL`): keys are not stored. A
+    key typed in the form is accepted only if it is that same key. Per-agent keys cannot be planned.
+  - The queue is saved, so it survives a restart of the interface, but the interface must be running at the start time,
+    which is compared with the clock of the machine that runs it. A run in progress when the interface stops is
+    marked "interrupted" and pauses the queue.
 - **Runs**: live log, stop. The planned runs are listed above ("Planned"), each with "cancel". If a planned run fails
   or is stopped, the queue waits: press "resume" to go on.
 - **Results**: tables, selected point, curve of the stress tests, updated as soon as a field changes; the "GPU" field is optional (deduced from the
