@@ -78,7 +78,8 @@ The interface never starts vLLM: it measures the one that is running. Options to
 - **Launch stress tests**: one of the three stress tests: synthetic (AIPerf), AgentX or test agents
   (repository README, section 7). For AgentX, the "Trace set" list also generates a set (`tiny` to `large`, written to
   `traces-<preset>` the first time) or takes your own folder (repository README, section 7.5). For the test agents, "Label the agents" and "Per-agent keys" give every
-  request the identity of its profile, for the per-agent view through LiteLLM (repository README, section 8.5).
+  request the identity of its profile, for the per-agent view through LiteLLM (repository README, section 8.5). "Replace existing results"
+  deletes the results of the same label (same directory) and starts again; without it, an existing label stops the run.
 - **Runs**: the runs started since the interface server was started, a live log, and stop. Logs are kept in `interface/logs/`.
 - **Results**: analysis of a results directory, shown as soon as a field changes (table, selected point, warnings,
   throughput-per-GPU vs. interactivity curve with the target). The "GPUs" field is optional: empty, the count of each run is deduced

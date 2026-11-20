@@ -1110,3 +1110,17 @@ def test_main_listens_where_it_is_told(monkeypatch, argv, host, port, public):
     monkeypatch.setattr(server, "PUBLIC_PORT", [8765])
     server.main()
     assert seen["host"] == host and seen["port"] == port and server.PUBLIC_PORT[0] == public
+
+
+def test_overwrite_is_off_unless_the_form_asks_for_it():
+    base = {"url": "http://127.0.0.1:8000", "model": "bench", "label": "x-r1", "levels": "1", "isl": 100, "osl": 10}
+    assert server.synthetic_command(base)[1]["BENCH_OVERWRITE"] == ""
+    assert server.synthetic_command({**base, "overwrite": True})[1]["BENCH_OVERWRITE"] == "1"
+    assert server.synthetic_command({**base, "overwrite": "1"})[1]["BENCH_OVERWRITE"] == ""     # only a real true
+    assert server.agentx_command(AGENTX)[1]["BENCH_OVERWRITE"] == ""
+    assert server.agentx_command({**AGENTX, "overwrite": True})[1]["BENCH_OVERWRITE"] == "1"
+    assert server.agentx_command({**AGENTX, "overwrite": "1"})[1]["BENCH_OVERWRITE"] == ""
+    agents = {**base, "agents": ["report"], "mode": "scripted", "duration": 60}
+    assert "--overwrite" not in server.agents_command(agents)[0]
+    assert "--overwrite" in server.agents_command({**agents, "overwrite": True})[0]
+    assert "--overwrite" not in server.agents_command({**agents, "overwrite": 1})[0]

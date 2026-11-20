@@ -29,12 +29,12 @@ const PROMETHEUS = { prometheus: "http://127.0.0.1:9090", prometheus_key: "", vl
   by: "metadata_agent" };
 const INITIAL = {
   synthetic: { tokenizer: "", isl: 2048, osl: 256, levels: "1 2 4 8 16", duration: "", requests_per_concurrency: 8,
-    temperature: 0.7, root: "results", extra: "", label: "run-r1" },
+    temperature: 0.7, root: "results", extra: "", label: "run-r1", overwrite: false },
   agents: { agents: ["code_review", "pentest", "report"], levels: "1 2 4", duration: 300, warmup: 30, scale: 0.2,
     latency_factor: 1, mode: "scripted", root: "agents_test/results-agents", label: "agents-r1",
-    label_agents: false, agent_keys: "" },
+    label_agents: false, agent_keys: "", overwrite: false },
   agentx: { levels: "1 2 4 8", duration: 1800, tokenizer: "", traces_dir: "", short_run: false, max_context: "", variant: "",
-    root: "results-agentx", label: "agentx-r1", trace_set: "" },
+    root: "results-agentx", label: "agentx-r1", trace_set: "", overwrite: false },
 };
 // Observation: what is asked of Prometheus. Fields are kept while the page stays open.
 const OBSERVATION = { since: "2h", start: "", end: "", window: "5m", target: 30, ttft_max: "", view: "windows",
@@ -246,6 +246,7 @@ function Launch({ onLaunched, c, params, setParams, kind, setKind }) {
       const r = await api("/api/runs", { method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ type: kind, ...c, ...launchFields(kind, p) }) });
       setMsg({ ok: true, text: `Run started: ${r.id}` });
+      if (p.overwrite) setParams({ ...params, [kind]: { ...p, overwrite: false } });     // replacing is asked again each time
       onLaunched(r.id);
     } catch (e) { setMsg({ ok: false, text: e.message }); }
   };
@@ -264,6 +265,9 @@ function Launch({ onLaunched, c, params, setParams, kind, setKind }) {
       <div className="grid">
         <Field label="Label" help="the suffix -r1, -r2… marks a repetition">
           <input value={p.label} onChange={set("label")} />
+        </Field>
+        <Field label="Replace existing results" help="if this label already exists in the results directory, it is deleted and the run starts again; otherwise the run stops">
+          <input type="checkbox" checked={!!p.overwrite} onChange={check("overwrite")} />
         </Field>
         <Field label={{ synthetic: "Concurrency levels", agentx: "Concurrent sessions", agents: "Concurrent tasks" }[kind]} help="integers separated by spaces">
           <input value={p.levels} onChange={set("levels")} />
