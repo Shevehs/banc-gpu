@@ -653,22 +653,40 @@ Check the model's license before versioning these files.
 With Docker Compose, you set everything in `.env`, next to the connection of [5.1](#51-the-settings). None of the
 settings below is needed for a first run ([section 2.2](#22-run-in-a-docker-container)).
 
+**What runs.** By default: the interface and Prometheus. `COMPOSE_PROFILES` adds more: `gateway` (LiteLLM and its
+database), `try` (a fake server, to try everything without a GPU, [Appendix E](#appendix-e-try-the-bench-without-a-gpu)),
+or both separated by a comma.
+
+**The interface and the results**
+
 | Variable | Meaning | Example |
 |---|---|---|
-| `COMPOSE_PROFILES` | what runs besides the interface and Prometheus: `gateway` (LiteLLM and its database), `try` (a fake server, to try everything without a GPU, [Appendix E](#appendix-e-try-the-bench-without-a-gpu)); both, separated by a comma | `gateway` |
-| `PROMETHEUS_CONFIG` | the Prometheus configuration of the `docker/` folder: `prometheus.yml` (vLLM only: list your vLLM replicas in it, one line each), `prometheus-gateway.yml` (vLLM and LiteLLM), `prometheus-fake.yml` (the fake server) | `prometheus-gateway.yml` |
+| `BENCH_PORT` | port of the interface, published on `127.0.0.1` of this machine only (from another machine, use an SSH tunnel, [section 10](#10-interface)); change it if 8765 is taken | `8765` |
 | `BENCH_TOKEN` | token of the interface. Empty = a random one at each start, shown by `docker compose logs bench`; a fixed value gives an address you can keep | a long random string |
-| `BENCH_PORT`, `PROMETHEUS_PORT`, `LITELLM_PORT` | ports published on `127.0.0.1` of this machine (the interface, Prometheus, LiteLLM); change them if another service uses 8765, 9090 or 4000. From another machine, use an SSH tunnel ([section 10](#10-interface)) | `8765` |
 | `BENCH_UID`, `BENCH_GID` | Linux: your user and group (`id -u`, `id -g`). The container then runs as you and the results are yours, not root's | `1000` |
 | `BENCH_TOKENIZER_REPO` | Hugging Face name of the model: its tokenizer is downloaded once into `tools/tokenizer/` at the first start ([5.2](#52-the-tokenizer)) | `org/model` |
 | `HF_TOKEN` | Hugging Face token, only for a gated model. The runs do not receive it | — |
 | `BENCH_ALLOW_PUBLIC_URLS` | `1` if the GPU server has a public address: the interface refuses one otherwise | `1` |
+
+**Prometheus**
+
+| Variable | Meaning | Example |
+|---|---|---|
+| `PROMETHEUS_PORT` | port of Prometheus, published on `127.0.0.1`; change it if 9090 is taken | `9090` |
+| `PROMETHEUS_CONFIG` | the configuration of the `docker/` folder that Prometheus uses: `prometheus.yml` (default, vLLM only: list your vLLM replicas in it, one line each), `prometheus-gateway.yml` (also scrapes the LiteLLM of Compose), `prometheus-fake.yml` (the fake server) | `prometheus-gateway.yml` |
 | `BENCH_PROMETHEUS` | the Prometheus address the interface starts with. Default: the one of Compose (`http://prometheus:9090`). With your own Prometheus, see below | `http://prometheus:9090` |
-| `BENCH_LITELLM_SELECTOR` | the LiteLLM selector the observation starts with, for the per-agent view ([section 7.5](#75-per-agent-view-through-litellm)) | `'job="litellm"'` |
+| `BENCH_LITELLM_SELECTOR` | the LiteLLM job of your Prometheus, which the observation starts with, for the per-agent view ([section 7.5](#75-per-agent-view-through-litellm)). Set it whenever a LiteLLM is scraped, the one of Compose or your own | `'job="litellm"'` |
+
+**Only if Docker runs LiteLLM for you** (`COMPOSE_PROFILES=gateway`). If you already run LiteLLM, skip this table:
+neither image is downloaded, and `BENCH_URL` is its address.
+
+| Variable | Meaning | Example |
+|---|---|---|
 | `LITELLM_MASTER_KEY` | admin key of the LiteLLM of Compose. Empty = LiteLLM refuses to start. Prometheus reads LiteLLM's metrics with it: a small container copies it from `.env`, nothing to create by hand | `sk-` and a long string |
 | `LITELLM_DB_PASSWORD` | password of LiteLLM's database, letters and digits only. Empty = the database refuses to start | — |
+| `LITELLM_PORT` | port of LiteLLM, published on `127.0.0.1`; change it if 4000 is taken | `4000` |
 | `LITELLM_TAG` | the LiteLLM release (pinned: the bench depends on what it serves) | `v1.110.1` |
-| `VLLM_API_BASE`, `VLLM_API_KEY` | the vLLM behind the LiteLLM of Compose, as the container sees it (default `http://host.docker.internal:8000/v1`), and its key if it was started with `--api-key` | — |
+| `VLLM_API_BASE`, `VLLM_API_KEY` | the vLLM behind this LiteLLM, as the container sees it (default `http://host.docker.internal:8000/v1`), and its key if it was started with `--api-key` | — |
 
 **The LiteLLM of Compose** (profile `gateway`; with its own database, so virtual keys work):
 
@@ -679,7 +697,6 @@ settings below is needed for a first run ([section 2.2](#22-run-in-a-docker-cont
   `{"key_alias": "code-review"}`, using the master key.
 - Prometheus holds the master key. To give it a read-only key, or none, see
   [section 7.2](#72-install-and-start-prometheus-once).
-- Skip all this if you already run LiteLLM: neither image is then downloaded, and `BENCH_URL` is its address.
 
 **Your own Prometheus or LiteLLM, under their own Compose**: run only the bench, `docker compose up -d --build bench`,
 and put your Prometheus address in `BENCH_PROMETHEUS`. Write the vLLM and LiteLLM addresses as the `bench` container
