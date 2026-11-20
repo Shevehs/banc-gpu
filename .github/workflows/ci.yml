@@ -53,14 +53,14 @@ jobs:
         run: docker compose build bench
       - name: Start the stack with the fake server and check it answers
         env:
-          BENCH_TOKEN: citoken
+          BENCH_TOKEN: citoken-for-the-ci-run
           COMPOSE_PROFILES: try
           PROMETHEUS_CONFIG: prometheus-fake.yml
         run: |
           docker compose up -d
           for i in $(seq 1 30); do curl -sf -o /dev/null http://127.0.0.1:8765/ && break; sleep 2; done
           test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8765/api/defaults)" = 401
-          curl -sf -H 'X-Bench-Token: citoken' http://127.0.0.1:8765/api/defaults
+          curl -sf -H 'X-Bench-Token: citoken-for-the-ci-run' http://127.0.0.1:8765/api/defaults
           for i in $(seq 1 15); do curl -sf -o /dev/null http://127.0.0.1:9090/-/ready && break; sleep 2; done
           curl -sf http://127.0.0.1:9090/-/ready
       - name: Logs
