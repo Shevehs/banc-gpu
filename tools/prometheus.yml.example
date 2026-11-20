@@ -1,7 +1,7 @@
-# Prometheus configuration for the bench's observation mode (README, section 7.2).
+# Prometheus configuration for the bench's observation mode (README, section 8.2).
 # Copy: cp tools/prometheus.yml.example prometheus.yml, then replace the addresses.
 # Start: prometheus --config.file=prometheus.yml --storage.tsdb.path=prometheus-data --storage.tsdb.retention.time=30d
-# (with Docker Compose: README, section 7.2, option B; addresses seen from the container, host.docker.internal for the host)
+# (with Docker Compose: README, section 8.2, option B; addresses seen from the container, host.docker.internal for the host)
 global:
   scrape_interval: 15s          # keep it equal to the scrape interval given to observation/query.py
 

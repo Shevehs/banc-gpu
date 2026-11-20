@@ -32,14 +32,14 @@ def read_setting(name, default=None):
     return (os.environ.get("BENCH_" + name) or "").strip() or default
 
 
-# What the interface takes from target.env: the target and what the form starts with. Nothing else, so that the file
+# What the interface takes from .env: the target and what the form starts with. Nothing else, so that the file
 # cannot change the interface's own guards (BENCH_ALLOW_PUBLIC_URLS, BENCH_ALLOWED_DIRS, ...).
 TARGET_ENV_NAMES = ("BENCH_URL", "BENCH_MODEL", "BENCH_METRICS", "BENCH_TOKENIZER", "BENCH_API_KEY")
 
 
 def load_target_env(path):
     """Take BENCH_URL, BENCH_MODEL, BENCH_METRICS, BENCH_TOKENIZER and BENCH_API_KEY from the `export NAME=value`
-    lines of the file `path` (target.env) as settings, without replacing a variable that is already set.
+    lines of the file `path` (.env) as settings, without replacing a variable that is already set.
 
     A value is plain, "double-quoted" or 'single-quoted'; a `#` after a space starts a comment. A missing or
     unreadable file, other lines, empty values and anything else (`$`, backticks, `;`) are skipped. The file is read,

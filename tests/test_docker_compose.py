@@ -111,3 +111,11 @@ def test_prometheus_gets_litellms_key_from_the_master_key_without_a_manual_step(
     config = (ROOT / "docker" / "prometheus-gateway.yml").read_text(encoding="utf-8")
     assert "credentials_file: /etc/prometheus/litellm/litellm.key" in config
     assert "litellm-key:" in COMPOSE.split("\nvolumes:")[-1]
+
+
+def test_the_connection_comes_from_dot_env_to_the_bench_container():
+    bench = COMPOSE.split("\n  bench:")[1].split("\n\n")[0]
+    example = (ROOT / ".env.example").read_text(encoding="utf-8")
+    for name in ("BENCH_URL", "BENCH_MODEL", "BENCH_METRICS", "BENCH_API_KEY", "BENCH_TOKENIZER"):
+        assert f'{name}: "${{{name}:-}}"' in bench, name       # empty when unset: the scripts' defaults apply
+        assert f"export {name}=" in example, name
