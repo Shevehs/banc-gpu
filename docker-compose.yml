@@ -1,4 +1,4 @@
-# The client side of the bench in Docker (README, section 4.4).
+# The client side of the bench in Docker (README, section 5.3).
 #   docker compose up -d --build                     the interface and Prometheus (vLLM only)
 #   COMPOSE_PROFILES=gateway docker compose up -d    + LiteLLM, in front of your vLLM
 #   COMPOSE_PROFILES=try docker compose up -d        + a fake server, to try everything without a GPU

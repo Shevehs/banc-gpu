@@ -15,7 +15,7 @@ python -m interface.server
 
 then open **the exact address printed at startup** (it contains an access token: `http://127.0.0.1:8765/?token=…`).
 
-Under Docker ([repository README, section 4.4](../README.md#44-or-with-docker-compose)), the container starts the
+Under Docker ([repository README, section 5.3](../README.md#53-docker-compose-settings)), the container starts the
 server with `--host 0.0.0.0` on purpose: Compose only publishes the port on `127.0.0.1` of the machine.
 
 - `--public-port`: the port the browser uses, when it is not `--port`.

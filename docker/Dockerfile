@@ -1,12 +1,12 @@
 # The client side of the bench: AIPerf and the Python dependencies. The repository itself is not copied: Compose
-# mounts it at /app, so results, traces and the tokenizer stay in your folder (README, section 4.4).
+# mounts it at /app, so results, traces and the tokenizer stay in your folder (README, section 5.3).
 
 # Stage 1: some dependencies of AIPerf have no ready-made package on every processor (arm64) and are compiled here;
 # the compiler stays in this stage.
 FROM python:3.12-slim AS build
 RUN apt-get update && apt-get install -y --no-install-recommends build-essential \
     && rm -rf /var/lib/apt/lists/*
-# AIPerf 0.13 is required (README, section 4.3).
+# AIPerf 0.13 is required (README, section 2.1).
 # The other libraries are pinned to the versions this image was tested with (they satisfy the README's ranges).
 RUN python -m venv /opt/bench \
     && /opt/bench/bin/pip install --no-cache-dir aiperf==0.13.0 openai==3.55.1 httpx==0.28.1 aiohttp==3.14.5 tokenizers==0.23.3

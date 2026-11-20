@@ -1,4 +1,4 @@
-# LiteLLM of the Docker Compose, profile "gateway", with its database litellm-db (README, section 4.4). Edit the two lines marked EDIT.
+# LiteLLM of the Docker Compose, profile "gateway", with its database litellm-db (README, section 5.3). Edit the two lines marked EDIT.
 model_list:
   - model_name: bench                          # EDIT: the name the clients use (BENCH_MODEL)
     litellm_params:

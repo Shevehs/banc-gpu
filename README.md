@@ -31,14 +31,13 @@ Two families of measurements:
   - [2.3 If something looks wrong](#23-if-something-looks-wrong)
   - [2.4 Read the first report](#24-read-the-first-report)
 - [3. How the pieces connect](#3-how-the-pieces-connect)
-- [4. Requirements and installation](#4-requirements-and-installation)
+- [4. Requirements](#4-requirements)
   - [4.1 What must already be in place](#41-what-must-already-be-in-place)
   - [4.2 Check the vLLM in place](#42-check-the-vllm-in-place)
-  - [4.3 Install the bench dependencies](#43-install-the-bench-dependencies)
-  - [4.4 Or with Docker Compose](#44-or-with-docker-compose)
 - [5. The settings file](#5-the-settings-file)
   - [5.1 The settings](#51-the-settings)
   - [5.2 The tokenizer](#52-the-tokenizer)
+  - [5.3 Docker Compose settings](#53-docker-compose-settings)
 - [6. Stress tests](#6-stress-tests)
   - [6.1 Synthetic stress test](#61-synthetic-stress-test)
   - [6.2 Reading the AIPerf report (synthetic and AgentX)](#62-reading-the-aiperf-report-synthetic-and-agentx)
@@ -108,8 +107,13 @@ GPU server.
 
 ### 2.1 Run on your machine
 
-You need [uv](https://docs.astral.sh/uv/), which installs the right Python for the bench
-([how to install it](#43-install-the-bench-dependencies)).
+You need [uv](https://docs.astral.sh/uv/): it downloads the Python that AIPerf needs (3.12) for this environment only,
+so you do not have to install or upgrade Python yourself. If you do not have it (other ways in the
+[uv documentation](https://docs.astral.sh/uv/getting-started/installation/)):
+
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
 
 **1. Get the code and install the dependencies**
 
@@ -117,7 +121,12 @@ You need [uv](https://docs.astral.sh/uv/), which installs the right Python for t
 git clone https://github.com/Shevehs/banc-gpu.git ~/banc-gpu && cd ~/banc-gpu
 uv venv --seed --python 3.12 .venv-aiperf && source .venv-aiperf/bin/activate
 pip install aiperf==0.13.0 "openai>=1.40" httpx
+aiperf --version && python -c "import openai, aiohttp; print('ok')"     # check the installation
 ```
+
+`sweep.sh` and `agentx.sh` check the AIPerf version and stop with a message if it is older than 0.13. AIPerf also
+installs `aiohttp` (interface) and the `hf` command (tokenizer). Without Internet access, `pip` and `uv` (which
+downloads Python) must point to a mirror.
 
 **2. Point the bench at your vLLM**: copy the example file, then edit `.env`: it is the one file of the bench, also read
 by Docker Compose (2.2). Set `BENCH_URL`, `BENCH_MODEL` and `BENCH_API_KEY`. If the target is a LiteLLM gateway, `BENCH_URL` is its address (`http://127.0.0.1:4000`), `BENCH_MODEL`
@@ -185,7 +194,8 @@ You need Docker with Compose, and nothing else on this machine. You set everythi
 **`.env`**: the connection to your model, then a few optional choices. Compose reads it by itself: no `source`.
 
 The one difference are the addresses, which are those the container sees: `http://host.docker.internal:8000` for a vLLM on the machine that runs
-Docker, not `127.0.0.1` (that would be the container itself).
+Docker, not `127.0.0.1` (that would be the container itself). A vLLM on a Linux machine that runs Docker must listen on
+`0.0.0.0`, not on `127.0.0.1`.
 
 **1. Get the code and fill in the connection**
 
@@ -225,7 +235,7 @@ pick your case:
   ```
 
   Then edit the two lines marked `EDIT` in `docker/litellm-config.yaml` (the model name, and the name vLLM serves).
-  More about it (keys per agent, no GPU, the database): [section 4.4](#44-or-with-docker-compose).
+  More about it (keys per agent, no GPU, the database): [section 5.3](#53-docker-compose-settings).
 
 **3. Tokenizer (nothing to do in most cases)**: with the model's Hugging Face name in `BENCH_TOKENIZER` (a public
 model), or the files already in `tools/tokenizer/`, go to step 4. To have the container download it once instead, set
@@ -240,7 +250,8 @@ docker compose logs bench | grep "Bench interface"
 ```
 
 Open the whole address it prints, token included: the link of Docker Desktop opens the bare address, which the
-interface refuses.
+interface refuses. The interface listens on `127.0.0.1` of this machine only: from another machine, use an SSH tunnel
+([section 9](#9-interface)).
 
 **5. Check the connection**: press "Test connection" in the interface (tab "Configuration"), or run the checks in the
 container (the quotes make it read its own variables):
@@ -266,8 +277,8 @@ The results are in the `results/` folder of the repository, on your machine.
 **After a change in `.env`**: `docker compose up -d`. The containers whose settings changed are recreated, and the
 interface gets a new token unless `BENCH_TOKEN` is set in `.env`.
 
-Options (LiteLLM with its database, a try without a GPU, ports, Linux, an existing Prometheus):
-[section 4.4](#44-or-with-docker-compose).
+The options (LiteLLM with its database, a try without a GPU, ports, Linux, your own Prometheus) are in
+[section 5.3](#53-docker-compose-settings).
 
 ### 2.3 If something looks wrong
 
@@ -393,7 +404,7 @@ flowchart LR
 
 Solid arrows are traffic and file writes; dashed arrows are optional paths or metric reads.
 
-**With Docker Compose** ([section 4.4](#44-or-with-docker-compose))
+**With Docker Compose** ([section 5.3](#53-docker-compose-settings))
 
 ```mermaid
 flowchart LR
@@ -448,7 +459,7 @@ expose them. A launch warning says so if it points elsewhere.
 
 ---
 
-## 4. Requirements and installation
+## 4. Requirements
 
 ### 4.1 What must already be in place
 
@@ -458,7 +469,7 @@ expose them. A launch warning says so if it points elsewhere.
 | **vLLM's `/metrics` reachable** from the client machine | Enabled by default; it provides preemptions, cache, speculative decoding, KV cache occupancy. It does **not** require the API key (see [Appendix A](#appendix-a-security-notes)). | `curl -s http://<host>:8000/metrics \| grep -c '^vllm:'` prints a number greater than 0 |
 | **LiteLLM installed** (optional) | To measure through the gateway, or to follow the agents separately in observation ([section 7.5](#75-per-agent-view-through-litellm)): LiteLLM sees which agent sends each request, vLLM does not. Your vLLM declared as a model of LiteLLM, with its key if it has one ([LiteLLM, vLLM](https://docs.litellm.ai/docs/providers/vllm); [configuration](https://docs.litellm.ai/docs/proxy/configs)). | `curl -s -H "Authorization: Bearer <key>" http://<vm>:4000/v1/models` |
 | **Prometheus** (observation only) | A separate server that scrapes vLLM's `/metrics` (and LiteLLM's) and keeps the history; vLLM does not provide one. A single binary ([download](https://prometheus.io/download/)), or the `prom/prometheus` Docker image. Configuration provided: `tools/prometheus.yml.example` ([section 7.2](#72-install-and-start-prometheus-once)). | `curl -s http://<host>:9090/-/ready` |
-| **uv** on the client machine (not needed with Docker Compose, [section 4.4](#44-or-with-docker-compose)) | Installs the Python that AIPerf 0.13 requires (3.11 to 3.13) for the bench's environment; see [section 4.3](#43-install-the-bench-dependencies). | `uv --version` |
+| **uv** on the client machine (not needed with Docker Compose, [section 5.3](#53-docker-compose-settings)) | Installs the Python that AIPerf 0.13 requires (3.11 to 3.13) for the bench's environment; see [section 2.1](#21-run-on-your-machine). | `uv --version` |
 | **bash** | Tested with bash 5; written to also run on the old bash 3.2, verified only with a bash 3.2 built on Linux. | `bash --version` |
 | **Network** | The client machine reaches vLLM (and LiteLLM). No Internet access is needed once the tokenizer is copied into `tools/tokenizer/` ([section 5.2](#52-the-tokenizer)). | — |
 
@@ -536,118 +547,6 @@ In practice:
 | `--api-key <key>` | any mode | key to give the bench (`BENCH_API_KEY`); it does not protect everything, see [Appendix A](#appendix-a-security-notes) |
 | `--fingerprint-mode` | any mode (keep the default `full`) | the bench reads the parallelism (TP, PP, DP, EP) from the responses' fingerprint; in `hash` mode it is hidden |
 
-### 4.3 Install the bench dependencies
-
-Prefer Docker? Go to [section 4.4](#44-or-with-docker-compose).
-
-On the client machine, with [uv](https://docs.astral.sh/uv/): it downloads the Python that AIPerf needs (3.12) for this
-environment only, so you do not have to install or upgrade Python yourself.
-
-Install uv if you do not have it (other ways in the
-[uv documentation](https://docs.astral.sh/uv/getting-started/installation/)):
-
-```bash
-curl -LsSf https://astral.sh/uv/install.sh | sh
-```
-
-Get the code:
-
-```bash
-git clone https://github.com/Shevehs/banc-gpu.git ~/banc-gpu && cd ~/banc-gpu
-```
-
-Create the environment (`--seed` puts pip in it) and install the dependencies in it (AIPerf and the Python libraries the bench uses):
-
-```bash
-uv venv --seed --python 3.12 .venv-aiperf
-source .venv-aiperf/bin/activate
-pip install aiperf==0.13.0 "openai>=1.40" httpx
-```
-
-`sweep.sh` and `agentx.sh` check the AIPerf version and stop with a message if it is older than 0.13.
-
-Check the installation:
-
-```bash
-aiperf --version && python -c "import openai, aiohttp; print('ok')"
-```
-
-AIPerf also installs `aiohttp` (interface) and the `hf` command (tokenizer). Without Internet access, `pip` and `uv`
-(which downloads Python) must point to a mirror.
-
-### 4.4 Or with Docker Compose
-
-`docker-compose.yml` installs the client side in containers, instead of sections 4.3 and 7.2 (Prometheus):
-
-- **`bench`**: AIPerf, the Python libraries and the interface ([section 9](#9-interface)). The repository is mounted
-  in the container, so the results, the traces and the tokenizer stay in your folder.
-- **`prometheus`**: the history for the observation ([section 7](#7-observation-real-use)).
-- **`litellm`** (option): the gateway, in front of your vLLM ([section 7.5](#75-per-agent-view-through-litellm)).
-- **`fake-server`** (option): a fake vLLM and LiteLLM, to try everything without a GPU
-  ([Appendix E](#appendix-e-try-the-bench-without-a-gpu)).
-
-vLLM is not part of it: it runs on your GPU server, as in [section 4.1](#41-what-must-already-be-in-place). Its
-launch options (parallelism, context length, prefix cache, speculative decoding) are what the bench compares, so they
-stay yours.
-
-**Start**: the steps are in [section 2.2](#22-run-in-a-docker-container). What it adds:
-
-- The addresses in `.env` are those the container sees (`127.0.0.1` would be the container itself):
-  `http://host.docker.internal:8000` for a vLLM on the machine that runs Docker, otherwise the address of the server.
-  A public address needs `BENCH_ALLOW_PUBLIC_URLS=1` in `.env`; a vLLM on a Linux machine that runs Docker must listen
-  on `0.0.0.0`, not on `127.0.0.1`.
-- The tokenizer must be the one of the measured model ([section 5.2](#52-the-tokenizer)). With
-  `BENCH_TOKENIZER_REPO` in `.env`, the container downloads it into `tools/tokenizer/` the first time it starts, if the
-  folder has none yet. Without Internet access, copy the files yourself.
-- The interface listens on `127.0.0.1` of this machine only: from another machine, use an SSH tunnel
-  ([section 9](#9-interface)).
-- The Prometheus address is already filled in.
-- Your vLLM replicas are listed in `docker/prometheus.yml`, one line each. This file does not use the `litellm` block
-  of `tools/prometheus.yml.example`: LiteLLM has its own file, `docker/prometheus-gateway.yml`.
-
-**Run the scripts from a terminal**
-
-```bash
-docker compose exec bench ./sweep.sh trial-r1 "1 2 4"
-docker compose exec bench python -m report aiperf results --target 30
-```
-
-**Options**, in a `.env` file (`cp .env.example .env`; every line of it is explained):
-
-- **With LiteLLM and its database** (profile `gateway`: the `litellm` and `litellm-db` containers; skip it if you
-  already run LiteLLM, and neither image is downloaded):
-  - in `.env`: `COMPOSE_PROFILES=gateway`, `PROMETHEUS_CONFIG=prometheus-gateway.yml`, `LITELLM_MASTER_KEY`,
-    `LITELLM_DB_PASSWORD` (letters and digits) and `BENCH_LITELLM_SELECTOR='job="litellm"'` (also in `.env`: the
-    connection, as in [section 2.2](#22-run-in-a-docker-container), step 2);
-  - edit the two lines marked `EDIT` in `docker/litellm-config.yaml`;
-  - `docker compose up -d`: the first start of LiteLLM prepares its database and takes a minute. Prometheus reads
-    LiteLLM's metrics with the master key, which the `prometheus-key` container copies from `.env` into a volume:
-    nothing to create by hand;
-  - one key per agent, for the per-agent view ([section 7.5](#75-per-agent-view-through-litellm)): the same
-    `/key/generate`, with `{"key_alias": "code-review"}`;
-  - in `.env`: `BENCH_URL=http://litellm:4000`, the key of LiteLLM in `BENCH_API_KEY`, and
-    `BENCH_METRICS=http://host.docker.internal:8000/metrics` (vLLM's `/metrics`, as the container sees it);
-  - Prometheus then holds the master key. To give it a read-only key or none instead, see
-    [section 7.2](#72-install-and-start-prometheus-once): put a read-only key in `docker/secrets/litellm.key` and point
-    `credentials_file` of `docker/prometheus-gateway.yml` to `/etc/prometheus/secrets/litellm.key`; or, for no key,
-    uncomment `require_auth_for_metrics_endpoint: false` in `docker/litellm-config.yaml`.
-- **Without a GPU**: set `COMPOSE_PROFILES=try` and `PROMETHEUS_CONFIG=prometheus-fake.yml`, with
-  `BENCH_URL=http://fake-server:8001` in `.env`.
-- **Ports**: `BENCH_PORT`, `PROMETHEUS_PORT` and `LITELLM_PORT`, if another service uses 8765, 9090 or 4000.
-- **Linux**: `BENCH_UID` and `BENCH_GID` (`id -u`, `id -g`) keep the results yours instead of root's, and run the
-  container as you: set them.
-
-`docker compose down` stops the stack and keeps its data. `docker compose down -v` erases it: the Prometheus history
-and, with LiteLLM, its database (virtual keys, spend logs: the keys of your agents then no longer work). The
-database password is fixed when its volume is created: after changing `LITELLM_DB_PASSWORD`, run
-`docker compose down -v` first.
-If LiteLLM or Prometheus already run under their own Compose, see [section 7.2](#72-install-and-start-prometheus-once)
-(option B) and run only `bench`: `docker compose up -d --build bench`. Give it the address of your Prometheus in `.env`
-(`BENCH_PROMETHEUS`), and write the vLLM and LiteLLM addresses as the `bench` container reaches them:
-`host.docker.internal:<port>`, or the service name if you attach `bench` to the network of the other Compose
-(`networks:` with `external: true`, in a `docker-compose.override.yml`). Keep `.env` private (`chmod 600 .env`): it holds
-the keys, and `BENCH_API_KEY` and `HF_TOKEN` are visible with `docker inspect` on this machine.
-
 [↑ Back to top](#top)
 
 ---
@@ -655,7 +554,7 @@ the keys, and `BENCH_API_KEY` and `HF_TOKEN` are visible with `docker inspect` o
 ## 5. The settings file
 
 The Quick start ([section 2](#2-quick-start)) is enough to get going. This section explains the one file of settings,
-`.env`: what each setting means, and the tokenizer. To check that the connection works, see
+`.env`: what each setting means, the tokenizer and the settings of Docker Compose. To check that the connection works, see
 [section 2.1](#21-run-on-your-machine).
 
 ### 5.1 The settings
@@ -697,6 +596,7 @@ answers "HTTP 401: key required", or there is no `vllm:` metric at all.
 | `BENCH_METRICS` | `/metrics` address **of vLLM** (never LiteLLM's or Prometheus'), one per replica, separated by spaces. Empty = `BENCH_URL/metrics`, which only suits a `BENCH_URL` that points to vLLM directly. If `BENCH_URL` points to LiteLLM, give vLLM's address | `http://10.0.0.5:8000/metrics` |
 | `BENCH_API_KEY` | the target's key (vLLM's `--api-key`, or a LiteLLM key). Sent to the target only; it is not written to the bench's logs, but see [Appendix A](#appendix-a-security-notes) (visible in `ps` while AIPerf runs) | — |
 | `BENCH_TOKENIZER` | empty = `tools/tokenizer/` ([section 5.2](#52-the-tokenizer)); otherwise the absolute path of a folder that holds `tokenizer.json` (no copy), or a Hugging Face name (AIPerf downloads it; the test agents, which only read a local folder, then estimate the sizes) | empty |
+| `DO_NOT_TRACK` | `1` = no usage statistics (AIPerf, Hugging Face). Leave it at `1`. Do not add `HF_HUB_OFFLINE`, see below | `1` |
 
 Settings are read from the `BENCH_*` variables.
 
@@ -715,7 +615,7 @@ variable is set (`sweep.sh` removes it for AIPerf anyway).
 
 ### 5.2 The tokenizer
 
-With Docker Compose: `BENCH_TOKENIZER_REPO` in `.env` downloads it once at start ([section 4.4](#44-or-with-docker-compose)).
+With Docker Compose: `BENCH_TOKENIZER_REPO` in `.env` downloads it once at start ([section 5.3](#53-docker-compose-settings)).
 
 AIPerf needs the tokenizer of the measured model to build prompts of the right length; the agents use it to adjust
 their sizes. On a machine with Hugging Face access:
@@ -736,6 +636,53 @@ export BENCH_TOKENIZER=$HOME/.cache/huggingface/hub/models--<organization>--<mod
 ```
 
 Check the model's license before versioning these files.
+
+### 5.3 Docker Compose settings
+
+With Docker Compose, you set everything in `.env`, next to the connection of [5.1](#51-the-settings). None of the
+settings below is needed for a first run ([section 2.2](#22-run-in-a-docker-container)).
+
+| Variable | Meaning | Example |
+|---|---|---|
+| `COMPOSE_PROFILES` | what runs besides the interface and Prometheus: `gateway` (LiteLLM and its database), `try` (a fake server, to try everything without a GPU, [Appendix E](#appendix-e-try-the-bench-without-a-gpu)); both, separated by a comma | `gateway` |
+| `PROMETHEUS_CONFIG` | the Prometheus configuration of the `docker/` folder: `prometheus.yml` (vLLM only: list your vLLM replicas in it, one line each), `prometheus-gateway.yml` (vLLM and LiteLLM), `prometheus-fake.yml` (the fake server) | `prometheus-gateway.yml` |
+| `BENCH_TOKEN` | token of the interface. Empty = a random one at each start, shown by `docker compose logs bench`; a fixed value gives an address you can keep | a long random string |
+| `BENCH_PORT`, `PROMETHEUS_PORT`, `LITELLM_PORT` | ports published on `127.0.0.1` of this machine (the interface, Prometheus, LiteLLM); change them if another service uses 8765, 9090 or 4000. From another machine, use an SSH tunnel ([section 9](#9-interface)) | `8765` |
+| `BENCH_UID`, `BENCH_GID` | Linux: your user and group (`id -u`, `id -g`). The container then runs as you and the results are yours, not root's | `1000` |
+| `BENCH_TOKENIZER_REPO` | Hugging Face name of the model: its tokenizer is downloaded once into `tools/tokenizer/` at the first start ([5.2](#52-the-tokenizer)) | `org/model` |
+| `HF_TOKEN` | Hugging Face token, only for a gated model. The runs do not receive it | — |
+| `BENCH_ALLOW_PUBLIC_URLS` | `1` if the GPU server has a public address: the interface refuses one otherwise | `1` |
+| `BENCH_PROMETHEUS` | the Prometheus address the interface starts with. Default: the one of Compose (`http://prometheus:9090`). With your own Prometheus, see below | `http://prometheus:9090` |
+| `BENCH_LITELLM_SELECTOR` | the LiteLLM selector the observation starts with, for the per-agent view ([section 7.5](#75-per-agent-view-through-litellm)) | `'job="litellm"'` |
+| `LITELLM_MASTER_KEY` | admin key of the LiteLLM of Compose. Empty = LiteLLM refuses to start. Prometheus reads LiteLLM's metrics with it: a small container copies it from `.env`, nothing to create by hand | `sk-` and a long string |
+| `LITELLM_DB_PASSWORD` | password of LiteLLM's database, letters and digits only. Empty = the database refuses to start | — |
+| `LITELLM_TAG` | the LiteLLM release (pinned: the bench depends on what it serves) | `v1.110.1` |
+| `VLLM_API_BASE`, `VLLM_API_KEY` | the vLLM behind the LiteLLM of Compose, as the container sees it (default `http://host.docker.internal:8000/v1`), and its key if it was started with `--api-key` | — |
+
+**The LiteLLM of Compose** (profile `gateway`; with its own database, so virtual keys work):
+
+- Edit the two lines marked `EDIT` in `docker/litellm-config.yaml`: the model name the clients use (`BENCH_MODEL`) and
+  the name vLLM serves.
+- `docker compose up -d`: the first start prepares the database and takes a minute.
+- One key per agent, for the per-agent view ([section 7.5](#75-per-agent-view-through-litellm)): `/key/generate` with
+  `{"key_alias": "code-review"}`, using the master key.
+- Prometheus holds the master key. To give it a read-only key, or none, see
+  [section 7.2](#72-install-and-start-prometheus-once).
+- Skip all this if you already run LiteLLM: neither image is then downloaded, and `BENCH_URL` is its address.
+
+**Your own Prometheus or LiteLLM, under their own Compose**: run only the bench, `docker compose up -d --build bench`,
+and put your Prometheus address in `BENCH_PROMETHEUS`. Write the vLLM and LiteLLM addresses as the `bench` container
+reaches them: `host.docker.internal:<port>`, or the service name if you attach `bench` to the network of the other
+Compose (`networks:` with `external: true`, in a `docker-compose.override.yml`). To add Prometheus to that Compose, see
+[section 7.2](#72-install-and-start-prometheus-once), option B.
+
+**Stop**: `docker compose down` stops everything and keeps the data. `docker compose down -v` also erases the
+Prometheus history and LiteLLM's database (its virtual keys and spend logs: the keys of your agents then no longer
+work). The database password is fixed when its volume is created: after changing `LITELLM_DB_PASSWORD`, run
+`docker compose down -v` first.
+
+Keep `.env` private (`chmod 600 .env`): it holds the keys, and `BENCH_API_KEY` and `HF_TOKEN` are visible with
+`docker inspect` on this machine ([Appendix A](#appendix-a-security-notes)).
 
 [↑ Back to top](#top)
 
@@ -1291,7 +1238,7 @@ the folder of `prometheus.yml` (observed with Prometheus 3.7.3). `tools/promethe
 two jobs, `vllm` (the default selector of `--vllm`) and `litellm` (`metrics_path: /metrics/`, key in `litellm.key`).
 
 **B. Docker Compose** (handy if LiteLLM already runs under Compose). To start Prometheus and the bench from this
-repository's own Compose instead, see [section 4.4](#44-or-with-docker-compose); what follows is for a Prometheus added to your existing Compose.
+repository's own Compose instead, see [section 5.3](#53-docker-compose-settings); what follows is for a Prometheus added to your existing Compose.
 
 The `docker-compose.yml` published by LiteLLM may **already** contain a `prometheus` service, open to the network on
 port 9090 (seen on a copy of the file, not checked against LiteLLM's repository itself). In that case **edit it**
@@ -1706,7 +1653,7 @@ of the chosen view.
 | `agentx.sh`, `tools/download_agentx_traces.sh` | AgentX stress test; local copy of the traces |
 | `observation/query.py`, `analysis.py` | observation mode: Prometheus queries (`python -m observation.query`), indicators and verdicts (windows, periods, agents) |
 | `tools/prometheus.yml.example`, `tools/prometheus-fake.yml` | Prometheus configuration (production; check without a GPU) |
-| `docker-compose.yml`, `.env.example`, `docker/` | the client side in Docker: the image, `docker/prometheus*.yml`, `docker/litellm-config.yaml` ([section 4.4](#44-or-with-docker-compose)) |
+| `docker-compose.yml`, `.env.example`, `docker/` | the client side in Docker: the image, `docker/prometheus*.yml`, `docker/litellm-config.yaml` ([section 5.3](#53-docker-compose-settings)) |
 | `agents_test/agents.py` | the three test agents and their simulated tools |
 | `agents_test/profiles.py` | sizes of the three profiles, and the number of calls of one task |
 | `agents_test/launcher.py` | launch by levels |
@@ -1741,7 +1688,7 @@ durations), labels, agent names and error messages; no prompt or response conten
 | `err` > 0 | requests refused or timed out | key, model name, `--max-model-len`, `--max-num-seqs` |
 | agent throughput "—" | empty measurement window | `--warmup` shorter than `--duration`, levels long enough |
 | cache about 0 for the agents | prefix cache disabled | restart vLLM without `--no-enable-prefix-caching` |
-| `WARNING … autonomous mode … made N calls per task instead of M` (`report agents`) | the model stopped calling tools: output cap too small for a tool call at this scale, or vLLM started without `--enable-auto-tool-choice --tool-call-parser <parser>` | add the options ([section 4](#4-requirements-and-installation), optional options), or use `scripted` mode |
+| `WARNING … autonomous mode … made N calls per task instead of M` (`report agents`) | the model stopped calling tools: output cap too small for a tool call at this scale, or vLLM started without `--enable-auto-tool-choice --tool-call-parser <parser>` | add the options ([section 4](#4-requirements), optional options), or use `scripted` mode |
 | TP/PP/DP "n/a" in the interface | no fingerprint | correct model and key; default `--fingerprint-mode`; through a gateway, vLLM's address in `BENCH_METRICS`; or target vLLM directly |
 | the interface says a run is in progress and so no one-token completion (no fingerprint) | connection test during a run | normal: a one-token completion would skew the measurement |
 | AgentX: "Scenario invariants violated" | `BENCH_DURATION` < 900 s, or AIPerf launched by hand on local traces | `BENCH_DURATION` ≥ 900 (or `BENCH_SHORT_RUN=1` for a simple check); go through `agentx.sh` |
@@ -1761,11 +1708,11 @@ durations), labels, agent names and error messages; no prompt or response conten
 | Per-agent view: tokens at 0 or too low, speed empty | streamed requests without the usage: LiteLLM counts zero tokens | `stream_options: {"include_usage": true}` in the agent's requests, or `always_include_stream_usage: true` ([section 7.5](#75-per-agent-view-through-litellm)) |
 | LiteLLM target "DOWN" in Prometheus, 401 error or key file not found | key missing or wrong, or `litellm.key` missing or unreadable | create `litellm.key` ([section 7.2](#72-install-and-start-prometheus-once)) with a valid key; `metrics_path: /metrics/`. With this repository's Compose: `LITELLM_MASTER_KEY` was empty or changed in `.env`, run `docker compose up -d` again |
 | Docker: "not a directory: Are you trying to mount a directory onto a file" | `prometheus.yml` or `litellm.key` missing at the first `up`: Docker created a folder in its place | `rmdir prometheus.yml litellm.key`, create the files, start again ([section 7.2](#72-install-and-start-prometheus-once), B) |
-| Docker: the target is unreachable from the container but answers on the machine | `127.0.0.1` in `.env` is the container | `http://host.docker.internal:<port>` ([section 4.4](#44-or-with-docker-compose)) |
+| Docker: the target is unreachable from the container but answers on the machine | `127.0.0.1` in `.env` is the container | `http://host.docker.internal:<port>` ([section 5.3](#53-docker-compose-settings)) |
 | Docker: the interface answers "host refused" | the browser address uses a port other than `BENCH_PORT` | open the exact address of `docker compose logs bench` |
-| Docker, Linux: results owned by root | the container runs as root | `BENCH_UID` and `BENCH_GID` in `.env` ([section 4.4](#44-or-with-docker-compose)) |
-| Docker: LiteLLM cannot reach its database, `litellm-db` is healthy | a character other than a letter or a digit in `LITELLM_DB_PASSWORD` breaks its URL | letters and digits only, then `docker compose down -v` ([section 4.4](#44-or-with-docker-compose)) |
-| Docker: `litellm-db` restarts again and again, or "password authentication failed" | `LITELLM_DB_PASSWORD` is empty, or changed after the first start | set it; after a change, `docker compose down -v` ([section 4.4](#44-or-with-docker-compose)) |
+| Docker, Linux: results owned by root | the container runs as root | `BENCH_UID` and `BENCH_GID` in `.env` ([section 5.3](#53-docker-compose-settings)) |
+| Docker: LiteLLM cannot reach its database, `litellm-db` is healthy | a character other than a letter or a digit in `LITELLM_DB_PASSWORD` breaks its URL | letters and digits only, then `docker compose down -v` ([section 5.3](#53-docker-compose-settings)) |
+| Docker: `litellm-db` restarts again and again, or "password authentication failed" | `LITELLM_DB_PASSWORD` is empty, or changed after the first start | set it; after a change, `docker compose down -v` ([section 5.3](#53-docker-compose-settings)) |
 | LiteLLM does not start with `callbacks: ["prometheus"]` | `prometheus_client` module missing | `pip install prometheus_client` in LiteLLM's environment ([Appendix B](#appendix-b-litellm-per-key-setup-and-install-details)) |
 
 [↑ Back to top](#top)
@@ -1988,7 +1935,7 @@ The observation is checked with a Prometheus that scrapes the fake server (`tool
 
 ### E.1 Start the fake server
 
-In Docker: `COMPOSE_PROFILES=try` and `BENCH_URL=http://fake-server:8001` in `.env` ([section 4.4](#44-or-with-docker-compose)); the fake server then listens on `0.0.0.0` (`--host`) so that the other containers
+In Docker: `COMPOSE_PROFILES=try` and `BENCH_URL=http://fake-server:8001` in `.env` ([section 5.3](#53-docker-compose-settings)); the fake server then listens on `0.0.0.0` (`--host`) so that the other containers
 reach it, and Prometheus uses `docker/prometheus-fake.yml`.
 
 Run it in the background, in a terminal you keep open and where the environment is active ([section 2.1](#21-run-on-your-machine)); without it, the `python` command is not found:

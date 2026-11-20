@@ -1,5 +1,5 @@
-# Prometheus of the Docker Compose with the LiteLLM gateway (README, section 4.4): vLLM and LiteLLM.
-# LiteLLM's master key (LITELLM_MASTER_KEY of .env) reaches Prometheus through the prometheus-key service (README, section 4.4).
+# Prometheus of the Docker Compose with the LiteLLM gateway (README, section 5.3): vLLM and LiteLLM.
+# LiteLLM's master key (LITELLM_MASTER_KEY of .env) reaches Prometheus through the prometheus-key service (README, section 5.3).
 global:
   scrape_interval: 15s
 
