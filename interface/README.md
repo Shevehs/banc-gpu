@@ -80,7 +80,14 @@ The interface never starts vLLM: it measures the one that is running. Options to
   `traces-<preset>` the first time) or takes your own folder (repository README, section 7.5). For the test agents, "Label the agents" and "Per-agent keys" give every
   request the identity of its profile, for the per-agent view through LiteLLM (repository README, section 8.5). "Replace existing results"
   deletes the results of the same label (same directory) and starts again; without it, an existing label stops the run.
+  "Start" chooses when the run goes: now, after the current run, or at a date and time (read in the browser's time
+  zone). A planned run goes into a queue saved in `interface/planned.json` (ignored by git), which survives a restart of
+  the interface; the runs start one after another, in the order of their time. Keys are never stored, so a planned run
+  uses `BENCH_API_KEY` of `.env` for its target, and per-agent keys typed in the form cannot be planned.
 - **Runs**: the runs started since the interface server was started, a live log, and stop. Logs are kept in `interface/logs/`.
+  The planned runs are listed above them, each with "cancel". If a planned run fails, is stopped, or was interrupted by
+  a restart, the queue is paused with the reason shown: "resume" goes on. A run that starts more than two minutes after
+  its time (the interface was off, or the previous run overran) is marked "started late".
 - **Results**: analysis of a results directory, shown as soon as a field changes (table, selected point, warnings,
   throughput-per-GPU vs. interactivity curve with the target). The "GPUs" field is optional: empty, the count of each run is deduced
   from its fingerprint (`server_config.json`).

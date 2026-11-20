@@ -1637,7 +1637,12 @@ sides of the tunnel (under Docker Compose, it is `BENCH_PORT`).
     ([section 7.5](#75-agentx-with-generated-or-your-own-traces)).
   - A label that already exists in the results directory stops the run. Tick "Replace existing results" to delete it
     and start again.
-- **Runs**: live log, stop.
+  - "Start": now, after the current run, or at a date and time (read in your browser's time zone). A planned run goes
+    into a queue: the runs start one after another, in the order of their time.
+  - A planned run uses the key of `.env` (`BENCH_API_KEY`), never one typed in the form: keys are not stored. The
+    queue is saved, so it survives a restart of the interface, but the interface must be running at the start time.
+- **Runs**: live log, stop. The planned runs are listed above, each with "cancel". If a planned run fails or is
+  stopped, the queue waits: press "resume" to go on.
 - **Results**: tables, selected point, curve of the stress tests, updated as soon as a field changes; the "GPU" field is optional (deduced from the
   fingerprint when empty).
 - **Observation** (own tab): nothing to start. Prometheus and the GPUs come from Configuration (the GPUs are required,

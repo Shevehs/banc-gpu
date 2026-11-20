@@ -33,6 +33,7 @@ from pathlib import Path
 
 from aiohttp import web
 
+from interface import planner
 from tools import settings
 
 HERE = Path(__file__).resolve().parent
@@ -49,6 +50,9 @@ EXTRA_OK = {"--use-server-token-count": 0, "--benchmark-grace-period": 1, "--pro
 LEVELS_OK = re.compile(r"^\s*\d{1,4}(\s+\d{1,4}){0,30}\s*$")
 RUNS = {}  # id -> dict(type, command, start, end, code, log, proc)
 COUNTER = [0]
+PLANNED_FILE = HERE / "planned.json"
+PLANNED = []              # planned runs (interface/planner.py), most recent last
+PAUSE = [None]            # why the queue is paused (a planned run failed or was stopped), else None
 
 
 class Refusal(Exception):
@@ -435,24 +439,22 @@ async def read_body(req):
     return p
 
 
-async def launch(req):
-    """POST /api/runs: validate the parameters and start the run in a subprocess of its own session.
+class Busy(Exception):
+    """A run is already in progress."""
 
-    Returns {"id"}; 409 if a run is already in progress, 400 if the parameters are refused."""
+
+async def start_run(p):
+    """Validate the form fields `p` and start the run in a subprocess of its own session. Returns the run id.
+
+    Raises:
+        Busy: if a run is already in progress.
+        Refusal: if a field is invalid."""
     if any(e["code"] is None for e in RUNS.values()):
-        return web.json_response({"error": "a run is already in progress: wait for it to finish or stop it"}, status=409)
-    try:
-        p = await read_body(req)
-    except Refusal as e:
-        return web.json_response({"error": str(e)}, status=400)
-    try:
-        factory = {"synthetic": synthetic_command, "agents": agents_command,
-                   "agentx": agentx_command}.get(p.get("type"))
-        if not factory:
-            raise Refusal("unknown run type")
-        cmd, env, cwd = factory(p)
-    except Refusal as e:
-        return web.json_response({"error": str(e)}, status=400)
+        raise Busy("a run is already in progress: wait for it to finish or stop it")
+    factory = {"synthetic": synthetic_command, "agents": agents_command, "agentx": agentx_command}.get(p.get("type"))
+    if not factory:
+        raise Refusal("unknown run type")
+    cmd, env, cwd = factory(p)
     LOGS_DIR.mkdir(exist_ok=True)
     COUNTER[0] += 1
     eid = f"{time.strftime('%Y%m%d-%H%M%S')}-{COUNTER[0]:03d}-{p.get('label', '')}"
@@ -466,6 +468,21 @@ async def launch(req):
     RUNS[eid] = dict(id=eid, type=p.get("type"), label=p.get("label"), command=display,
                        start=time.time(), end=None, code=None, log=str(log), proc=proc)
     asyncio.create_task(follow(eid, proc, f))
+    return eid
+
+
+async def launch(req):
+    """POST /api/runs: validate the parameters and start the run in a subprocess of its own session.
+
+    Returns {"id"}; 409 if a run is already in progress, 400 if the parameters are refused."""
+    if any(e["code"] is None for e in RUNS.values()):
+        return web.json_response({"error": "a run is already in progress: wait for it to finish or stop it"}, status=409)
+    try:
+        eid = await start_run(await read_body(req))
+    except Refusal as e:
+        return web.json_response({"error": str(e)}, status=400)
+    except Busy as e:
+        return web.json_response({"error": str(e)}, status=409)
     return web.json_response({"id": eid})
 
 
@@ -785,6 +802,131 @@ async def guard(req, handler):
     return await handler(req)
 
 
+DEFAULT_ROOTS = {"synthetic": "results", "agents": "agents_test/results-agents", "agentx": "results-agentx"}
+
+
+def result_folder(p):
+    """Folder where the run of the form fields `p` writes its results: <results directory>/<label>."""
+    root = results_dir(p.get("root") or DEFAULT_ROOTS.get(p.get("type"), "results"))
+    return ROOT / root / valid_name(p.get("label"), "label")
+
+
+def check_plannable(p):
+    """Refuse what a planned run cannot do: it must be valid now, must not need a key typed in the form (keys are
+    never stored: the run uses those of .env), and its label must be free (in the results and in the queue).
+
+    Raises:
+        Refusal: with the reason."""
+    if p.get("type") == "agents" and str(p.get("agent_keys") or "").strip():
+        raise Refusal("per-agent keys cannot be planned: they are not stored. Plan without them, or start the run now")
+    typed = valid_key(p.get("api_key"))
+    without = planner.clean_params(p)
+    factory = {"synthetic": synthetic_command, "agents": agents_command, "agentx": agentx_command}.get(p.get("type"))
+    if not factory:
+        raise Refusal("unknown run type")
+    factory(without)                                      # the same checks as a run started now
+    if typed and not target_key(without):
+        raise Refusal("the key typed in the form is not stored, so a planned run cannot use it: put it in .env "
+                      "(BENCH_API_KEY, for this target URL), or start the run now")
+    folder = result_folder(p)
+    if p.get("overwrite") is not True and folder.is_dir() and any(folder.iterdir()):
+        raise Refusal(f"{folder.relative_to(ROOT)} already exists: change the label, or tick \"Replace existing results\"")
+    for i in PLANNED:
+        if i["state"] == "waiting" and result_folder(i["params"]) == folder:
+            raise Refusal("a planned run already has this label in this results directory")
+
+
+def save_planned():
+    """Write the queue to its file (a failure is not fatal: the queue still works until the interface stops)."""
+    try:
+        planner.save(PLANNED_FILE, PLANNED, PAUSE[0])
+    except OSError as e:
+        print(f"WARNING: cannot save the planned runs: {e}", flush=True)
+
+
+async def plan_run(req):
+    """POST /api/planned: put a run in the queue. The body is the form of POST /api/runs plus `start_at` (epoch seconds,
+    or null for "after the current run").
+
+    Returns {"id"}; 400 if the parameters are refused."""
+    try:
+        p = await read_body(req)
+        check_plannable(p)
+        item = planner.make_item(p, p.get("start_at"), time.time(), len(PLANNED) + 1)
+    except (Refusal, ValueError) as e:
+        return web.json_response({"error": str(e)}, status=400)
+    while any(i["id"] == item["id"] for i in PLANNED):
+        item["id"] += "x"
+    PLANNED.append(item)
+    save_planned()
+    return web.json_response({"id": item["id"]})
+
+
+async def list_planned(req):
+    """GET /api/planned: the planned runs (without their form fields) and why the queue is paused, if it is."""
+    return web.json_response({"items": [planner.public_view(i) for i in PLANNED], "paused": PAUSE[0]})
+
+
+async def cancel_planned(req):
+    """POST /api/planned/{id}/cancel: remove a waiting run from the queue."""
+    item = next((i for i in PLANNED if i["id"] == req.match_info["id"]), None)
+    if not item or item["state"] != "waiting":
+        return web.json_response({"error": "unknown or no longer waiting"}, status=400)
+    item["state"] = "cancelled"
+    save_planned()
+    return web.json_response({"ok": True})
+
+
+async def resume_planned(req):
+    """POST /api/planned/resume: start the queue again after a failure or a stop."""
+    PAUSE[0] = None
+    save_planned()
+    return web.json_response({"ok": True})
+
+
+async def tick(now):
+    """One step of the scheduler: record the end of the planned run in progress (a failure pauses the queue), then,
+    if the queue is not paused and no run is in progress, start the next planned run that is due."""
+    for i in PLANNED:
+        if i["state"] == "running":
+            run = RUNS.get(i["run_id"])
+            if run and run["code"] is not None:
+                i["code"] = run["code"]
+                i["state"] = "done" if run["code"] == 0 else "failed"
+                if run["code"] != 0:
+                    PAUSE[0] = f"{i['label']} ended with exit code {run['code']}"
+                save_planned()
+    if PAUSE[0] or any(e["code"] is None for e in RUNS.values()):
+        return
+    item = planner.due(PLANNED, now)
+    if not item:
+        return
+    try:
+        item["run_id"] = await start_run({**item["params"], "type": item["type"]})
+        item["state"] = "running"
+        item["late"] = planner.is_late(item, now)
+    except Busy:
+        return
+    except Refusal as e:
+        item["state"], item["error"] = "failed", str(e)
+        PAUSE[0] = f"{item['label']} could not start: {e}"
+    save_planned()
+
+
+async def scheduler(app):
+    """Background task of the interface: look at the queue every few seconds."""
+    async def loop():
+        while True:
+            try:
+                await tick(time.time())
+            except Exception as e:  # noqa: BLE001  (the scheduler must not die on one bad item)
+                print(f"WARNING: the scheduler failed: {e}", flush=True)
+            await asyncio.sleep(5)
+    task = asyncio.create_task(loop())
+    yield
+    task.cancel()
+
+
 async def clean_shutdown(app):
     """When the interface stops, also stop the runs in progress (otherwise they would keep going alone)."""
     for e in RUNS.values():
@@ -808,9 +950,13 @@ def main():
         print(f"WARNING: listening on {p.host}: the token is the only protection unless the port is published on "
               "127.0.0.1 only (Docker Compose does that).", flush=True)
     settings.load_target_env(ROOT / ".env")   # the form starts with .env, loaded or not in this terminal
+    PLANNED[:], PAUSE[0] = planner.load(PLANNED_FILE)
     app = web.Application(middlewares=[guard])
     app.on_shutdown.append(clean_shutdown)
+    app.cleanup_ctx.append(scheduler)
     app.add_routes([web.post("/api/runs", shielded(launch)), web.get("/api/runs", list_runs),
+                    web.post("/api/planned", plan_run), web.get("/api/planned", list_planned),
+                    web.post("/api/planned/resume", resume_planned), web.post("/api/planned/{id}/cancel", cancel_planned),
                     web.get("/api/runs/{eid}/log", run_log), web.post("/api/runs/{eid}/stop", stop_run),
                     web.get("/api/roots", list_roots), web.get("/api/defaults", defaults), web.get("/api/results", read_results),
                     web.post("/api/test-connection", test_connection), web.post("/api/observation", observation),

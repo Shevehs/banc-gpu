@@ -240,14 +240,28 @@ function Launch({ onLaunched, c, params, setParams, kind, setKind }) {
   const toggleAgent = (a) => setParams({ ...params, agents: { ...p,
     agents: p.agents.includes(a) ? p.agents.filter((x) => x !== a) : [...p.agents, a] } });
 
+  const [when, setWhen] = useState("now");        // now | after (the current run) | at (a date and time)
+  const [at, setAt] = useState("");
+
   const submit = async () => {
     setMsg(null);
     try {
-      const r = await api("/api/runs", { method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ type: kind, ...c, ...launchFields(kind, p) }) });
-      setMsg({ ok: true, text: `Run started: ${r.id}` });
+      const body = { type: kind, ...c, ...launchFields(kind, p) };
+      if (when === "now") {
+        const r = await api("/api/runs", { method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body) });
+        setMsg({ ok: true, text: `Run started: ${r.id}` });
+        onLaunched(r.id);
+      } else {
+        // The time is read in the browser's own time zone and sent as seconds: the server may be elsewhere.
+        const start = when === "at" ? Date.parse(at) / 1000 : null;
+        if (when === "at" && Number.isNaN(start)) throw new Error("Choose the date and time of the start");
+        await api("/api/planned", { method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ...body, start_at: start }) });
+        setMsg({ ok: true, text: when === "at" ? `Planned for ${new Date(at).toLocaleString()}: see the Runs tab`
+          : "Planned after the current run: see the Runs tab" });
+      }
       if (p.overwrite) setParams({ ...params, [kind]: { ...p, overwrite: false } });     // replacing is asked again each time
-      onLaunched(r.id);
     } catch (e) { setMsg({ ok: false, text: e.message }); }
   };
 
@@ -346,9 +360,23 @@ function Launch({ onLaunched, c, params, setParams, kind, setKind }) {
         )}
       </div>
       <div className="row">
-        <button className="primary" onClick={submit}>Start run</button>
+        <label>Start{" "}
+          <select value={when} onChange={(e) => setWhen(e.target.value)}>
+            <option value="now">now</option>
+            <option value="after">after the current run</option>
+            <option value="at">at a date and time</option>
+          </select>
+        </label>
+        {when === "at" && <input type="datetime-local" value={at} onChange={(e) => setAt(e.target.value)} />}
+        <button className="primary" onClick={submit}>{when === "now" ? "Start run" : "Plan run"}</button>
         {msg && <span className={msg.ok ? "ok" : "error"}>{msg.text}</span>}
       </div>
+      {when !== "now" && (
+        <p className="note">
+          A planned run uses the key of <code>.env</code> (<code>BENCH_API_KEY</code>), never one typed in the form. The runs
+          start one after another; if one fails, the queue waits until you resume it in the Runs tab.
+        </p>
+      )}
       <p className="note">
         The vLLM server is started by hand, with the options from section 4.2 of the README.
       </p>
@@ -359,12 +387,16 @@ function Launch({ onLaunched, c, params, setParams, kind, setKind }) {
 // ------------------------------------------------------------------ Runs tab
 function Runs({ selection, setSelection }) {
   const [runs, setRuns] = useState([]);
+  const [planned, setPlanned] = useState({ items: [], paused: null });
   const [text, setText] = useState("");
   const pos = useRef(0);
   const box = useRef(null);
 
   useEffect(() => {
-    const load = () => api("/api/runs").then(setRuns).catch(() => {});
+    const load = () => {
+      api("/api/runs").then(setRuns).catch(() => {});
+      api("/api/planned").then(setPlanned).catch(() => {});
+    };
     load(); const t = setInterval(load, 3000); return () => clearInterval(t);
   }, []);
 
@@ -388,10 +420,38 @@ function Runs({ selection, setSelection }) {
   const stop = (id) => api(`/api/runs/${encodeURIComponent(id)}/stop`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }).catch((e) => alert(e.message));
   const status = (e) => (e.code === null ? "running" : e.code === 0 ? "finished" : `failed (${e.code})`);
+  const post = (path) => api(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" })
+    .then(() => api("/api/planned").then(setPlanned)).catch((e) => alert(e.message));
+  const when = (i) => (i.state !== "waiting" ? i.state : i.start_at === null ? "after the current run"
+    : `at ${new Date(i.start_at * 1000).toLocaleString()}`);
+  const shown = planned.items.filter((i) => i.state !== "cancelled");
 
   return (
     <section className="two-columns">
       <div>
+        {(shown.length > 0 || planned.paused) && (
+          <>
+            <h3>Planned</h3>
+            {planned.paused && (
+              <p className="error">Queue paused: {planned.paused}.{" "}
+                <button className="link" onClick={() => post("/api/planned/resume")}>resume</button>
+              </p>
+            )}
+            <ul className="list">
+              {shown.map((i) => (
+                <li key={i.id} onClick={() => i.run_id && setSelection(i.run_id)}>
+                  <div><b>{i.label}</b> <span className="badge">{{ agents: "test agents", agentx: "AgentX" }[i.type] || "synthetic"}</span></div>
+                  <div className="small">{when(i)}{i.late ? " · started late" : ""}{i.error ? ` · ${i.error}` : ""}
+                    {i.state === "waiting" && (
+                      <button className="link" onClick={(ev) => { ev.stopPropagation(); post(`/api/planned/${encodeURIComponent(i.id)}/cancel`); }}>cancel</button>
+                    )}
+                  </div>
+                </li>
+              ))}
+            </ul>
+            <h3>Started</h3>
+          </>
+        )}
         {runs.length === 0 && <p className="note">No run started since the interface was launched.</p>}
         <ul className="list">
           {runs.map((e) => (
