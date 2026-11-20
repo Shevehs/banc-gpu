@@ -169,8 +169,9 @@ Edit `target.env`: `BENCH_URL`, `BENCH_MODEL`, `BENCH_API_KEY`, and `BENCH_METRI
 gateway ([section 5.2](#52-set-the-connection)).
 
 **2. Tokenizer (nothing to do in most cases)**: with the model's Hugging Face name in `BENCH_TOKENIZER` of
-`target.env`, or the files already in `tools/tokenizer/`, go to step 3. To have the container download it once instead,
-copy `.env.example` to `.env` and set `BENCH_TOKENIZER_REPO=org/model` (plus `HF_TOKEN` for a gated model).
+`target.env` (a public model), or the files already in `tools/tokenizer/`, go to step 3. To have the container download
+it once instead, copy `.env.example` to `.env` and set `BENCH_TOKENIZER_REPO=org/model` (plus `HF_TOKEN` for a gated
+model: the runs do not receive `HF_TOKEN`, so for a gated model use this download, not the name in `BENCH_TOKENIZER`).
 
 **3. Start, and open the interface**
 
@@ -454,7 +455,6 @@ stay yours.
 - The tokenizer must be the one of the measured model ([section 5.3](#53-copy-the-tokenizer)). With
   `BENCH_TOKENIZER_REPO` in `.env`, the container downloads it into `tools/tokenizer/` the first time it starts, if the
   folder has none yet. Without Internet access, copy the files yourself.
-
 - The interface listens on `127.0.0.1` of this machine only: from another machine, use an SSH tunnel
   ([section 9](#9-interface)).
 - The Prometheus address is already filled in.
