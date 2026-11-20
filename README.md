@@ -404,11 +404,11 @@ flowchart LR
     subgraph compose["Docker Compose"]
       bench["bench container<br/>interface.server (port 8765)<br/>sweep.sh · agentx.sh · agents_test<br/>observation.query · report"]
       prom[("prometheus container<br/>(port 9090)")]
-      gw["litellm container (option)<br/>/v1 · /metrics/"]
       db[("litellm-db container (option)<br/>PostgreSQL: virtual keys")]
       fake["fake-server container (option)<br/>to try without a GPU"]
     end
   end
+  gw["LiteLLM gateway (option)<br/>your own, or the Compose one<br/>(container litellm)<br/>/v1 · /metrics/"]
   vllm["vLLM server(s)<br/>your GPU server, not part of Compose<br/>/v1 · /metrics"]
   yours["Your real agents / users"]
 
@@ -416,9 +416,9 @@ flowchart LR
   env -.->|"BENCH_URL · BENCH_MODEL<br/>BENCH_METRICS · BENCH_API_KEY"| bench
   bench <-->|"folder mounted in /app"| folder
   bench -->|"inference requests<br/>to BENCH_URL"| vllm
-  bench -.->|"BENCH_URL = http://litellm:4000"| gw
+  bench -.->|"BENCH_URL = the address<br/>of LiteLLM"| gw
   bench -.->|"BENCH_URL = http://fake-server:8001"| fake
-  gw --> db
+  gw -.->|"Compose's LiteLLM only"| db
   gw -->|forwards| vllm
   bench -. "/metrics (BENCH_METRICS)" .-> vllm
   bench -->|"PromQL<br/>(observation)"| prom
@@ -435,7 +435,8 @@ What changes with Docker:
 - Only `bench` (the interface) and `prometheus` publish a port, on `127.0.0.1` of the machine.
 - Addresses in `.env` are those the container sees: `host.docker.internal` for a vLLM on the machine that runs Docker,
   `http://litellm:4000` for the LiteLLM of Compose.
-- vLLM is never part of Compose: it stays on your GPU server.
+- vLLM is never part of Compose: it stays on your GPU server. LiteLLM is optional: either the one of Compose (with its
+  database, `http://litellm:4000`) or your own, reached by its address.
 
 Observation sends no load and starts nothing. Prometheus (a separate server) scrapes vLLM's `/metrics` (and LiteLLM's)
 and keeps the history, and `observation.query` only queries it.
