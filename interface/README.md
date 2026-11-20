@@ -43,7 +43,7 @@ The interface never starts vLLM: it measures the one that is running. Options to
   this machine (the Prometheus key goes to Prometheus), so public hosts are refused unless the interface was started with `BENCH_ALLOW_PUBLIC_URLS=1`.
 - The traces folder (AgentX) must lie, once `..` and symbolic links are resolved, under the repository, your home
   directory or a directory listed in `BENCH_ALLOWED_DIRS` (separated like `PATH`).
-  One run at a time; stopping the interface stops the run in progress.
+  One run at a time; stopping the interface stops the run in progress. Planned runs are saved in `interface/planned.json`, without any key.
 - Prometheus selectors (vLLM, LiteLLM) are validated against a strict label-matcher pattern before they reach a PromQL
   query: no function, operator, brace, backslash or unquoted value.
 - The API key, the per-agent keys and the Prometheus key are passed through environment variables and are written to no log (the command at the top of a log shows them as `***`). The AIPerf-based modes give the key to AIPerf on its command line, so it is visible in `ps` on this machine while AIPerf runs.
@@ -83,7 +83,7 @@ The interface never starts vLLM: it measures the one that is running. Options to
   "Start" chooses when the run goes: now, after the current run, or at a date and time (read in the browser's time
   zone). A planned run goes into a queue saved in `interface/planned.json` (ignored by git), which survives a restart of
   the interface; the runs start one after another, in the order of their time. Keys are never stored, so a planned run
-  uses `BENCH_API_KEY` of `.env` for its target, and per-agent keys typed in the form cannot be planned.
+  uses `BENCH_API_KEY` (the terminal, or `.env`; only for the target of `BENCH_URL`), and per-agent keys typed in the form cannot be planned.
 - **Runs**: the runs started since the interface server was started, a live log, and stop. Logs are kept in `interface/logs/`.
   The planned runs are listed above them, each with "cancel". If a planned run fails, is stopped, or was interrupted by
   a restart, the queue is paused with the reason shown: "resume" goes on. A run that starts more than two minutes after
