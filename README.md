@@ -19,7 +19,7 @@ Two families of measurements:
 
 - A first measurement, on your machine: [section 2.1](#21-run-on-your-machine).
 - A first measurement, in Docker: [section 2.2](#22-run-in-a-docker-container).
-- Your target is LiteLLM: step 2 of 2.1 or 2.2, then [section 6.8](#68-stress-test-through-litellm).
+- Your target is LiteLLM: [section 8](#8-measure-through-litellm).
 - Observing your real agents: [section 7](#7-observation-real-use).
 
 > **Status.** Written from the code of **vLLM at commit [`7f855f6`](https://github.com/vllm-project/vllm/tree/7f855f605892656ebf7265642e5d22a34a6ae731)**
@@ -53,19 +53,22 @@ Two families of measurements:
   - [6.5 AgentX with generated or your own traces](#65-agentx-with-generated-or-your-own-traces)
   - [6.6 Context shorter than the traces](#66-context-shorter-than-the-traces)
   - [6.7 Test-agents stress test](#67-test-agents-stress-test)
-  - [6.8 Stress test through LiteLLM](#68-stress-test-through-litellm)
 - [7. Observation (real use)](#7-observation-real-use)
   - [7.1 Tune vLLM for exact interactivity](#71-tune-vllm-for-exact-interactivity)
   - [7.2 Install and start Prometheus (once)](#72-install-and-start-prometheus-once)
   - [7.3 Query the observation](#73-query-the-observation)
   - [7.4 Per-period view](#74-per-period-view)
   - [7.5 Per-agent view through LiteLLM](#75-per-agent-view-through-litellm)
-- [8. Measurement protocol](#8-measurement-protocol)
-- [9. Interface](#9-interface)
-- [10. Reference](#10-reference)
-  - [10.1 Outputs on disk](#101-outputs-on-disk)
-  - [10.2 Repository contents](#102-repository-contents)
-  - [10.3 Troubleshooting](#103-troubleshooting)
+- [8. Measure through LiteLLM](#8-measure-through-litellm)
+  - [8.1 Point the bench at LiteLLM](#81-point-the-bench-at-litellm)
+  - [8.2 Stress test through LiteLLM](#82-stress-test-through-litellm)
+  - [8.3 Tell the agents apart](#83-tell-the-agents-apart)
+- [9. Measurement protocol](#9-measurement-protocol)
+- [10. Interface](#10-interface)
+- [11. Reference](#11-reference)
+  - [11.1 Outputs on disk](#111-outputs-on-disk)
+  - [11.2 Repository contents](#112-repository-contents)
+  - [11.3 Troubleshooting](#113-troubleshooting)
 - [Appendix A. Security notes](#appendix-a-security-notes)
 - [Appendix B. LiteLLM per-key setup and install details](#appendix-b-litellm-per-key-setup-and-install-details)
 - [Appendix C. Sources](#appendix-c-sources)
@@ -197,7 +200,7 @@ python -m report aiperf results --target 30
 
 In each new terminal: `cd ~/banc-gpu && source .venv-aiperf/bin/activate && source .env`.
 
-The interface is optional: `python -m interface.server` ([section 9](#9-interface)).
+The interface is optional: `python -m interface.server` ([section 10](#10-interface)).
 
 ### 2.2 Run in a Docker container
 
@@ -262,7 +265,7 @@ docker compose logs bench | grep "Bench interface"
 
 Open the whole address it prints, token included: the link of Docker Desktop opens the bare address, which the
 interface refuses. The interface listens on `127.0.0.1` of this machine only: from another machine, use an SSH tunnel
-([section 9](#9-interface)).
+([section 10](#10-interface)).
 
 **5. Check the connection**: press "Test connection" in the interface (tab "Configuration"), or run the checks in the
 container (the quotes make it read its own variables):
@@ -313,7 +316,7 @@ These are the usual messages of the connection check ([section 2.1](#21-run-on-y
 - **"TP 1, PP 1, DP 1, EP no (or hidden…)"**: this is true for a server without parallelism, but it is also what a
   server launched with `--fingerprint-mode hash` shows. Check the launch command.
 
-More cases are in the troubleshooting table ([section 10.3](#103-troubleshooting)).
+More cases are in the troubleshooting table ([section 11.3](#113-troubleshooting)).
 
 ### 2.4 Read the first report
 
@@ -349,7 +352,7 @@ Details: [section 6.2](#62-reading-the-aiperf-report-synthetic-and-agentx).
 Unfamiliar terms: see [Appendix G](#appendix-g-glossary). No GPU at hand? Check the scripts first with the fake server ([Appendix E](#appendix-e-try-the-bench-without-a-gpu)).
 
 Next steps: the other stress tests ([section 6](#6-stress-tests)), observation of your real agents
-([section 7](#7-observation-real-use)), or the local interface ([section 9](#9-interface)).
+([section 7](#7-observation-real-use)), or the local interface ([section 10](#10-interface)).
 
 [↑ Back to top](#top)
 
@@ -478,7 +481,7 @@ expose them. A launch warning says so if it points elsewhere.
 |---|---|---|
 | **vLLM installed and the model served** | OpenAI-compatible API on `http://<host>:<port>`. The bench does not start vLLM. | `curl -s http://<host>:8000/v1/models` lists the model |
 | **vLLM's `/metrics` reachable** from the client machine | Enabled by default; it provides preemptions, cache, speculative decoding, KV cache occupancy. It does **not** require the API key (see [Appendix A](#appendix-a-security-notes)). | `curl -s http://<host>:8000/metrics \| grep -c '^vllm:'` prints a number greater than 0 |
-| **LiteLLM installed** (optional) | To measure through the gateway, or to follow the agents separately in observation ([section 7.5](#75-per-agent-view-through-litellm)): LiteLLM sees which agent sends each request, vLLM does not. Your vLLM declared as a model of LiteLLM, with its key if it has one ([LiteLLM, vLLM](https://docs.litellm.ai/docs/providers/vllm); [configuration](https://docs.litellm.ai/docs/proxy/configs)). | `curl -s -H "Authorization: Bearer <key>" http://<vm>:4000/v1/models` |
+| **LiteLLM installed** (optional) | To measure through the gateway, or to follow the agents separately in observation ([section 8](#8-measure-through-litellm)): LiteLLM sees which agent sends each request, vLLM does not. Your vLLM declared as a model of LiteLLM, with its key if it has one ([LiteLLM, vLLM](https://docs.litellm.ai/docs/providers/vllm); [configuration](https://docs.litellm.ai/docs/proxy/configs)). | `curl -s -H "Authorization: Bearer <key>" http://<vm>:4000/v1/models` |
 | **Prometheus** (observation only) | A separate server that scrapes vLLM's `/metrics` (and LiteLLM's) and keeps the history; vLLM does not provide one. A single binary ([download](https://prometheus.io/download/)), or the `prom/prometheus` Docker image. Configuration provided: `tools/prometheus.yml.example` ([section 7.2](#72-install-and-start-prometheus-once)). | `curl -s http://<host>:9090/-/ready` |
 | **uv** on the client machine (not needed with Docker Compose, [section 5.3](#53-docker-compose-settings)) | Installs the Python that AIPerf 0.13 requires (3.11 to 3.13) for the bench's environment; see [section 2.1](#21-run-on-your-machine). | `uv --version` |
 | **bash** | Tested with bash 5; written to also run on the old bash 3.2, verified only with a bash 3.2 built on Linux. | `bash --version` |
@@ -577,7 +580,7 @@ cp .env.example .env     # .env is ignored by git: it contains the keys
 ```
 
 - Keep plain `export NAME=value` lines (no `$VAR`, no backticks, no command).
-- **On your machine**: load it in each terminal with `source .env`. The interface ([section 9](#9-interface)) also
+- **On your machine**: load it in each terminal with `source .env`. The interface ([section 10](#10-interface)) also
   reads it when it starts.
 - **With Docker Compose**: Compose reads it, with no `source`. The addresses are those the container sees
   (`host.docker.internal` for the machine that runs Docker, not `127.0.0.1`).
@@ -655,7 +658,7 @@ settings below is needed for a first run ([section 2.2](#22-run-in-a-docker-cont
 | `COMPOSE_PROFILES` | what runs besides the interface and Prometheus: `gateway` (LiteLLM and its database), `try` (a fake server, to try everything without a GPU, [Appendix E](#appendix-e-try-the-bench-without-a-gpu)); both, separated by a comma | `gateway` |
 | `PROMETHEUS_CONFIG` | the Prometheus configuration of the `docker/` folder: `prometheus.yml` (vLLM only: list your vLLM replicas in it, one line each), `prometheus-gateway.yml` (vLLM and LiteLLM), `prometheus-fake.yml` (the fake server) | `prometheus-gateway.yml` |
 | `BENCH_TOKEN` | token of the interface. Empty = a random one at each start, shown by `docker compose logs bench`; a fixed value gives an address you can keep | a long random string |
-| `BENCH_PORT`, `PROMETHEUS_PORT`, `LITELLM_PORT` | ports published on `127.0.0.1` of this machine (the interface, Prometheus, LiteLLM); change them if another service uses 8765, 9090 or 4000. From another machine, use an SSH tunnel ([section 9](#9-interface)) | `8765` |
+| `BENCH_PORT`, `PROMETHEUS_PORT`, `LITELLM_PORT` | ports published on `127.0.0.1` of this machine (the interface, Prometheus, LiteLLM); change them if another service uses 8765, 9090 or 4000. From another machine, use an SSH tunnel ([section 10](#10-interface)) | `8765` |
 | `BENCH_UID`, `BENCH_GID` | Linux: your user and group (`id -u`, `id -g`). The container then runs as you and the results are yours, not root's | `1000` |
 | `BENCH_TOKENIZER_REPO` | Hugging Face name of the model: its tokenizer is downloaded once into `tools/tokenizer/` at the first start ([5.2](#52-the-tokenizer)) | `org/model` |
 | `HF_TOKEN` | Hugging Face token, only for a gated model. The runs do not receive it | — |
@@ -672,7 +675,7 @@ settings below is needed for a first run ([section 2.2](#22-run-in-a-docker-cont
 - Edit the two lines marked `EDIT` in `docker/litellm-config.yaml`: the model name the clients use (`BENCH_MODEL`) and
   the name vLLM serves.
 - `docker compose up -d`: the first start prepares the database and takes a minute.
-- One key per agent, for the per-agent view ([section 7.5](#75-per-agent-view-through-litellm)): `/key/generate` with
+- One key per agent, for the per-agent view ([section 8.3](#83-tell-the-agents-apart)): `/key/generate` with
   `{"key_alias": "code-review"}`, using the master key.
 - Prometheus holds the master key. To give it a read-only key, or none, see
   [section 7.2](#72-install-and-start-prometheus-once).
@@ -897,7 +900,7 @@ described in [section 6.2](#62-reading-the-aiperf-report-synthetic-and-agentx).
   `BENCH_SEED` fixes these starting points (the order does not depend on it). Unless you set `BENCH_SEED`, each label
   has its own seed: the repetitions `-r1`, `-r2`… do not start at the same points.
 
-Duration: one test of 5 levels x 30 min takes about 2 h 30 (about 1 h 15 at 15 min per level). The measurement protocol ([section 8](#8-measurement-protocol)) recommends three repetitions, which makes about 7 h 30 per configuration (about 3 h 45 at 15 min per level).
+Duration: one test of 5 levels x 30 min takes about 2 h 30 (about 1 h 15 at 15 min per level). The measurement protocol ([section 9](#9-measurement-protocol)) recommends three repetitions, which makes about 7 h 30 per configuration (about 3 h 45 at 15 min per level).
 
 ### 6.4 AgentX without Internet access
 
@@ -938,7 +941,7 @@ This writes 30 sessions whose longest call is about 28,000 tokens (preset `small
 python tools/make_traces.py --preset small --output traces-small
 ```
 
-The interface does the same from the "Trace set" list of the AgentX launch ([section 9](#9-interface)):
+The interface does the same from the "Trace set" list of the AgentX launch ([section 10](#10-interface)):
 
 - it writes `traces-<preset>` the first time and reuses the folder afterwards;
 - it uses the default options (30 sessions, seed 1): for anything else, run the script yourself;
@@ -1090,8 +1093,8 @@ python -m report agents results-agents --target 30
 | `--scale` | multiplies all sizes: 1 = contexts up to about 135,000 tokens; 0.2 for a small server with 32,768 tokens of context |
 | `--agents` | subset of `code_review,pentest,report` |
 | `--mode` | `scripted` (default, measurement: tools and lengths enforced) or `autonomous` (checks tool calling, does not measure: the model decides whether to call a tool, so an agent can stop early) |
-| `--output` | results folder (default `results-agents`, relative to the current folder; runs started from the [interface](#9-interface) use `agents_test/results-agents`) |
-| `--label-agents` | adds `metadata.agent` = profile name to each request (per-agent view through LiteLLM, [section 7.5](#75-per-agent-view-through-litellm)) |
+| `--output` | results folder (default `results-agents`, relative to the current folder; runs started from the [interface](#10-interface) use `agents_test/results-agents`) |
+| `--label-agents` | adds `metadata.agent` = profile name to each request (per-agent view through LiteLLM, [section 8.3](#83-tell-the-agents-apart)) |
 
 Other options:
 
@@ -1101,7 +1104,7 @@ Other options:
 - `--overwrite`: replaces existing results with the same label
 
 The key has no option. The launcher reads `BENCH_API_KEY` from the environment, which `.env` also sets.
-`BENCH_AGENT_KEYS` gives one key per profile ([section 7.5](#75-per-agent-view-through-litellm)). Without a key, the
+`BENCH_AGENT_KEYS` gives one key per profile ([section 8.3](#83-tell-the-agents-apart)). Without a key, the
 launcher sends the placeholder `bench`, which is fine for a vLLM started without `--api-key`.
 
 The report gives an "all" row per level, then one row per profile (tasks, err, tput/GPU, inter P10, TTFT P95 in
@@ -1115,23 +1118,6 @@ measure.
 **To check**: the cache column should be clearly above 0 for `pentest` and `report`.
 
 For a quick first check: `--levels "1 2" --duration 300 --warmup 60 --scale 0.2`.
-
-### 6.8 Stress test through LiteLLM
-
-A variant of the synthetic stress test ([section 6.1](#61-synthetic-stress-test)): the same sweep, aiming at LiteLLM and giving the URL of vLLM's metrics:
-
-```bash
-BENCH_URL=http://<vm>:4000 BENCH_MODEL=<alias> BENCH_API_KEY=<LiteLLM key> BENCH_METRICS=http://<host>:8000/metrics \
-  ./sweep.sh conf-a-litellm-r1 "1 4 16"
-```
-
-Compare with the same sweep made directly on vLLM: the TTFT gap is the latency added by the gateway.
-**Check** that the report's "output avg" column equals `BENCH_OSL`: otherwise LiteLLM does not forward `min_tokens` /
-`ignore_eos` and the two measurements are not comparable (not verified).
-
-Several replicas behind LiteLLM: `BENCH_METRICS` takes one URL per replica; the deduced GPU count adds them all
-([section 6.2](#62-reading-the-aiperf-report-synthetic-and-agentx)), assuming they are identical to the one that answered.
-Measure the replicas **together**, as they will serve.
 
 [↑ Back to top](#top)
 
@@ -1147,7 +1133,7 @@ The work is split as follows:
 - **Prometheus**, a separate server, reads `/metrics` every 15 s and keeps the history
   ([overview](https://prometheus.io/docs/introduction/overview/)). It also reads LiteLLM's metrics for the per-agent
   view.
-- **`observation/query.py`** (`python -m observation.query`, or the Observation tab of the [interface](#9-interface))
+- **`observation/query.py`** (`python -m observation.query`, or the Observation tab of the [interface](#10-interface))
   queries Prometheus over a past range and cuts it into windows. Per window, it computes:
   - completed requests;
   - mean concurrency (requests in flight);
@@ -1411,10 +1397,85 @@ A period's throughput is an average: for the peak, look at its windows one by on
 
 ### 7.5 Per-agent view through LiteLLM
 
-vLLM does not know which agent is calling; LiteLLM does, provided each request carries its agent's identity.
+vLLM does not know which agent is calling; LiteLLM does. The agents must be told apart, and LiteLLM's Prometheus
+metrics enabled, as in [section 8.3](#83-tell-the-agents-apart).
 
-In both ways below, first enable LiteLLM's Prometheus metrics
-([LiteLLM, Prometheus](https://docs.litellm.ai/docs/proxy/prometheus)):
+**Collect, then query**: declare LiteLLM in `prometheus.yml`, using the `litellm` block of the example:
+
+- the path is **`/metrics/`**, with the trailing slash, the one LiteLLM serves;
+- the key is in the `litellm.key` file named by `credentials_file`
+  ([section 7.2](#72-install-and-start-prometheus-once)).
+
+LiteLLM's metrics require a key by default in recent versions (1.85.0 according to its documentation; from 1.84
+according to its code). A limited key is better than the master key. A plain virtual key is refused (401); the key of
+a user with the role `proxy_admin_viewer` is accepted, and cannot create keys (observed with the `main-stable` image,
+November 2026; the commands are in [section 7.2](#72-install-and-start-prometheus-once)). Then:
+
+```bash
+python -m observation.query --prometheus http://127.0.0.1:9090 --litellm 'job="litellm"' \
+  --by metadata_agent --since 2h --target 30 --gpu 8 --view agents
+```
+
+Per agent, the query gives:
+
+- requests, share of output tokens, input and output tokens per request;
+- TTFT P50 and P95, and P95 latency;
+- an average generation speed (output tokens ÷ (latency − TTFT); an average, not a percentile; empty if some of the
+  requests are not streaming; proxy time included).
+
+Requests without an identity appear under "(no identity)" (LiteLLM labels them `None`).
+
+Names, types and labels of LiteLLM's metrics were checked with LiteLLM 1.109.1. Check them on your
+version on the first try:
+
+```bash
+curl -s -H "Authorization: Bearer <key>" http://<vm>:4000/metrics/ | grep -E '^litellm_(output_tokens|request_total_latency)' | head
+```
+
+[↑ Back to top](#top)
+
+---
+
+## 8. Measure through LiteLLM
+
+LiteLLM is a gateway in front of vLLM. Through it, you measure the added latency and the cost of the gateway, and you can
+follow your agents one by one. This section gathers what is specific to it.
+
+### 8.1 Point the bench at LiteLLM
+
+In `.env` ([section 5.1](#51-the-settings)):
+
+- `BENCH_URL`: the address of LiteLLM (`http://litellm:4000` for the LiteLLM of Docker Compose);
+- `BENCH_MODEL`: the alias LiteLLM exposes (`model_name` in its configuration);
+- `BENCH_API_KEY`: a LiteLLM key;
+- `BENCH_METRICS`: vLLM's `/metrics` address. It is required: LiteLLM does not expose the metrics of the engine.
+
+The first steps are in [section 2](#2-quick-start) (step 2 of 2.1 or 2.2). The LiteLLM of Compose, with its database,
+is in [section 5.3](#53-docker-compose-settings); an existing LiteLLM needs nothing more.
+
+### 8.2 Stress test through LiteLLM
+
+A variant of the synthetic stress test ([section 6.1](#61-synthetic-stress-test)): the same sweep, aiming at LiteLLM and giving the URL of vLLM's metrics:
+
+```bash
+BENCH_URL=http://<vm>:4000 BENCH_MODEL=<alias> BENCH_API_KEY=<LiteLLM key> BENCH_METRICS=http://<host>:8000/metrics \
+  ./sweep.sh conf-a-litellm-r1 "1 4 16"
+```
+
+Compare with the same sweep made directly on vLLM: the TTFT gap is the latency added by the gateway.
+**Check** that the report's "output avg" column equals `BENCH_OSL`: otherwise LiteLLM does not forward `min_tokens` /
+`ignore_eos` and the two measurements are not comparable (not verified).
+
+Several replicas behind LiteLLM: `BENCH_METRICS` takes one URL per replica; the deduced GPU count adds them all
+([section 6.2](#62-reading-the-aiperf-report-synthetic-and-agentx)), assuming they are identical to the one that answered.
+Measure the replicas **together**, as they will serve.
+
+### 8.3 Tell the agents apart
+
+vLLM does not know which agent is calling; LiteLLM does, provided each request carries its agent's identity. This is
+what the per-agent view of the observation reads ([section 7.5](#75-per-agent-view-through-litellm)).
+
+First enable LiteLLM's Prometheus metrics ([LiteLLM, Prometheus](https://docs.litellm.ai/docs/proxy/prometheus)):
 
 ```yaml
 litellm_settings:
@@ -1422,12 +1483,19 @@ litellm_settings:
 ```
 
 LiteLLM refuses to start with this setting if `prometheus_client` is missing
-([Appendix B](#appendix-b-litellm-per-key-setup-and-install-details)).
+([Appendix B](#appendix-b-litellm-per-key-setup-and-install-details)). Then, one of two ways:
 
 **Way 1: one virtual key per agent** (nothing to change in the agents' code; recommended in production).
 
-- It needs a PostgreSQL database and Prisma on the LiteLLM side; the setup is in
-  [Appendix B](#appendix-b-litellm-per-key-setup-and-install-details).
+- It needs a PostgreSQL database: the LiteLLM of Compose has one ([section 5.3](#53-docker-compose-settings)). For
+  your own LiteLLM, the setup is in [Appendix B](#appendix-b-litellm-per-key-setup-and-install-details).
+- Create one key per agent, with the master key (the key of the agent is in the `"key"` field of the answer):
+
+  ```bash
+  curl -s -X POST http://<litellm>:4000/key/generate -H "Authorization: Bearer $LITELLM_MASTER_KEY" \
+    -H "Content-Type: application/json" -d '{"key_alias": "code-review"}'
+  ```
+
 - Each agent uses **its** key as the API key (`OpenAI(api_key=…)`, or its framework's key variable).
 - The metrics then carry the label `api_key_alias="code-review"`: use `--by api_key_alias` (the default is
   `metadata_agent`, way 2).
@@ -1470,43 +1538,11 @@ general_settings:
   always_include_stream_usage: true
 ```
 
-**Collect, then query**: declare LiteLLM in `prometheus.yml`, using the `litellm` block of the example:
-
-- the path is **`/metrics/`**, with the trailing slash, the one LiteLLM serves;
-- the key is in the `litellm.key` file named by `credentials_file`
-  ([section 7.2](#72-install-and-start-prometheus-once)).
-
-LiteLLM's metrics require a key by default in recent versions (1.85.0 according to its documentation; from 1.84
-according to its code). A limited key is better than the master key. A plain virtual key is refused (401); the key of
-a user with the role `proxy_admin_viewer` is accepted, and cannot create keys (observed with the `main-stable` image,
-November 2026; the commands are in [section 7.2](#72-install-and-start-prometheus-once)). Then:
-
-```bash
-python -m observation.query --prometheus http://127.0.0.1:9090 --litellm 'job="litellm"' \
-  --by metadata_agent --since 2h --target 30 --gpu 8 --view agents
-```
-
-Per agent, the query gives:
-
-- requests, share of output tokens, input and output tokens per request;
-- TTFT P50 and P95, and P95 latency;
-- an average generation speed (output tokens ÷ (latency − TTFT); an average, not a percentile; empty if some of the
-  requests are not streaming; proxy time included).
-
-Requests without an identity appear under "(no identity)" (LiteLLM labels them `None`).
-
-Names, types and labels of LiteLLM's metrics were checked with LiteLLM 1.109.1. Check them on your
-version on the first try:
-
-```bash
-curl -s -H "Authorization: Bearer <key>" http://<vm>:4000/metrics/ | grep -E '^litellm_(output_tokens|request_total_latency)' | head
-```
-
 [↑ Back to top](#top)
 
 ---
 
-## 8. Measurement protocol
+## 9. Measurement protocol
 
 A single short pass is not enough to settle on a figure. For each server configuration to measure:
 
@@ -1527,7 +1563,7 @@ A single short pass is not enough to settle on a figure. For each server configu
      AgentX exports ([section 6.3](#63-agentx-stress-test)).
    - **Test agents**: levels up to beyond the selected level, 15 min, 300 s warmup, three repetitions
      ([section 6.7](#67-test-agents-stress-test)).
-5. **Through LiteLLM**: a short sweep ([section 6.8](#68-stress-test-through-litellm)), for the added latency.
+5. **Through LiteLLM**: a short sweep ([section 8.2](#82-stress-test-through-litellm)), for the added latency.
 6. **Recovery**: stop a replica, restart it, and measure the time until the first response
    (`curl -s -H "Authorization: Bearer $BENCH_API_KEY" "$BENCH_URL/v1/models"` every 10 s); no sweep during
    this test.
@@ -1548,7 +1584,7 @@ Order of magnitude, per configuration and per context:
 
 ---
 
-## 9. Interface
+## 10. Interface
 
 An optional local app to start the runs, follow their logs and read the results.
 
@@ -1621,9 +1657,9 @@ Details: [`interface/README.md`](interface/README.md).
 
 ---
 
-## 10. Reference
+## 11. Reference
 
-### 10.1 Outputs on disk
+### 11.1 Outputs on disk
 
 ```
 results/<label>/server_config.json            # server configuration at the start of the run
@@ -1653,7 +1689,7 @@ of the chosen view.
   (`max_num_seqs`, `max_num_batched_tokens`). That mode is **not recommended**, see
   [Appendix A](#appendix-a-security-notes).
 
-### 10.2 Repository contents
+### 11.2 Repository contents
 
 | Path | Role |
 |---|---|
@@ -1683,7 +1719,7 @@ of the chosen view.
 The test agents use no internal data. The logs contain numbers (times, tokens,
 durations), labels, agent names and error messages; no prompt or response content.
 
-### 10.3 Troubleshooting
+### 11.3 Troubleshooting
 
 | Symptom | Likely cause | What to do |
 |---|---|---|
@@ -1794,7 +1830,7 @@ metrics, but if you raise the number of your real agents to find the limit, thei
 
 ## Appendix B. LiteLLM per-key setup and install details
 
-Details for the per-agent view ([section 7.5](#75-per-agent-view-through-litellm)). Everything here was observed with
+Details for the per-agent view ([section 8.3](#83-tell-the-agents-apart)). Everything here was observed with
 LiteLLM 1.109.1 (the Docker image: Prisma is already in it, and `docker-compose.yml` starts the PostgreSQL database).
 
 **Prometheus metrics.** `prometheus_client` is not installed by `pip install "litellm[proxy]"`, and LiteLLM then
@@ -1829,17 +1865,10 @@ installs the Prisma CLI through npm (Node.js required), then downloads its engin
 Without Internet, you need an npm mirror and a mirror of the engines (the engine download was refused without
 Internet). The simplest is to use your team's LiteLLM installation if it already has a database.
 
-**Create one key per agent**, with the master key:
-
-```bash
-curl -s -X POST http://<vm>:4000/key/generate -H "Authorization: Bearer $LITELLM_MASTER_KEY" \
-  -H "Content-Type: application/json" -d '{"key_alias": "code-review"}'      # returns the agent's key
-```
-
-Each agent then uses its own key as the API key, and the metrics carry `api_key_alias="code-review"`.
+**Create one key per agent**: [section 8.3](#83-tell-the-agents-apart).
 
 **LiteLLM in Docker.** If vLLM runs on the Docker host, `127.0.0.1` in `api_base` refers to the container: see the
-[troubleshooting table](#103-troubleshooting).
+[troubleshooting table](#113-troubleshooting).
 
 [↑ Back to top](#top)
 
@@ -2025,7 +2054,7 @@ When you are done, stop the two background processes (`jobs` lists them, then `k
   - with a Hugging Face name that is in the cache, it works with several processes.
 - The observation against the fake server, with Prometheus 3.7.3 ([section 7.3](#73-query-the-observation)).
 - The per-agent view with a real LiteLLM 1.109.1: metric names, types and labels, and the Prisma and
-  `prometheus_client` requirements ([section 7.5](#75-per-agent-view-through-litellm),
+  `prometheus_client` requirements ([section 8.3](#83-tell-the-agents-apart),
   [Appendix B](#appendix-b-litellm-per-key-setup-and-install-details)).
 - On a small local server with a real vLLM 0.33.0: the connection, the fingerprint, `/metrics` and the loading of the AgentX traces.
 
@@ -2074,7 +2103,7 @@ See [section 4.2](#42-check-the-vllm-in-place), [section 6.6](#66-context-shorte
   - the exact definition of the hash IDs.
 
 See [section 6.4](#64-agentx-without-internet-access), [section 6.5](#65-agentx-with-generated-or-your-own-traces) and
-[section 6.8](#68-stress-test-through-litellm).
+[section 8.2](#82-stress-test-through-litellm).
 
 [↑ Back to top](#top)
 
