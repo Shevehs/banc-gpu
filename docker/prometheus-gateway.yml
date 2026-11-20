@@ -1,0 +1,15 @@
+# Prometheus of the Docker Compose with the LiteLLM gateway (README, section 4.4): vLLM and LiteLLM.
+# LiteLLM's master key (LITELLM_MASTER_KEY of .env) reaches Prometheus through the prometheus-key service (README, section 4.4).
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: vllm
+    static_configs:
+      - targets: ["host.docker.internal:8000"]
+  - job_name: litellm
+    metrics_path: /metrics/
+    authorization:
+      credentials_file: /etc/prometheus/litellm/litellm.key
+    static_configs:
+      - targets: ["litellm:4000"]

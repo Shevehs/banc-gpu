@@ -1,0 +1,9 @@
+# Prometheus of the Docker Compose (README, section 4.4): vLLM only.
+# A vLLM on the machine that runs Docker is reached at host.docker.internal; one line per replica.
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: vllm
+    static_configs:
+      - targets: ["host.docker.internal:8000"]

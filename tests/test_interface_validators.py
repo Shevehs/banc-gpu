@@ -836,13 +836,15 @@ def test_defaults_come_from_the_terminal_without_any_key(monkeypatch):
     monkeypatch.setenv("BENCH_AGENT_KEYS", "pentest=agent-secret")
     payload = defaults_payload()
     assert payload == {"url": ENV_URL, "model": "my-model", "metrics": "http://h1:8000/metrics http://h2:8000/metrics",
-                       "tokenizer": "tools/tokenizer", "api_key_set": True, "api_key_url": ENV_URL}
+                       "tokenizer": "tools/tokenizer", "prometheus": "", "litellm": "",
+                       "api_key_set": True, "api_key_url": ENV_URL}
     text = json.dumps(payload)
     assert ENV_KEY not in text and "prom-secret" not in text and "agent-secret" not in text
 
 
 def test_defaults_are_empty_without_variables():
-    assert defaults_payload() == {"url": "", "model": "", "metrics": "", "tokenizer": "", "api_key_set": False, "api_key_url": ""}
+    assert defaults_payload() == {"url": "", "model": "", "metrics": "", "tokenizer": "", "prometheus": "", "litellm": "",
+                                "api_key_set": False, "api_key_url": ""}
 
 
 def test_defaults_strip_white_space_and_ignore_generic_names(monkeypatch):
@@ -1063,3 +1065,48 @@ def test_display_command_says_what_a_generated_run_does():
     plain, _, _ = server.agentx_command(AGENTX)
     assert server.display_command(plain) == plain
 
+
+def test_defaults_give_the_prometheus_address_and_the_litellm_selector(monkeypatch):
+    monkeypatch.setenv("BENCH_PROMETHEUS", "http://prometheus:9090")
+    monkeypatch.setenv("BENCH_LITELLM_SELECTOR", 'job="litellm"')
+    payload = defaults_payload()
+    assert payload["prometheus"] == "http://prometheus:9090" and payload["litellm"] == 'job="litellm"'
+
+
+# ---------------------------------------------------------------- the interface in a container
+class GuardRequest:
+    def __init__(self, host, token="t"):
+        self.path, self.host, self.method, self.content_type = "/api/runs", host, "GET", "application/json"
+        self.headers = {"X-Bench-Token": token}
+
+
+def run_guard(host, monkeypatch, public_port):
+    monkeypatch.setattr(server, "PUBLIC_PORT", [public_port])
+    monkeypatch.setattr(server, "TOKEN", "t")
+
+    async def handler(req):
+        return server.web.json_response({"ok": True})
+    return asyncio.run(server.guard(GuardRequest(host), handler)).status
+
+
+def test_guard_checks_the_host_against_the_port_the_browser_uses(monkeypatch):
+    assert run_guard("127.0.0.1:9000", monkeypatch, 9000) == 200
+    assert run_guard("localhost:9000", monkeypatch, 9000) == 200
+    assert run_guard("127.0.0.1:8765", monkeypatch, 9000) == 403      # the port inside the container is not the browser's
+    assert run_guard("evil.example:9000", monkeypatch, 9000) == 403
+
+
+@pytest.mark.parametrize("argv,host,port,public", [
+    ([], "127.0.0.1", 8765, 8765),
+    (["--port", "9000"], "127.0.0.1", 9000, 9000),
+    (["--host", "0.0.0.0", "--port", "8765", "--public-port", "9100"], "0.0.0.0", 8765, 9100),
+])
+def test_main_listens_where_it_is_told(monkeypatch, argv, host, port, public):
+    seen = {}
+    monkeypatch.setattr(server.web, "run_app", lambda app, **kw: seen.update(kw))
+    monkeypatch.setattr(server.settings, "load_target_env", lambda path: [])
+    monkeypatch.setattr(sys, "argv", ["server"] + argv)
+    monkeypatch.setattr(server, "PORT", [8765])
+    monkeypatch.setattr(server, "PUBLIC_PORT", [8765])
+    server.main()
+    assert seen["host"] == host and seen["port"] == port and server.PUBLIC_PORT[0] == public

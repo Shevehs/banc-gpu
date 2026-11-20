@@ -15,6 +15,12 @@ python -m interface.server
 
 then open **the exact address printed at startup** (it contains an access token: `http://127.0.0.1:8765/?token=…`).
 
+Under Docker ([repository README, section 4.4](../README.md#44-or-with-docker-compose)), the container starts the
+server with `--host 0.0.0.0` on purpose: Compose only publishes the port on `127.0.0.1` of the machine.
+
+- `--public-port`: the port the browser uses, when it is not `--port`.
+- `BENCH_TOKEN`: a fixed token.
+
 On a remote machine (client VM), the server only listens on 127.0.0.1; from your workstation:
 
 ```bash
@@ -27,7 +33,8 @@ The interface never starts vLLM: it measures the one that is running. Options to
 
 ## Security
 
-- Listens on 127.0.0.1 only; a random token is required for the whole API (printed at startup, or set with
+- Listens on 127.0.0.1 only (unless started with `--host`, as the Docker image does, with the port published on
+  `127.0.0.1` only); a random token is required for the whole API (printed at startup, or set with
   the `BENCH_TOKEN` environment variable, sent as the `X-Bench-Token` header); the Host header and the request
   origin are checked.
 - Only runs the bench scripts, with validated parameters; extra AIPerf options come from an allowlist.
@@ -46,7 +53,8 @@ The interface never starts vLLM: it measures the one that is running. Options to
   from the terminal, only `PATH`, `HOME`, `USER`, `LOGNAME`, `SHELL`, `TERM`, `TMPDIR`, the locale (`LANG`, `LC_*`),
   the time zone (`TZ`), `VIRTUAL_ENV`, `HF_HOME`, `HF_HUB_CACHE`, the proxy settings, the certificates and
   `DO_NOT_TRACK` are passed on.
-- The form starts with `BENCH_URL`, `BENCH_MODEL`, `BENCH_METRICS` and `BENCH_TOKENIZER` of the terminal that started the
+- The form starts with `BENCH_URL`, `BENCH_MODEL`, `BENCH_METRICS` and `BENCH_TOKENIZER` (and `BENCH_PROMETHEUS`,
+  `BENCH_LITELLM_SELECTOR`, which Docker sets) of the terminal that started the
   interface, or else of `target.env` at the root of the repository (`GET /api/defaults`, behind the same token as the rest of the
   API). `target.env` is read once, when the interface starts, and never run: only plain `export BENCH_NAME=value`
   lines are taken, and only the target settings (`BENCH_URL`, `BENCH_MODEL`, `BENCH_METRICS`, `BENCH_TOKENIZER`,
