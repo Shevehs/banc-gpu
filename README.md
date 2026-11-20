@@ -1,19 +1,26 @@
 # banc-gpu
 <a id="top"></a>
 
-*Banc* is the French word for bench; the repository keeps the name `banc-gpu` so that its URL stays stable.
-
 A capacity benchmark for a model served by vLLM: for a given installation, how many simultaneous
 requests (or agent tasks) it sustains, and at what throughput per GPU, as long as each request receives
 its tokens at a target speed (the **interactivity**, in tokens/s per request).
+
+*Banc* is the French word for bench; the repository keeps the name `banc-gpu` so that its URL stays stable.
 
 Two families of measurements:
 
 - **stress tests**: the bench generates the load itself, in increasing levels, until the installation breaks;
   they give the installation's **capacity**;
-- **observation**: the bench generates nothing and has nothing to start; Prometheus continuously collects the
-  metrics of vLLM (and of LiteLLM) while your real agents run, and the bench queries it to tell you whether the
-  installation **sustains the real load**, per window, per period and per agent, over any past range.
+- **observation**: the bench generates nothing; Prometheus collects the metrics of vLLM (and of LiteLLM) while your
+  real agents run, and the bench queries it to tell you whether the installation **sustains the real load**, per
+  window, per period and per agent.
+
+**Where to start**
+
+- A first measurement, on your machine: [section 2.1](#21-run-on-your-machine).
+- A first measurement, in Docker: [section 2.2](#22-run-in-a-docker-container).
+- Your target is LiteLLM: step 2 of 2.1 or 2.2, then [section 6.8](#68-stress-test-through-litellm).
+- Observing your real agents: [section 7](#7-observation-real-use).
 
 > **Status.** Written from the code of **vLLM at commit [`7f855f6`](https://github.com/vllm-project/vllm/tree/7f855f605892656ebf7265642e5d22a34a6ae731)**
 > and tested with **AIPerf 0.13.0** against a fake server ([Appendix E](#appendix-e-try-the-bench-without-a-gpu)).
@@ -93,8 +100,12 @@ requires restarting vLLM (see [section 4.2](#42-check-the-vllm-in-place)).
 
 ## 2. Quick start
 
-A first synthetic measurement, on a vLLM that is already running and serves the model with
-`--no-enable-prefix-caching` for this run (see [section 4.2](#42-check-the-vllm-in-place)).
+A first synthetic measurement. **Before you start**:
+
+- a vLLM is running, and serves the model with `--no-enable-prefix-caching` for this run
+  ([section 4.2](#42-check-the-vllm-in-place));
+- its `/metrics` address is reachable from where the bench runs;
+- the other requirements are in [section 4.1](#41-what-must-already-be-in-place).
 
 The bench's client side (the scripts, AIPerf and the interface) can run in two ways. Pick one:
 
@@ -570,7 +581,6 @@ cp .env.example .env     # .env is ignored by git: it contains the keys
   reads it when it starts.
 - **With Docker Compose**: Compose reads it, with no `source`. The addresses are those the container sees
   (`host.docker.internal` for the machine that runs Docker, not `127.0.0.1`).
-- A `target.env` from an earlier version: rename it to `.env`.
 
 **Why `BENCH_METRICS` must point to vLLM**
 
@@ -597,8 +607,6 @@ answers "HTTP 401: key required", or there is no `vllm:` metric at all.
 | `BENCH_API_KEY` | the target's key (vLLM's `--api-key`, or a LiteLLM key). Sent to the target only; it is not written to the bench's logs, but see [Appendix A](#appendix-a-security-notes) (visible in `ps` while AIPerf runs) | — |
 | `BENCH_TOKENIZER` | empty = `tools/tokenizer/` ([section 5.2](#52-the-tokenizer)); otherwise the absolute path of a folder that holds `tokenizer.json` (no copy), or a Hugging Face name (AIPerf downloads it; the test agents, which only read a local folder, then estimate the sizes) | empty |
 | `DO_NOT_TRACK` | `1` = no usage statistics (AIPerf, Hugging Face). Leave it at `1`. Do not add `HF_HUB_OFFLINE`, see below | `1` |
-
-Settings are read from the `BENCH_*` variables.
 
 **In a company only** (on a local workstation, nothing to do):
 
