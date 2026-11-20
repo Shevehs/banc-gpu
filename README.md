@@ -665,7 +665,7 @@ or both separated by a comma.
 | Variable | Meaning | Example |
 |---|---|---|
 | `BENCH_PORT` | port of the interface, published on `127.0.0.1` of this machine only (from another machine, use an SSH tunnel, [section 10](#10-interface)); change it if 8765 is taken | `8765` |
-| `BENCH_TOKEN` | token of the interface. Empty = a random one at each start, shown by `docker compose logs bench`; a fixed value gives an address you can keep. At least 16 characters, without spaces, not starting with `#`: otherwise it is ignored and a random one is used | a long random string |
+| `BENCH_TOKEN` | token of the interface. Empty = a random one at each start, shown by `docker compose logs bench`; a fixed value gives an address you can keep. At least 16 characters, ASCII, without spaces, not starting with `#`: otherwise it is ignored and a random one is used | a long random string |
 | `BENCH_UID`, `BENCH_GID` | Linux: your user and group (`id -u`, `id -g`). The container then runs as you and the results are yours, not root's | `1000` |
 | `BENCH_TOKENIZER_REPO` | Hugging Face name of the model: its tokenizer is downloaded once into `tools/tokenizer/` at the first start ([5.2](#52-the-tokenizer)) | `org/model` |
 | `HF_TOKEN` | Hugging Face token, only for a gated model. The runs do not receive it | — |

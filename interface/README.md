@@ -19,7 +19,7 @@ Under Docker ([repository README, section 5.3](../README.md#53-docker-compose-se
 server with `--host 0.0.0.0` on purpose: Compose only publishes the port on `127.0.0.1` of the machine.
 
 - `--public-port`: the port the browser uses, when it is not `--port`.
-- `BENCH_TOKEN`: a fixed token, at least 16 characters, without spaces, not starting with `#`. Otherwise it is ignored, a warning is printed and a random token is used.
+- `BENCH_TOKEN`: a fixed token, at least 16 characters, ASCII, without spaces, not starting with `#`. Otherwise it is ignored, a warning is printed and a random token is used.
 
 On a remote machine (client VM), the server only listens on 127.0.0.1; from your workstation:
 

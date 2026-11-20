@@ -1136,7 +1136,17 @@ def test_choose_token_keeps_a_good_value():
     assert server.choose_token("a-long-random-string-123") == ("a-long-random-string-123", None)
 
 
-@pytest.mark.parametrize("value", ["short", "# empty: random, shown by `docker compose logs bench`", "has some spaces in it ok", "#" + "x" * 30])
+@pytest.mark.parametrize("value", ["short", "# empty: random, shown by `docker compose logs bench`", "has some spaces in it ok", "#" + "x" * 30, "é" * 20])
 def test_choose_token_refuses_a_guessable_value(value):
     token, warning = server.choose_token(value)
     assert token != value and len(token) >= 24 and "BENCH_TOKEN ignored" in warning
+
+
+def test_the_guard_does_not_fail_on_a_token_header_outside_ascii(monkeypatch):
+    monkeypatch.setattr(server, "TOKEN", "t")
+    monkeypatch.setattr(server, "PUBLIC_PORT", [8765])
+    req = GuardRequest("127.0.0.1:8765", token="é" * 20)
+
+    async def handler(r):
+        return server.web.json_response({"ok": True})
+    assert asyncio.run(server.guard(req, handler)).status == 401
