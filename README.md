@@ -151,8 +151,8 @@ cp .env.example .env
 source .env
 ```
 
-**3. Check that it can reach the server**: download the tokenizer of your model, then ask the server for its models
-and its configuration.
+**3. Check that it can reach the server**: download the tokenizer of your model ([section 5.2](#52-the-tokenizer)), then ask the server for its
+models and its configuration.
 
 ```bash
 ./tools/download_tokenizer.sh <Hugging Face repository of your model>
@@ -642,7 +642,8 @@ their sizes. Set `BENCH_TOKENIZER` to the model's Hugging Face name (`org/model`
 
 A gated model also needs `HF_TOKEN`, used only for this download (in `.env` with Docker). The runs use the files
 in `tools/tokenizer/` when `BENCH_TOKENIZER` is empty or is the name they were downloaded for. For another model,
-set its name: Docker downloads it again, and on your machine you run the script again.
+set its name: Docker downloads it again, and on your machine you run the script again. `BENCH_TOKENIZER_REPO` is no longer
+read: put the name in `BENCH_TOKENIZER`.
 
 Other ways:
 
@@ -1752,7 +1753,7 @@ of the chosen view.
 | `agents_test/common.py`, `metrics.py` | measured model call (streaming), `/metrics` reading |
 | `tools/server_config.py` | reading of the vLLM servers' configuration, GPU count deduced from the fingerprint, check that the model name is known |
 | `tools/download_tokenizer.sh`, `.env.example` | download of the default tokenizer, settings template |
-| `tools/tokenizer/` | the tokenizer files, copied by `download_tokenizer.sh` ([section 5.2](#52-the-tokenizer)); not in the repository until you add them |
+| `tools/tokenizer/` | the tokenizer files, downloaded by `download_tokenizer.sh` (or by the container) with a `.repo` file that names the model ([section 5.2](#52-the-tokenizer)); not in the repository until you add them |
 | `tools/settings.py` | reads the `BENCH_*` variables |
 | `tools/fake_server.py` | fake server to check the pipeline (vLLM and LiteLLM metrics, `/admin?rate=…`) |
 | `report/` | reporting: `python -m report aiperf\|agents <root> --target N [--gpu N]` |
