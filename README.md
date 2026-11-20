@@ -273,7 +273,7 @@ Next steps: the other stress tests ([section 6](#6-stress-tests)), observation o
 ```mermaid
 flowchart LR
   subgraph client["Client machine (this repository)"]
-    env["target.env<br/>BENCH_URL · BENCH_MODEL<br/>BENCH_METRICS · BENCH_API_KEY"]
+    env["target.env or .env<br/>BENCH_URL · BENCH_MODEL<br/>BENCH_METRICS · BENCH_API_KEY"]
     sweep["sweep.sh<br/>(AIPerf, synthetic load)"]
     agentx["agentx.sh<br/>(AIPerf, AgentX scenario)"]
     launcher["agents_test.launcher<br/>(3 simulated agents)"]
@@ -617,7 +617,7 @@ ls tools/tokenizer/tokenizer.json
 Without Hugging Face access, copy `tokenizer.json` and `tokenizer_config.json` from the weights folder into
 `tools/tokenizer/`.
 
-**Without a copy**: set in `target.env` the folder that already holds `tokenizer.json`, for example the one vLLM
+**Without a copy** (install on the machine): set in `target.env` the folder that already holds `tokenizer.json`, for example the one vLLM
 downloaded. Give the absolute path of the folder, not of the file, and the one of the model actually served:
 
 ```bash
@@ -1039,7 +1039,7 @@ The test agents are three profiles (`code_review` with sub-agents, step-by-step 
 Their tools are simulated: they return fabricated text and act on no system.
 
 Like `sweep.sh` and `agentx.sh`, the launcher reads the variables of `target.env`: load it in this terminal first
-([section 5.2](#52-set-the-connection)). `BENCH_URL`, `BENCH_MODEL` and `BENCH_METRICS` are the defaults of `--url`,
+([section 5.2](#52-set-the-connection)). With Docker Compose, the `bench` container already has them from `.env`. `BENCH_URL`, `BENCH_MODEL` and `BENCH_METRICS` are the defaults of `--url`,
 `--model` and `--metrics`. An option typed on the command line wins over its variable. Two more rules:
 
 - `BENCH_METRICS` goes with `BENCH_URL`: it is used only when `--url` is not given. A run aimed at another URL never
@@ -1585,10 +1585,10 @@ sides of the tunnel (under Docker Compose, it is `BENCH_PORT`).
 
 The fields are not saved. They start with `BENCH_URL`, `BENCH_MODEL`, `BENCH_METRICS` and `BENCH_TOKENIZER` (and, under Docker Compose,
 `BENCH_PROMETHEUS` and `BENCH_LITELLM_SELECTOR`), taken
-from the terminal that started the interface or, for what the terminal does not set, from `target.env` at the root
-of the repository. The file is read when the interface starts, never run: only plain `export BENCH_NAME=value`
+from the terminal that started the interface (with Docker Compose: from `.env`) or, for what the terminal does not set,
+from `target.env` at the root of the repository. The file is read when the interface starts, never run: only plain `export BENCH_NAME=value`
 lines count (no `$`, no backticks, no empty value). Restart the interface after editing it. Keys never go to the page.
-`BENCH_API_KEY` (terminal or `target.env`) is used when the API key field is empty, and only while the target URL is the `BENCH_URL` one. The
+`BENCH_API_KEY` (terminal, `.env` with Docker Compose, or `target.env`) is used when the API key field is empty, and only while the target URL is the `BENCH_URL` one. The
 runs themselves do not inherit the other variables of the terminal.
 
 It accepts only:
@@ -1705,7 +1705,7 @@ durations), labels, agent names and error messages; no prompt or response conten
 | Per-agent view: tokens at 0 or too low, speed empty | streamed requests without the usage: LiteLLM counts zero tokens | `stream_options: {"include_usage": true}` in the agent's requests, or `always_include_stream_usage: true` ([section 7.5](#75-per-agent-view-through-litellm)) |
 | LiteLLM target "DOWN" in Prometheus, 401 error or key file not found | key missing or wrong, or `litellm.key` missing or unreadable | create `litellm.key` ([section 7.2](#72-install-and-start-prometheus-once)) with a valid key; `metrics_path: /metrics/`. With this repository's Compose: `LITELLM_MASTER_KEY` was empty or changed in `.env`, run `docker compose up -d` again |
 | Docker: "not a directory: Are you trying to mount a directory onto a file" | `prometheus.yml` or `litellm.key` missing at the first `up`: Docker created a folder in its place | `rmdir prometheus.yml litellm.key`, create the files, start again ([section 7.2](#72-install-and-start-prometheus-once), B) |
-| Docker: the target is unreachable from the container but answers on the machine | `127.0.0.1` in `target.env` is the container | `http://host.docker.internal:<port>` ([section 4.4](#44-or-with-docker-compose)) |
+| Docker: the target is unreachable from the container but answers on the machine | `127.0.0.1` in `.env` is the container | `http://host.docker.internal:<port>` ([section 4.4](#44-or-with-docker-compose)) |
 | Docker: the interface answers "host refused" | the browser address uses a port other than `BENCH_PORT` | open the exact address of `docker compose logs bench` |
 | Docker, Linux: results owned by root | the container runs as root | `BENCH_UID` and `BENCH_GID` in `.env` ([section 4.4](#44-or-with-docker-compose)) |
 | Docker: LiteLLM cannot reach its database, `litellm-db` is healthy | a character other than a letter or a digit in `LITELLM_DB_PASSWORD` breaks its URL | letters and digits only, then `docker compose down -v` ([section 4.4](#44-or-with-docker-compose)) |
@@ -1744,6 +1744,7 @@ If you use it: bench server only, port open only to the test client, never in pr
 visible in `ps` on the client machine while AIPerf runs (AIPerf masks it in its own logs).
 
 - Use a dedicated bench key, and do not run the clients on a shared machine.
+- The key sits in `target.env`, or in `.env` with Docker Compose: both are ignored by git; keep them private (`chmod 600`).
 - The bench's own logs never contain it, and the interface masks it in the command it prints.
 
 **The interface only talks to local or private hosts, and only reads inside your own directories.**
@@ -1931,7 +1932,7 @@ The observation is checked with a Prometheus that scrapes the fake server (`tool
 
 ### E.1 Start the fake server
 
-In Docker: `COMPOSE_PROFILES=try` ([section 4.4](#44-or-with-docker-compose)); the fake server then listens on `0.0.0.0` (`--host`) so that the other containers
+In Docker: `COMPOSE_PROFILES=try` and `BENCH_URL=http://fake-server:8001` in `.env` ([section 4.4](#44-or-with-docker-compose)); the fake server then listens on `0.0.0.0` (`--host`) so that the other containers
 reach it, and Prometheus uses `docker/prometheus-fake.yml`.
 
 Run it in the background, in a terminal you keep open and where the environment is active ([section 5.1](#51-activate-the-environment)); without it, the `python` command is not found:
