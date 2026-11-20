@@ -384,6 +384,17 @@ vLLM is not part of it: it runs on your GPU server, as in [section 4.1](#41-what
 launch options (parallelism, context length, prefix cache, speculative decoding) are what the bench compares, so they
 stay yours.
 
+**Two files, two jobs**
+
+| File | What it holds | Read when | After a change |
+|---|---|---|---|
+| `target.env` | your model's connection: `BENCH_URL`, `BENCH_MODEL`, `BENCH_METRICS`, `BENCH_API_KEY`, `BENCH_TOKENIZER` | the interface starts, and the scripts `source` it | `docker compose restart bench` |
+| `.env` | the Compose choices: profiles, ports, interface token, LiteLLM keys, tokenizer download | `docker compose up` | `docker compose up -d` |
+
+If you would type it in the interface form, it goes in `target.env`. If it is about the containers, it goes in
+`.env`. Addresses in `target.env` are written as the container sees them (below).
+`restart` makes a new interface token unless `BENCH_TOKEN` is set in `.env`.
+
 **Start**
 
 Get the code (`git clone https://github.com/Shevehs/banc-gpu.git ~/banc-gpu && cd ~/banc-gpu`), then fill in `target.env` ([section 5.2](#52-set-the-connection)) with the addresses as the
