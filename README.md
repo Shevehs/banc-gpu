@@ -893,7 +893,9 @@ for two reasons:
 
 The cost is that the duration of a level depends on the speed of the server, and a low level rests on few requests, so
 its percentiles are rough. To confirm a selected level, or for a reference measurement, set `BENCH_DURATION` instead:
-every level then lasts that many seconds, with many more requests per level.
+every level then lasts that many seconds, with many more requests per level. After that time, AIPerf waits 30 s
+(its grace period) for the requests still in flight: a level can last that much longer, and if no request finishes in
+time, the level fails. Raise the duration, or add `--benchmark-grace-period <seconds>` to the extra AIPerf options.
 
 Each level starts with a warm-up of as many requests as its concurrency. They are not part of the results.
 
@@ -1778,6 +1780,7 @@ durations), labels, agent names and error messages; no prompt or response conten
 | AgentX: a generated set is not the one I expected (old size or options) | the interface reuses an existing `traces-<preset>` folder | delete the folder and launch again, or generate it yourself with `tools/make_traces.py --overwrite` |
 | `<dir>/<label> already exists: change the label…` (`sweep.sh`, `agentx.sh`, test agents, or the log in the interface) | a run with this label is already in the results directory; nothing was started | use the next label (`-r2`), or replace the old results: `BENCH_OVERWRITE=1` (`--overwrite` for the test agents), or "Replace existing results" in the interface |
 | a tokenizer error after an update, with `BENCH_TOKENIZER_REPO` in `.env` | that variable is no longer read: nothing is downloaded | put the model's Hugging Face name in `BENCH_TOKENIZER` ([section 5.2](#52-the-tokenizer)) |
+| `FAILED at concurrency N`, and the log of the level says `No profile results to export` after `grace_period_timeout=True` | no request finished within `BENCH_DURATION` plus AIPerf's 30 s grace period: the server is slower than that at this concurrency | raise `BENCH_DURATION` (or leave it empty), or add `--benchmark-grace-period <seconds>` to `BENCH_EXTRA`; if even long waits fail, the server cannot serve this concurrency or input size ([section 7.1](#71-synthetic-stress-test)) |
 | failure at concurrency N (`sweep.sh` / `agentx.sh` stop) | see `results/<label>/c<N>.log` | often tokenizer not found ([section 5.2](#52-the-tokenizer)) or target unreachable ([section 2.1](#21-run-on-your-machine)) |
 | `HFValidationError` or tokenizer not found in the AIPerf log | AIPerf launched by hand with `HF_HUB_OFFLINE=1`, or `BENCH_TOKENIZER` = a Hugging Face name absent from the local cache | go through `sweep.sh` with the tokenizer in `tools/tokenizer/` ([section 5.2](#52-the-tokenizer)) |
 | preempt / cache / MTP columns empty | `/metrics` not read, or not vLLM's | check `BENCH_METRICS`: vLLM's address, required through LiteLLM (launch warning, [section 2.1](#21-run-on-your-machine)) |
