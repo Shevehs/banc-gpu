@@ -818,9 +818,10 @@ function Results() {
       {res && (
         <>
           <div className="messages">
-            {res.messages.length ? res.messages.map((m, i) => (
-              <div key={i} className={m.includes("WARNING") ? "warning" : m.startsWith("ERROR") || /\bno\b/.test(m.toLowerCase()) ? "error" : "message"}>{m.trim()}</div>
+            {res.messages.length ? res.messages.filter((m) => !m.includes("WARNING")).map((m, i) => (
+              <div key={i} className={m.startsWith("ERROR") || /\bno\b/.test(m.toLowerCase()) ? "error" : "message"}>{m.trim()}</div>
             )) : <pre>{res.output}</pre>}
+            <Warnings lines={res.messages.filter((m) => m.includes("WARNING"))} />
           </div>
 
           <h3>Throughput per GPU vs. interactivity (10th percentile)</h3>
