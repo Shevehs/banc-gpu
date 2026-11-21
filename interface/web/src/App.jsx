@@ -28,7 +28,7 @@ const CONNECTION = { url: "http://127.0.0.1:8000", model: "bench", metrics: "", 
 const PROMETHEUS = { prometheus: "http://127.0.0.1:9090", prometheus_key: "", vllm: 'job="vllm"', litellm: "",
   by: "metadata_agent" };
 const INITIAL = {
-  synthetic: { tokenizer: "", isl: 2048, osl: 256, levels: "1 2 4 8 16", duration: "", requests_per_concurrency: 8,
+  synthetic: { tokenizer: "", isl: 8192, osl: 1024, levels: "1 2 4 8 16", duration: "", requests_per_concurrency: 8,
     temperature: 0.7, root: "results", extra: "", label: "run-r1", overwrite: false },
   agents: { agents: ["code_review", "pentest", "report"], levels: "1 2 4", duration: 300, warmup: 30, scale: 0.2,
     latency_factor: 1, mode: "scripted", root: "agents_test/results-agents", label: "agents-r1",

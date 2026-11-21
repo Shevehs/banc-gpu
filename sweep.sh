@@ -21,8 +21,8 @@ TOKENIZER="${BENCH_TOKENIZER:-}"      # Hugging Face name or folder; empty = too
 if [ -f "$LOCAL_TOKENIZER/tokenizer.json" ] && { [ -z "$TOKENIZER" ] || [ "$(cat "$LOCAL_TOKENIZER/.repo" 2>/dev/null)" = "$TOKENIZER" ]; }; then TOKENIZER="$LOCAL_TOKENIZER"; fi
 METRICS="${BENCH_METRICS:-}"                   # vLLM /metrics URLs in addition to URL/metrics, separated by spaces
 API_KEY="${BENCH_API_KEY:-}"                       # API key for the target (AIPerf masks it in its logs)
-ISL="${BENCH_ISL:-2048}"                           # input tokens per request
-OSL="${BENCH_OSL:-256}"                            # output tokens per request (forced: min_tokens + ignore_eos)
+ISL="${BENCH_ISL:-8192}"                           # input tokens per request
+OSL="${BENCH_OSL:-1024}"                           # output tokens per request (forced: min_tokens + ignore_eos)
 DURATION="${BENCH_DURATION:-}"                           # seconds per level; empty = request count
 REQUESTS_PER_CONCURRENCY="${BENCH_REQUESTS_PER_CONCURRENCY:-8}"            # without DURATION: requests per level = 8 x concurrency, at least 16
 TEMPERATURE="${BENCH_TEMPERATURE:-0.7}"            # fixed so that MTP acceptance is comparable from one trial to another

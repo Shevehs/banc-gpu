@@ -525,7 +525,7 @@ In practice:
 - `--max-num-batched-tokens`: the number of tokens vLLM processes in one step. Keep your production value, so that
   the measurement represents it, and note it with the result: it moves the TTFT and the interactivity in opposite
   directions.
-  - **Synthetic test**: when the value is close to the size of the prompts (2,048 tokens), the prompts are prefilled
+  - **Synthetic test**: when the value is close to the size of the prompts (8,192 tokens), the prompts are prefilled
     almost one at a time and the others wait in the queue.
     - It shows as waiting requests (`vllm:num_requests_waiting`) and as a long TTFT at high concurrency.
     - To tell this cause from a lack of memory, look at the KV cache and the preemptions. If the cache is not full and
@@ -544,7 +544,7 @@ In practice:
 
 | Mode | `--max-model-len` at least | Why |
 |---|---|---|
-| Synthetic | input + output + chat template (e.g. 2,048 + 256, plus a margin) | requests have a fixed length |
+| Synthetic | input + output + chat template (e.g. 8,192 + 1,024, plus a margin) | requests have a fixed length |
 | AgentX | the longest trace context, input **plus output**: up to about 990,000 input tokens (full set), 256,000 (`256k` variant), plus the output and a margin for the chat template; otherwise set `BENCH_MAX_CONTEXT` ([section 7.6](#76-context-shorter-than-the-traces)) | AIPerf does not truncate AgentX traces |
 | AgentX, generated or your own traces | the longest call of your traces, input **plus output**, plus a margin for the chat template | you choose the sizes; `make_traces.py` prints the value for a generated set ([section 7.5](#75-agentx-with-generated-or-your-own-traces)) |
 | Test agents | about 135,000 x `--scale`, plus the output | contexts reach about 135,000 tokens at scale 1 (estimated with the Qwen vocabulary) |
@@ -853,7 +853,7 @@ in a row (`..`).
 ### 7.1 Synthetic stress test
 
 This test uses **AIPerf** (through `sweep.sh`) to send requests of a fixed length, one level of concurrency after the
-other (2,048 input and 256 output tokens by default).
+other (8,192 input and 1,024 output tokens by default: the "8k/1k" shape of InferenceX; lower `BENCH_ISL` and `BENCH_OSL` on a small server).
 
 vLLM must be launched **with** `--no-enable-prefix-caching`.
 
@@ -867,7 +867,7 @@ vLLM must be launched **with** `--no-enable-prefix-caching`.
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `BENCH_ISL` / `BENCH_OSL` | 2048 / 256 | input / output tokens per request (output enforced: `min_tokens` + `ignore_eos`) |
+| `BENCH_ISL` / `BENCH_OSL` | 8192 / 1024 | input / output tokens per request (output enforced: `min_tokens` + `ignore_eos`) |
 | `BENCH_DURATION` | empty | seconds per level; empty = a fixed number of requests per level (next row) |
 | `BENCH_REQUESTS_PER_CONCURRENCY` | 8 | without `BENCH_DURATION`: requests per level = this value x the concurrency, at least 16 |
 | `BENCH_ROOT_DIR` | `results` | results folder |
