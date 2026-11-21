@@ -189,11 +189,11 @@ The GPU count is the TP x PP x DP of the fingerprint, times the number of vLLM s
 If something looks wrong: [section 2.3](#23-if-something-looks-wrong).
 
 **4. Run a first measurement and build the report**: the first command sends load at 1, 4 and 16 simultaneous
-requests; the second one builds the report. The number of GPUs is deduced from the server's configuration; add
-`--gpu N` to force it.
+requests, with short requests (2,048 input and 256 output tokens) to stay quick; the second one builds the report. The
+number of GPUs is deduced from the server's configuration; add `--gpu N` to force it.
 
 ```bash
-./sweep.sh first-r1 "1 4 16"
+BENCH_ISL=2048 BENCH_OSL=256 ./sweep.sh first-r1 "1 4 16"
 python -m report aiperf results --target 30
 ```
 
@@ -277,11 +277,11 @@ docker compose exec bench bash -c 'python tools/server_config.py --url "$BENCH_U
 It shows the same as step 3 of [section 2.1](#21-run-on-your-machine): the model, then the `[config]` lines. If
 something looks wrong: [section 2.3](#23-if-something-looks-wrong).
 
-**6. Run a first measurement and build the report**: from the interface (tab "Launch stress tests"), or from a
-terminal:
+**6. Run a first measurement and build the report**: from the interface (tab "Launch stress tests": set Input tokens
+to 2048 and Output tokens to 256 to stay quick), or from a terminal:
 
 ```bash
-docker compose exec bench ./sweep.sh first-r1 "1 4 16"
+docker compose exec -e BENCH_ISL=2048 -e BENCH_OSL=256 bench ./sweep.sh first-r1 "1 4 16"
 docker compose exec bench python -m report aiperf results --target 30
 ```
 
@@ -320,7 +320,7 @@ More cases are in the troubleshooting table ([section 11.3](#113-troubleshooting
 ### 2.4 Read the first report
 
 The report prints one line per level, then the selected point. This is a real output, from a small test on a small server
-with `BENCH_ISL=2048 BENCH_OSL=256` (your figures will differ, and the defaults are larger):
+with the values above (your figures will differ):
 
 ```
 run                conc   tput/GPU  inter P10  TTFT P95 ms  preempt  err  cache   MTP  output avg
