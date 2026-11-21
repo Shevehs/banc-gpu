@@ -284,7 +284,7 @@ function Launch({ onLaunched, c, params, setParams, kind, setKind }) {
       </div>
       <p className="note">{NOTES[kind]}</p>
       <div className="grid">
-        <Field label="Label" help="the suffix -r1, -r2… marks a repetition">
+        <Field label="Label" help="starts as the date and time; to name repetitions, type your own with the suffix -r1, -r2… (conf-a-r1)">
           <input value={p.label} onChange={set("label")} />
         </Field>
         <Field label="Replace existing results" help="if this label already exists in the results directory, it is deleted and the run starts again; otherwise the run stops">
