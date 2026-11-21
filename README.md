@@ -1767,6 +1767,7 @@ of the chosen view.
 | `report/` | reporting: `python -m report aiperf\|agents <root> --target N [--gpu N]` |
 | `interface/` | local interface (compiled React + Python server); `interface/planner.py` holds the queue of planned runs, saved in `interface/planned.json` |
 | `.github/workflows/ci.yml` | continuous integration: `ruff check .` and `python -m pytest` on every push to `main` and on every pull request against `main` |
+| `.github/workflows/docker.yml` | tries the Docker Compose stack on a clean machine (build, start with the fake server, check the interface and Prometheus answer), on every push to `main` and every pull request against `main` that changes `docker-compose.yml`, `docker/`, `.env.example`, `interface/` or `tools/` |
 | `pyproject.toml` | dependency groups (`runtime`, `dev` with `pytest` and `ruff`, `tokenizer` with the `tokenizers` library), pytest and ruff configuration; the repository is run from its root, not pip-installed |
 | `tests/` | tests (`python -m pytest`): golden reference outputs of the two report kinds and of the observation views (`tests/golden/`), validators, round-trip tests; lint with `ruff check .` |
 
