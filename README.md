@@ -189,11 +189,11 @@ The GPU count is the TP x PP x DP of the fingerprint, times the number of vLLM s
 If something looks wrong: [section 2.3](#23-if-something-looks-wrong).
 
 **4. Run a first measurement and build the report**: the first command sends load at 1, 4 and 16 simultaneous
-requests; the second one builds the report. The number of GPUs is deduced from the server's configuration; add
-`--gpu N` to force it.
+requests, with short requests (2,048 input and 256 output tokens) to stay quick; the second one builds the report. The
+number of GPUs is deduced from the server's configuration; add `--gpu N` to force it.
 
 ```bash
-./sweep.sh first-r1 "1 4 16"
+BENCH_ISL=2048 BENCH_OSL=256 ./sweep.sh first-r1 "1 4 16"
 python -m report aiperf results --target 30
 ```
 
@@ -277,11 +277,11 @@ docker compose exec bench bash -c 'python tools/server_config.py --url "$BENCH_U
 It shows the same as step 3 of [section 2.1](#21-run-on-your-machine): the model, then the `[config]` lines. If
 something looks wrong: [section 2.3](#23-if-something-looks-wrong).
 
-**6. Run a first measurement and build the report**: from the interface (tab "Launch stress tests"), or from a
-terminal:
+**6. Run a first measurement and build the report**: from the interface (tab "Launch stress tests": set Input tokens
+to 2048 and Output tokens to 256 to stay quick), or from a terminal:
 
 ```bash
-docker compose exec bench ./sweep.sh first-r1 "1 4 16"
+docker compose exec -e BENCH_ISL=2048 -e BENCH_OSL=256 bench ./sweep.sh first-r1 "1 4 16"
 docker compose exec bench python -m report aiperf results --target 30
 ```
 
@@ -320,7 +320,7 @@ More cases are in the troubleshooting table ([section 11.3](#113-troubleshooting
 ### 2.4 Read the first report
 
 The report prints one line per level, then the selected point. This is a real output, from a small test on a small server
-(your figures will differ):
+with the values above (your figures will differ):
 
 ```
 run                conc   tput/GPU  inter P10  TTFT P95 ms  preempt  err  cache   MTP  output avg
@@ -525,7 +525,7 @@ In practice:
 - `--max-num-batched-tokens`: the number of tokens vLLM processes in one step. Keep your production value, so that
   the measurement represents it, and note it with the result: it moves the TTFT and the interactivity in opposite
   directions.
-  - **Synthetic test**: when the value is close to the size of the prompts (2,048 tokens), the prompts are prefilled
+  - **Synthetic test**: when the value is close to the size of the prompts (8,192 tokens), the prompts are prefilled
     almost one at a time and the others wait in the queue.
     - It shows as waiting requests (`vllm:num_requests_waiting`) and as a long TTFT at high concurrency.
     - To tell this cause from a lack of memory, look at the KV cache and the preemptions. If the cache is not full and
@@ -544,7 +544,7 @@ In practice:
 
 | Mode | `--max-model-len` at least | Why |
 |---|---|---|
-| Synthetic | input + output + chat template (e.g. 2,048 + 256, plus a margin) | requests have a fixed length |
+| Synthetic | input + output + chat template (e.g. 8,192 + 1,024, plus a margin) | requests have a fixed length |
 | AgentX | the longest trace context, input **plus output**: up to about 990,000 input tokens (full set), 256,000 (`256k` variant), plus the output and a margin for the chat template; otherwise set `BENCH_MAX_CONTEXT` ([section 7.6](#76-context-shorter-than-the-traces)) | AIPerf does not truncate AgentX traces |
 | AgentX, generated or your own traces | the longest call of your traces, input **plus output**, plus a margin for the chat template | you choose the sizes; `make_traces.py` prints the value for a generated set ([section 7.5](#75-agentx-with-generated-or-your-own-traces)) |
 | Test agents | about 135,000 x `--scale`, plus the output | contexts reach about 135,000 tokens at scale 1 (estimated with the Qwen vocabulary) |
@@ -853,7 +853,8 @@ in a row (`..`).
 ### 7.1 Synthetic stress test
 
 This test uses **AIPerf** (through `sweep.sh`) to send requests of a fixed length, one level of concurrency after the
-other (2,048 input and 256 output tokens by default).
+other (8,192 input and 1,024 output tokens by default, the "8k/1k" shape of InferenceX).
+Lower `BENCH_ISL` and `BENCH_OSL` on a small server.
 
 vLLM must be launched **with** `--no-enable-prefix-caching`.
 
@@ -867,7 +868,7 @@ vLLM must be launched **with** `--no-enable-prefix-caching`.
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `BENCH_ISL` / `BENCH_OSL` | 2048 / 256 | input / output tokens per request (output enforced: `min_tokens` + `ignore_eos`) |
+| `BENCH_ISL` / `BENCH_OSL` | 8192 / 1024 | input / output tokens per request (output enforced: `min_tokens` + `ignore_eos`) |
 | `BENCH_DURATION` | empty | seconds per level; empty = a fixed number of requests per level (next row) |
 | `BENCH_REQUESTS_PER_CONCURRENCY` | 8 | without `BENCH_DURATION`: requests per level = this value x the concurrency, at least 16 |
 | `BENCH_ROOT_DIR` | `results` | results folder |
