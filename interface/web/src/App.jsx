@@ -268,7 +268,7 @@ function Launch({ onLaunched, c, params, setParams, kind, setKind }) {
           : "Planned after the current run: see the Runs tab" });
       }
       // a new label for the next run, and replacing is asked again each time
-      setParams({ ...params, [kind]: { ...p, overwrite: false, label: newLabel(LABEL_PREFIX[kind]) } });
+      setParams((q) => ({ ...q, [kind]: { ...q[kind], overwrite: false, label: newLabel(LABEL_PREFIX[kind]) } }));     // from the current form: what was typed meanwhile stays
     } catch (e) { setMsg({ ok: false, text: e.message }); }
   };
 
