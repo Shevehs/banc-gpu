@@ -80,6 +80,8 @@ The interface never starts vLLM: it measures the one that is running. Options to
   `traces-<preset>` the first time) or takes your own folder (repository README, section 7.5). For the test agents, "Label the agents" and "Per-agent keys" give every
   request the identity of its profile, for the per-agent view through LiteLLM (repository README, section 8.5). "Replace existing results"
   deletes the results of the same label (same directory) and starts again; without it, an existing label stops the run.
+  The label starts as the date and time (`run-20261121-153045`) and is renewed after each launch, so it never meets a
+  label already used; type your own to name repetitions (`conf-a-r1`, `conf-a-r2`).
   "Start" chooses when the run goes: now, after the current run, or at a date and time (read in the browser's time
   zone). A planned run goes into a queue saved in `interface/planned.json` (ignored by git), which survives a restart of
   the interface; the runs start one after another, in the order of their time. Keys are never stored, so a planned run

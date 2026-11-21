@@ -1648,6 +1648,8 @@ sides of the tunnel (under Docker Compose, it is `BENCH_PORT`).
   - A generated set is written to `traces-<preset>` in the repository the first time and reused afterwards. The log
     of the run gives the `--max-model-len` that vLLM needs for it
     ([section 7.5](#75-agentx-with-generated-or-your-own-traces)).
+  - The label starts as the date and time (`run-20261121-153045`), and is renewed after each launch: it never meets a
+    label already used. Type your own to name repetitions (`conf-a-r1`, `conf-a-r2`).
   - A label that already exists in the results directory stops the run. Tick "Replace existing results" to delete it
     and start again.
   - "Start": now, after the current run, or at a date and time (read in your browser's time zone). A planned run goes

@@ -27,14 +27,20 @@ const CONNECTION = { url: "http://127.0.0.1:8000", model: "bench", metrics: "", 
 // Prometheus, for the observation (no load, nothing to start).
 const PROMETHEUS = { prometheus: "http://127.0.0.1:9090", prometheus_key: "", vllm: 'job="vllm"', litellm: "",
   by: "metadata_agent" };
+// A run label made of the date and time (run-20261121-153045): unique, so it never meets a label already used.
+const newLabel = (prefix) => {
+  const d = new Date(), n = (v) => String(v).padStart(2, "0");
+  return `${prefix}-${d.getFullYear()}${n(d.getMonth() + 1)}${n(d.getDate())}-${n(d.getHours())}${n(d.getMinutes())}${n(d.getSeconds())}`;
+};
+const LABEL_PREFIX = { synthetic: "run", agents: "agents", agentx: "agentx" };
 const INITIAL = {
   synthetic: { tokenizer: "", isl: 8192, osl: 1024, levels: "1 2 4 8 16", duration: "", requests_per_concurrency: 8,
-    temperature: 0.7, root: "results", extra: "", label: "run-r1", overwrite: false },
+    temperature: 0.7, root: "results", extra: "", label: newLabel("run"), overwrite: false },
   agents: { agents: ["code_review", "pentest", "report"], levels: "1 2 4", duration: 300, warmup: 30, scale: 0.2,
-    latency_factor: 1, mode: "scripted", root: "agents_test/results-agents", label: "agents-r1",
+    latency_factor: 1, mode: "scripted", root: "agents_test/results-agents", label: newLabel("agents"),
     label_agents: false, agent_keys: "", overwrite: false },
   agentx: { levels: "1 2 4 8", duration: 1800, tokenizer: "", traces_dir: "", short_run: false, max_context: "", variant: "",
-    root: "results-agentx", label: "agentx-r1", trace_set: "", overwrite: false },
+    root: "results-agentx", label: newLabel("agentx"), trace_set: "", overwrite: false },
 };
 // Observation: what is asked of Prometheus. Fields are kept while the page stays open.
 const OBSERVATION = { since: "2h", start: "", end: "", window: "5m", target: 30, ttft_max: "", view: "windows",
@@ -261,7 +267,8 @@ function Launch({ onLaunched, c, params, setParams, kind, setKind }) {
         setMsg({ ok: true, text: when === "at" ? `Planned for ${new Date(at).toLocaleString()}: see the Runs tab`
           : "Planned after the current run: see the Runs tab" });
       }
-      if (p.overwrite) setParams({ ...params, [kind]: { ...p, overwrite: false } });     // replacing is asked again each time
+      // a new label for the next run, and replacing is asked again each time
+      setParams({ ...params, [kind]: { ...p, overwrite: false, label: newLabel(LABEL_PREFIX[kind]) } });
     } catch (e) { setMsg({ ok: false, text: e.message }); }
   };
 
