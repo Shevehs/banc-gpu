@@ -845,8 +845,9 @@ general_settings:
 
 The bench generates the load, level by level, until the installation breaks. The prefix-cache setting
 required by each test is in [section 4.2](#42-check-the-vllm-in-place). A **label** names each run; the suffix `-r1`, `-r2`…
-marks repetitions of the same configuration, which the report groups together. To repeat a run, launch the same
-command again with the next label (`-r2`, `-r3`): there is no setting for a number of repetitions. A label has up to
+marks repetitions of the same configuration, which the report groups together. A label without this suffix is a
+configuration of its own. To repeat a run, launch the same command again with the next label (`-r2`, `-r3`): there is
+no setting for a number of repetitions. A label has up to
 80 characters: letters, digits, dots, hyphens and underscores, starting with a letter or a digit and without two dots
 in a row (`..`).
 
@@ -1591,7 +1592,8 @@ A single short pass is not enough to settle on a figure. For each server configu
    that meets the target and the first that does not).
    - **15 min** each (`BENCH_DURATION=900`), **three repetitions** (`conf-a-r1`, `-r2`, `-r3`), each a separate run
      of the same command.
-   - In the interface, the three repetitions can be planned one after another ([section 10](#10-interface)).
+   - In the interface, type the labels yourself (`conf-a-r1`, `-r2`, `-r3`) and plan the three repetitions one after
+     another ([section 10](#10-interface)).
    - Keep the median, the min–max spread and the estimate interpolated at the target.
    - More than 10% spread between repetitions (indicative threshold) means a disturbed machine: redo.
 3. **Without speculative decoding** (if the model uses it): restart vLLM without `--speculative-config` and redo the
@@ -1648,6 +1650,8 @@ sides of the tunnel (under Docker Compose, it is `BENCH_PORT`).
   - A generated set is written to `traces-<preset>` in the repository the first time and reused afterwards. The log
     of the run gives the `--max-model-len` that vLLM needs for it
     ([section 7.5](#75-agentx-with-generated-or-your-own-traces)).
+  - The label starts as the date and time (`run-20261121-153045`) and is renewed after each start or plan. Type your own
+    to name repetitions (`conf-a-r1`, `conf-a-r2`).
   - A label that already exists in the results directory stops the run. Tick "Replace existing results" to delete it
     and start again.
   - "Start": now, after the current run, or at a date and time (read in your browser's time zone). A planned run goes
