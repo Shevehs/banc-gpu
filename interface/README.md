@@ -90,8 +90,8 @@ The interface never starts vLLM: it measures the one that is running. Options to
   The planned runs are listed above them, each with "cancel". If a planned run fails, is stopped, or was interrupted by
   a restart, the queue is paused with the reason shown: "resume" goes on. A run that starts more than two minutes after
   its time (the interface was off, or the previous run overran) is marked "started late".
-- **Results**: analysis of a results directory, shown as soon as a field changes (table, selected point, warnings,
-  throughput-per-GPU vs. interactivity curve with the target). The "GPUs" field is optional: empty, the count of each run is deduced
+- **Results**: analysis of a results directory, shown as soon as a field changes (table, selected point, warnings
+  folded under it, throughput-per-GPU vs. interactivity curve with the target). The "GPUs" field is optional: empty, the count of each run is deduced
   from its fingerprint (`server_config.json`).
 - **Observation**: nothing to start. Prometheus and the GPUs come from Configuration; range ("Since", or start
   and end), window length: a chart, drawn as soon as a field changes, with the choice of the variables on x (the date by default) and y,
