@@ -56,11 +56,20 @@ _WORDS = ("buffer index length offset parse header token session config request 
 _TOKENIZER = {"loaded": False, "tok": None}
 
 
+def tokenizer_root(name, local):
+    """Folder or file to read the tokenizer from: the local folder `local` (tools/tokenizer) for an empty `name` and
+    for the name its .repo file says it was downloaded for, otherwise `name` itself."""
+    if not name:
+        return str(local)
+    marker = (local / ".repo").read_text().strip() if (local / ".repo").is_file() else None
+    return str(local) if name == marker and (local / "tokenizer.json").is_file() else name
+
+
 def tokenizer():
     """Local tokenizer (tokenizers library), or None."""
     if not _TOKENIZER["loaded"]:
         _TOKENIZER["loaded"] = True
-        root = read_setting("TOKENIZER") or str(pathlib.Path(__file__).resolve().parent.parent / "tools" / "tokenizer")
+        root = tokenizer_root(read_setting("TOKENIZER"), pathlib.Path(__file__).resolve().parent.parent / "tools" / "tokenizer")
         f = pathlib.Path(root) / "tokenizer.json" if pathlib.Path(root).is_dir() else pathlib.Path(root)
         if f.is_file():
             try:

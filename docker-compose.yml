@@ -20,7 +20,7 @@ x-bench: &bench
 services:
   bench:
     <<: *bench
-    entrypoint: ["bash", "docker/entrypoint.sh"]         # downloads the tokenizer once if BENCH_TOKENIZER_REPO is set
+    entrypoint: ["bash", "docker/entrypoint.sh"]         # downloads the tokenizer once if BENCH_TOKENIZER is a Hugging Face name
     command: ["python", "-m", "interface.server", "--host", "0.0.0.0", "--port", "8765", "--public-port", "${BENCH_PORT:-8765}"]
     ports: ["127.0.0.1:${BENCH_PORT:-8765}:8765"]   # the interface is reachable from this machine only
     environment:
@@ -33,7 +33,6 @@ services:
       BENCH_PROMETHEUS: "${BENCH_PROMETHEUS:-http://prometheus:9090}"     # another Prometheus: its address here
       BENCH_LITELLM_SELECTOR: "${BENCH_LITELLM_SELECTOR:-}"
       BENCH_ALLOW_PUBLIC_URLS: "${BENCH_ALLOW_PUBLIC_URLS:-}"     # 1: accept a target on a public address
-      BENCH_TOKENIZER_REPO: "${BENCH_TOKENIZER_REPO:-}"           # Hugging Face name of the model: its tokenizer is downloaded once
       HF_TOKEN: "${HF_TOKEN:-}"                                    # only for a gated model; not passed on to the runs
 
   prometheus:

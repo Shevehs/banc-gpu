@@ -254,7 +254,7 @@ def test_agentx_workers_for_the_trace_loading(agentx_run, tmp_path, monkeypatch,
     assert ("single process" in result.stdout) == (expected == "1")          # said only when the script chose it
 
 
-def default_tokenizer_tree(tmp_path, with_tokenizer):
+def default_tokenizer_tree(tmp_path, with_tokenizer, marker=None):
     """A copy of agentx.sh next to a tools/ folder, with or without the default tokenizer, to try the default path."""
     root = tmp_path / "tree"
     (root / "tools").mkdir(parents=True)
@@ -265,6 +265,8 @@ def default_tokenizer_tree(tmp_path, with_tokenizer):
     if with_tokenizer:
         (root / "tools" / "tokenizer").mkdir()
         (root / "tools" / "tokenizer" / "tokenizer.json").write_text("{}")
+        if marker:
+            (root / "tools" / "tokenizer" / ".repo").write_text(marker + "\n")      # the model the download was for
     return root / AGENTX
 
 
@@ -273,6 +275,16 @@ def test_agentx_default_tokenizer_folder(agentx_run, tmp_path, monkeypatch, with
     """Without BENCH_TOKENIZER, tools/tokenizer/ is used when it holds tokenizer.json: the same single-process loading."""
     monkeypatch.delenv(WORKERS, raising=False)
     result, seen, _ = agentx_run(script=default_tokenizer_tree(tmp_path, with_tokenizer), FAKE_UNAME="Darwin")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert seen.get(WORKERS) == expected
+
+
+@pytest.mark.parametrize("marker,expected", [("org/model", "1"), ("org/other", None), (None, None)])
+def test_agentx_a_name_uses_the_local_copy_downloaded_for_it(agentx_run, tmp_path, monkeypatch, marker, expected):
+    """BENCH_TOKENIZER=<name> uses tools/tokenizer/ only if its .repo file holds that name; otherwise AIPerf gets the name."""
+    monkeypatch.delenv(WORKERS, raising=False)
+    result, seen, _ = agentx_run(script=default_tokenizer_tree(tmp_path, True, marker), FAKE_UNAME="Darwin",
+                                 BENCH_TOKENIZER="org/model")
     assert result.returncode == 0, result.stdout + result.stderr
     assert seen.get(WORKERS) == expected
 

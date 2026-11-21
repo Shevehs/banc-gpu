@@ -151,8 +151,8 @@ cp .env.example .env
 source .env
 ```
 
-**3. Check that it can reach the server**: download the tokenizer of your model, then ask the server for its models
-and its configuration.
+**3. Check that it can reach the server**: download the tokenizer of your model ([section 5.2](#52-the-tokenizer)), then ask the server for its
+models and its configuration.
 
 ```bash
 ./tools/download_tokenizer.sh <Hugging Face repository of your model>
@@ -250,10 +250,10 @@ pick your case:
   Then edit the two lines marked `EDIT` in `docker/litellm-config.yaml` (the model name, and the name vLLM serves).
   More about it (the settings, keys per agent, the database): [section 6.2](#62-the-litellm-of-docker-compose).
 
-**3. Tokenizer (nothing to do in most cases)**: with the model's Hugging Face name in `BENCH_TOKENIZER` (a public
-model), or the files already in `tools/tokenizer/`, go to step 4. To have the container download it once instead, set
-`export BENCH_TOKENIZER_REPO=org/model` in `.env` (plus `HF_TOKEN` for a gated model: the runs do not receive `HF_TOKEN`, so
-for a gated model use this download, not the name in `BENCH_TOKENIZER`).
+**3. Tokenizer**: with the model's Hugging Face name in `BENCH_TOKENIZER` (step 1), the container downloads it once at
+its first start, into `tools/tokenizer/`: nothing else to do. A gated model also needs `HF_TOKEN` in `.env`, used only
+for this download. Without Internet access, copy the files into `tools/tokenizer/` and leave `BENCH_TOKENIZER` empty
+([section 5.2](#52-the-tokenizer)).
 
 **4. Start, and open the interface**
 
@@ -611,7 +611,7 @@ answers "HTTP 401: key required", or there is no `vllm:` metric at all.
 | `BENCH_MODEL` | name served by vLLM (`--served-model-name`) or LiteLLM alias. `sweep.sh` and `agentx.sh` stop if the server does not know it | `bench` |
 | `BENCH_METRICS` | `/metrics` address **of vLLM** (never LiteLLM's or Prometheus'), one per replica, separated by spaces. Empty = `BENCH_URL/metrics`, which only suits a `BENCH_URL` that points to vLLM directly. If `BENCH_URL` points to LiteLLM, give vLLM's address | `http://10.0.0.5:8000/metrics` |
 | `BENCH_API_KEY` | the target's key (vLLM's `--api-key`, or a LiteLLM key). Sent to the target only; it is not written to the bench's logs, but see [Appendix A](#appendix-a-security-notes) (visible in `ps` while AIPerf runs) | — |
-| `BENCH_TOKENIZER` | empty = `tools/tokenizer/` ([section 5.2](#52-the-tokenizer)); otherwise the absolute path of a folder that holds `tokenizer.json` (no copy), or a Hugging Face name (AIPerf downloads it; the test agents, which only read a local folder, then estimate the sizes) | empty |
+| `BENCH_TOKENIZER` | the tokenizer of the measured model: its Hugging Face name, or the absolute path of a folder that holds `tokenizer.json`. Empty = `tools/tokenizer/` if it holds one ([section 5.2](#52-the-tokenizer)) | `org/model` |
 | `DO_NOT_TRACK` | `1` = no usage statistics (AIPerf, Hugging Face). Leave it at `1`. Do not add `HF_HUB_OFFLINE`, see below | `1` |
 
 **In a company only** (on a local workstation, nothing to do):
@@ -629,25 +629,33 @@ variable is set (`sweep.sh` removes it for AIPerf anyway).
 
 ### 5.2 The tokenizer
 
-With Docker Compose: `BENCH_TOKENIZER_REPO` in `.env` downloads it once at start ([section 5.3](#53-docker-compose-settings)).
-
 AIPerf needs the tokenizer of the measured model to build prompts of the right length; the agents use it to adjust
-their sizes. On a machine with Hugging Face access:
+their sizes. Set `BENCH_TOKENIZER` to the model's Hugging Face name (`org/model`), and have the files once in
+`tools/tokenizer/`:
 
-```bash
-./tools/download_tokenizer.sh <model's Hugging Face repository>   # puts the files in tools/tokenizer/
-ls tools/tokenizer/tokenizer.json
-```
+- **With Docker Compose**: nothing else. The container downloads them at its first start.
+- **On your machine**: download them once. The script also records the model's name there.
 
-Without Hugging Face access, copy `tokenizer.json` and `tokenizer_config.json` from the weights folder into
-`tools/tokenizer/`.
+  ```bash
+  ./tools/download_tokenizer.sh org/model
+  ```
 
-**Without a copy** (install on the machine): set in `.env` the folder that already holds `tokenizer.json`, for example the one vLLM
-downloaded. Give the absolute path of the folder, not of the file, and the one of the model actually served:
+A gated model also needs `HF_TOKEN`, used only for this download (in `.env` with Docker). The runs use the files
+in `tools/tokenizer/` when `BENCH_TOKENIZER` is empty or is the name they were downloaded for. For another model,
+set its name: Docker downloads it again, and on your machine you run the script again. A download replaces the files that
+are there only once it has worked. `BENCH_TOKENIZER_REPO` is no longer
+read: put the name in `BENCH_TOKENIZER`.
 
-```bash
-export BENCH_TOKENIZER=$HOME/.cache/huggingface/hub/models--<organization>--<model>/snapshots/<hash>
-```
+Other ways:
+
+- Without Hugging Face access, copy `tokenizer.json` and `tokenizer_config.json` from the weights folder into
+  `tools/tokenizer/`, and leave `BENCH_TOKENIZER` empty.
+- Without a copy, give the folder that already holds `tokenizer.json`, for example the one vLLM downloaded: the
+  absolute path of the folder, not of the file, for the model actually served.
+
+  ```bash
+  export BENCH_TOKENIZER=$HOME/.cache/huggingface/hub/models--<organization>--<model>/snapshots/<hash>
+  ```
 
 Check the model's license before versioning these files.
 
@@ -667,8 +675,7 @@ or both separated by a comma.
 | `BENCH_PORT` | port of the interface, published on `127.0.0.1` of this machine only (from another machine, use an SSH tunnel, [section 10](#10-interface)); change it if 8765 is taken | `8765` |
 | `BENCH_TOKEN` | token of the interface. Empty = a random one at each start, shown by `docker compose logs bench`; a fixed value gives an address you can keep. At least 16 characters, ASCII, without spaces, not starting with `#`: otherwise it is ignored and a random one is used | a long random string |
 | `BENCH_UID`, `BENCH_GID` | Linux: your user and group (`id -u`, `id -g`). The container then runs as you and the results are yours, not root's | `1000` |
-| `BENCH_TOKENIZER_REPO` | Hugging Face name of the model: its tokenizer is downloaded once into `tools/tokenizer/` at the first start ([5.2](#52-the-tokenizer)) | `org/model` |
-| `HF_TOKEN` | Hugging Face token, only for a gated model. The runs do not receive it | — |
+| `HF_TOKEN` | Hugging Face token, only to download the tokenizer of a gated model ([5.2](#52-the-tokenizer)). The runs do not receive it | — |
 | `BENCH_ALLOW_PUBLIC_URLS` | `1` if the GPU server has a public address: the interface refuses one otherwise | `1` |
 
 **Prometheus**
@@ -1118,8 +1125,8 @@ reuse is not reproduced. The conversion code of `tools/traces.md` computes them 
 - From 8 traces on, AIPerf loads the traces with several processes (a generated set has 30). Outside Linux, these
   processes cannot use a local tokenizer folder, and the run never starts.
 - With a local folder (`tools/tokenizer/`, the default), `agentx.sh` therefore loads the traces in a single process by
-  itself. With a Hugging Face name in `BENCH_TOKENIZER`, the loading stays parallel and needs the name in the
-  Hugging Face cache. On Linux, nothing is changed ([details](tools/traces.md#good-to-know)).
+  itself. With a Hugging Face name in `BENCH_TOKENIZER` whose files are not in `tools/tokenizer/`, the loading stays parallel
+  and needs the name in the Hugging Face cache. On Linux, nothing is changed ([details](tools/traces.md#good-to-know)).
 
 **Check a folder first, without a GPU**
 
@@ -1747,7 +1754,7 @@ of the chosen view.
 | `agents_test/common.py`, `metrics.py` | measured model call (streaming), `/metrics` reading |
 | `tools/server_config.py` | reading of the vLLM servers' configuration, GPU count deduced from the fingerprint, check that the model name is known |
 | `tools/download_tokenizer.sh`, `.env.example` | download of the default tokenizer, settings template |
-| `tools/tokenizer/` | the tokenizer files, copied by `download_tokenizer.sh` ([section 5.2](#52-the-tokenizer)); not in the repository until you add them |
+| `tools/tokenizer/` | the tokenizer files, downloaded by `download_tokenizer.sh` (or by the container) with a `.repo` file that names the model ([section 5.2](#52-the-tokenizer)); not in the repository until you add them |
 | `tools/settings.py` | reads the `BENCH_*` variables |
 | `tools/fake_server.py` | fake server to check the pipeline (vLLM and LiteLLM metrics, `/admin?rate=…`) |
 | `report/` | reporting: `python -m report aiperf\|agents <root> --target N [--gpu N]` |
@@ -1770,6 +1777,7 @@ durations), labels, agent names and error messages; no prompt or response conten
 | the interface form starts empty although `.env` is filled in | the interface reads only plain `export BENCH_NAME=value` lines (`$`, backticks and empty values are skipped), once, when it starts | write plain values, then restart the interface |
 | AgentX: a generated set is not the one I expected (old size or options) | the interface reuses an existing `traces-<preset>` folder | delete the folder and launch again, or generate it yourself with `tools/make_traces.py --overwrite` |
 | `<dir>/<label> already exists: change the label…` (`sweep.sh`, `agentx.sh`, test agents, or the log in the interface) | a run with this label is already in the results directory; nothing was started | use the next label (`-r2`), or replace the old results: `BENCH_OVERWRITE=1` (`--overwrite` for the test agents), or "Replace existing results" in the interface |
+| a tokenizer error after an update, with `BENCH_TOKENIZER_REPO` in `.env` | that variable is no longer read: nothing is downloaded | put the model's Hugging Face name in `BENCH_TOKENIZER` ([section 5.2](#52-the-tokenizer)) |
 | failure at concurrency N (`sweep.sh` / `agentx.sh` stop) | see `results/<label>/c<N>.log` | often tokenizer not found ([section 5.2](#52-the-tokenizer)) or target unreachable ([section 2.1](#21-run-on-your-machine)) |
 | `HFValidationError` or tokenizer not found in the AIPerf log | AIPerf launched by hand with `HF_HUB_OFFLINE=1`, or `BENCH_TOKENIZER` = a Hugging Face name absent from the local cache | go through `sweep.sh` with the tokenizer in `tools/tokenizer/` ([section 5.2](#52-the-tokenizer)) |
 | preempt / cache / MTP columns empty | `/metrics` not read, or not vLLM's | check `BENCH_METRICS`: vLLM's address, required through LiteLLM (launch warning, [section 2.1](#21-run-on-your-machine)) |

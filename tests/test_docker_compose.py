@@ -3,6 +3,8 @@ import pathlib
 import re
 import shutil
 
+import pytest
+
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 COMPOSE = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
 
@@ -41,13 +43,15 @@ def test_the_litellm_config_has_the_settings_the_per_agent_view_needs():
 
 
 # ---------------------------------------------------------------- the tokenizer downloaded once at start
-def run_entrypoint(tmp_path, env, has_tokenizer=False, download_ok=True):
+def run_entrypoint(tmp_path, env, has_tokenizer=False, download_ok=True, marker=None):
     """The real docker/entrypoint.sh in a scratch folder with a stand-in for the download script."""
     import subprocess
     (tmp_path / "tools" / "tokenizer").mkdir(parents=True)
     if has_tokenizer:
         (tmp_path / "tools" / "tokenizer" / "tokenizer.json").write_text("{}")
         (tmp_path / "tools" / "tokenizer" / "tokenizer_config.json").write_text("{}")
+    if marker:
+        (tmp_path / "tools" / "tokenizer" / ".repo").write_text(marker + "\n")      # the model the files were downloaded for
     stub = tmp_path / "tools" / "download_tokenizer.sh"
     stub.write_text(f'#!/bin/sh\necho "DOWNLOAD $1 ${{HF_TOKEN:-}}" >> calls.txt\n{"exit 0" if download_ok else "exit 1"}\n')
     stub.chmod(0o755)
@@ -58,19 +62,38 @@ def run_entrypoint(tmp_path, env, has_tokenizer=False, download_ok=True):
 
 
 def test_the_tokenizer_is_downloaded_once_then_the_command_runs(tmp_path):
-    out, calls = run_entrypoint(tmp_path, {"BENCH_TOKENIZER_REPO": "org/model"})
+    out, calls = run_entrypoint(tmp_path, {"BENCH_TOKENIZER": "org/model"})
     assert calls == ["DOWNLOAD org/model "] and "STARTED" in out.stdout and out.returncode == 0
 
 
-def test_no_download_when_a_tokenizer_is_there_or_no_repo_is_given(tmp_path):
-    out, calls = run_entrypoint(tmp_path / "a", {"BENCH_TOKENIZER_REPO": "org/model"}, has_tokenizer=True)
+def test_no_download_when_the_tokenizer_of_that_model_is_there_or_no_name_is_given(tmp_path):
+    out, calls = run_entrypoint(tmp_path / "a", {"BENCH_TOKENIZER": "org/model"}, has_tokenizer=True, marker="org/model")
     assert calls == [] and "STARTED" in out.stdout
     out, calls = run_entrypoint(tmp_path / "b", {})
     assert calls == [] and "STARTED" in out.stdout
 
 
+def test_the_tokenizer_of_another_model_is_downloaded_again(tmp_path):
+    out, calls = run_entrypoint(tmp_path, {"BENCH_TOKENIZER": "org/model"}, has_tokenizer=True, marker="org/other")
+    assert calls == ["DOWNLOAD org/model "]
+    out, calls = run_entrypoint(tmp_path / "b", {"BENCH_TOKENIZER": "org/model"}, has_tokenizer=True)     # files of unknown origin
+    assert calls == ["DOWNLOAD org/model "]
+
+
+@pytest.mark.parametrize("value", ["/models/qwen", "./models/qwen", "../qwen", "qwen", "a/b/c", "org/model name", "~/qwen"])
+def test_only_a_hugging_face_name_is_downloaded(tmp_path, value):
+    out, calls = run_entrypoint(tmp_path, {"BENCH_TOKENIZER": value})
+    assert calls == [] and "STARTED" in out.stdout
+
+
+def test_a_folder_that_looks_like_a_name_is_not_downloaded(tmp_path):
+    (tmp_path / "org" / "model").mkdir(parents=True)                  # a relative folder of that shape exists
+    out, calls = run_entrypoint(tmp_path, {"BENCH_TOKENIZER": "org/model"})
+    assert calls == []
+
+
 def test_a_failed_download_warns_and_the_command_still_runs(tmp_path):
-    out, calls = run_entrypoint(tmp_path, {"BENCH_TOKENIZER_REPO": "org/model"}, download_ok=False)
+    out, calls = run_entrypoint(tmp_path, {"BENCH_TOKENIZER": "org/model"}, download_ok=False)
     assert calls == ["DOWNLOAD org/model "] and "WARNING: the tokenizer download failed" in out.stdout
     assert "STARTED" in out.stdout and out.returncode == 0
 
@@ -85,7 +108,7 @@ def test_litellm_has_its_database_and_waits_for_it():
 
 
 def test_the_token_is_used_for_the_download_only(tmp_path):
-    out, calls = run_entrypoint(tmp_path, {"BENCH_TOKENIZER_REPO": "org/model", "HF_TOKEN": "hf_secret"})
+    out, calls = run_entrypoint(tmp_path, {"BENCH_TOKENIZER": "org/model", "HF_TOKEN": "hf_secret"})
     assert calls == ["DOWNLOAD org/model hf_secret"]                    # the download had it
     assert "hf_secret" not in out.stdout and "token=[]" in out.stdout   # the command does not
 
@@ -98,7 +121,7 @@ def test_a_partial_tokenizer_is_downloaded_again(tmp_path):
     stub.write_text('#!/bin/sh\necho "DOWNLOAD $1" >> calls.txt\n')
     stub.chmod(0o755)
     subprocess.run([shutil.which("bash"), str(ROOT / "docker" / "entrypoint.sh"), "true"], cwd=tmp_path,
-                   env={"PATH": "/usr/bin:/bin", "BENCH_TOKENIZER_REPO": "org/model"}, capture_output=True, timeout=30)
+                   env={"PATH": "/usr/bin:/bin", "BENCH_TOKENIZER": "org/model"}, capture_output=True, timeout=30)
     assert (tmp_path / "calls.txt").read_text() == "DOWNLOAD org/model\n"
 
 
@@ -125,3 +148,78 @@ def test_no_empty_value_is_followed_by_a_comment_in_the_example():
     """Docker Compose takes the comment as the value of `NAME=   # comment`: an empty value must be written \"\"."""
     example = (ROOT / ".env.example").read_text(encoding="utf-8")
     assert not [line for line in example.splitlines() if re.search(r"=\s+#", line)]
+
+
+def test_the_download_script_writes_the_name_of_the_model_it_downloaded(tmp_path):
+    """tools/tokenizer/.repo holds the repository name: BENCH_TOKENIZER=<that name> then uses the downloaded files."""
+    import subprocess
+    tools = tmp_path / "tools"
+    tools.mkdir()
+    shutil.copy(ROOT / "tools" / "download_tokenizer.sh", tools / "download_tokenizer.sh")
+    fake = tmp_path / "bin"
+    fake.mkdir()
+    hf = fake / "hf"
+    hf.write_text('#!/bin/sh\nwhile [ "$1" != "--local-dir" ]; do shift; done\necho "{}" > "$2/tokenizer.json"\n')
+    hf.chmod(0o755)
+    done = subprocess.run([shutil.which("bash"), str(tools / "download_tokenizer.sh"), "org/model"], cwd=tmp_path,
+                          env={"PATH": f"{fake}:/usr/bin:/bin"}, capture_output=True, text=True, timeout=30)
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert (tools / "tokenizer" / ".repo").read_text() == "org/model\n"
+
+
+def test_a_download_replaces_the_files_of_another_model(tmp_path):
+    import subprocess
+    tools = tmp_path / "tools"
+    (tools / "tokenizer").mkdir(parents=True)
+    shutil.copy(ROOT / "tools" / "download_tokenizer.sh", tools / "download_tokenizer.sh")
+    for name in ("merges.txt", "LICENSE", "vocab.json"):
+        (tools / "tokenizer" / name).write_text("old model")
+    (tools / "tokenizer" / ".repo").write_text("org/old\n")
+    fake = tmp_path / "bin"
+    fake.mkdir()
+    hf = fake / "hf"
+    hf.write_text('#!/bin/sh\nwhile [ "$1" != "--local-dir" ]; do shift; done\necho "{}" > "$2/tokenizer.json"\n')
+    hf.chmod(0o755)
+
+    def run(repo):
+        return subprocess.run([shutil.which("bash"), str(tools / "download_tokenizer.sh"), repo], cwd=tmp_path,
+                              env={"PATH": f"{fake}:/usr/bin:/bin"}, capture_output=True, text=True, timeout=30)
+    assert run("org/new").returncode == 0
+    assert sorted(p.name for p in (tools / "tokenizer").iterdir()) == [".repo", "tokenizer.json"]
+
+
+def test_a_failed_download_leaves_the_files_that_are_there(tmp_path):
+    """No Internet, or a wrong name: the files in tools/tokenizer (a copy by hand, or another model) are not touched."""
+    import subprocess
+    tools = tmp_path / "tools"
+    (tools / "tokenizer").mkdir(parents=True)
+    shutil.copy(ROOT / "tools" / "download_tokenizer.sh", tools / "download_tokenizer.sh")
+    (tools / "tokenizer" / "tokenizer.json").write_text("copied by hand")             # no .repo: not downloaded by the script
+    (tools / "tokenizer" / "vocab.json").write_text("copied by hand")
+    fake = tmp_path / "bin"
+    fake.mkdir()
+    hf = fake / "hf"
+    hf.write_text("#!/bin/sh\necho 'no Internet' >&2\nexit 1\n")
+    hf.chmod(0o755)
+    done = subprocess.run([shutil.which("bash"), str(tools / "download_tokenizer.sh"), "org/model"], cwd=tmp_path,
+                          env={"PATH": f"{fake}:/usr/bin:/bin"}, capture_output=True, text=True, timeout=30)
+    assert done.returncode != 0
+    assert (tools / "tokenizer" / "tokenizer.json").read_text() == "copied by hand"
+    assert (tools / "tokenizer" / "vocab.json").read_text() == "copied by hand"
+    assert not [p for p in tools.iterdir() if p.name.startswith("tokenizer.new")]     # the temporary folder is gone
+
+
+def test_a_download_without_tokenizer_json_leaves_the_files_that_are_there(tmp_path):
+    import subprocess
+    tools = tmp_path / "tools"
+    (tools / "tokenizer").mkdir(parents=True)
+    shutil.copy(ROOT / "tools" / "download_tokenizer.sh", tools / "download_tokenizer.sh")
+    (tools / "tokenizer" / "tokenizer.json").write_text("old")
+    fake = tmp_path / "bin"
+    fake.mkdir()
+    hf = fake / "hf"
+    hf.write_text("#!/bin/sh\nexit 0\n")                                      # the name exists but holds no tokenizer
+    hf.chmod(0o755)
+    done = subprocess.run([shutil.which("bash"), str(tools / "download_tokenizer.sh"), "org/model"], cwd=tmp_path,
+                          env={"PATH": f"{fake}:/usr/bin:/bin"}, capture_output=True, text=True, timeout=30)
+    assert done.returncode != 0 and (tools / "tokenizer" / "tokenizer.json").read_text() == "old"

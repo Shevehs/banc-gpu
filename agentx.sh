@@ -15,8 +15,10 @@ URL="${BENCH_URL:-http://127.0.0.1:8000}"
 MODEL="${BENCH_MODEL:-bench}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 python3 "$HERE/tools/settings.py" || true   # warns about variables from older versions that are no longer read
-DEFAULT_TOKENIZER=""; [ -f "$HERE/tools/tokenizer/tokenizer.json" ] && DEFAULT_TOKENIZER="$HERE/tools/tokenizer"
-TOKENIZER="${BENCH_TOKENIZER:-$DEFAULT_TOKENIZER}"
+LOCAL_TOKENIZER="$HERE/tools/tokenizer"
+TOKENIZER="${BENCH_TOKENIZER:-}"      # Hugging Face name or folder; empty = tools/tokenizer if it holds one
+# tools/tokenizer is used for an empty value, and for the name it was downloaded for (its .repo file)
+if [ -f "$LOCAL_TOKENIZER/tokenizer.json" ] && { [ -z "$TOKENIZER" ] || [ "$(cat "$LOCAL_TOKENIZER/.repo" 2>/dev/null)" = "$TOKENIZER" ]; }; then TOKENIZER="$LOCAL_TOKENIZER"; fi
 METRICS="${BENCH_METRICS:-}"
 API_KEY="${BENCH_API_KEY:-}"
 DURATION="${BENCH_DURATION:-1800}"                       # seconds per level; the scenario requires at least 900
