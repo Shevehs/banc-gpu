@@ -320,7 +320,7 @@ More cases are in the troubleshooting table ([section 11.3](#113-troubleshooting
 ### 2.4 Read the first report
 
 The report prints one line per level, then the selected point. This is a real output, from a small test on a small server
-(your figures will differ):
+with `BENCH_ISL=2048 BENCH_OSL=256` (your figures will differ, and the defaults are larger):
 
 ```
 run                conc   tput/GPU  inter P10  TTFT P95 ms  preempt  err  cache   MTP  output avg
@@ -853,7 +853,8 @@ in a row (`..`).
 ### 7.1 Synthetic stress test
 
 This test uses **AIPerf** (through `sweep.sh`) to send requests of a fixed length, one level of concurrency after the
-other (8,192 input and 1,024 output tokens by default: the "8k/1k" shape of InferenceX; lower `BENCH_ISL` and `BENCH_OSL` on a small server).
+other (8,192 input and 1,024 output tokens by default, the "8k/1k" shape of InferenceX).
+Lower `BENCH_ISL` and `BENCH_OSL` on a small server.
 
 vLLM must be launched **with** `--no-enable-prefix-caching`.
 
