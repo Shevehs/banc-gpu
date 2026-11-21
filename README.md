@@ -1660,7 +1660,7 @@ sides of the tunnel (under Docker Compose, it is `BENCH_PORT`).
 - **Runs**: live log, stop. The planned runs are listed above ("Planned"), each with "cancel". If a planned run fails
   or is stopped, the queue waits: press "resume" to go on.
 - **Results**: tables, selected point, curve of the stress tests, updated as soon as a field changes; the "GPU" field is optional (deduced from the
-  fingerprint when empty). The warnings are folded under the selected points: click "N warnings" to open them.
+  fingerprint when empty). The warnings are folded under the selected points: click "N warnings, M kinds" to open them.
 - **Observation** (own tab): nothing to start. Prometheus and the GPUs come from Configuration (the GPUs are required,
   as on the command line).
   - Fields: range (since, or start and end), window length, target interactivity, optional max TTFT P95, and the view
