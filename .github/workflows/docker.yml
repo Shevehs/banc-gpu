@@ -1,0 +1,61 @@
+name: Docker
+
+# The Docker Compose stack, tried on a clean machine. Only when something it uses changes.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "docker-compose.yml"
+      - "docker/**"
+      - ".env.example"
+      - "interface/**"
+      - "tools/**"
+      - ".github/workflows/docker.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "docker-compose.yml"
+      - "docker/**"
+      - ".env.example"
+      - "interface/**"
+      - "tools/**"
+      - ".github/workflows/docker.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docker-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  docker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: The compose file is valid for every profile
+        run: |
+          docker compose config --quiet
+          COMPOSE_PROFILES=gateway docker compose config --quiet
+          COMPOSE_PROFILES=try docker compose config --quiet
+          COMPOSE_PROFILES=gateway,try docker compose config --quiet
+      - name: Build the image
+        run: docker compose build bench
+      - name: Start the stack with the fake server and check it answers
+        env:
+          BENCH_TOKEN: citoken-for-the-ci-run
+          COMPOSE_PROFILES: try
+          PROMETHEUS_CONFIG: prometheus-fake.yml
+        run: |
+          docker compose up -d
+          for i in $(seq 1 30); do curl -sf -o /dev/null http://127.0.0.1:8765/ && break; sleep 2; done
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8765/api/defaults)" = 401
+          curl -sf -H 'X-Bench-Token: citoken-for-the-ci-run' http://127.0.0.1:8765/api/defaults
+          for i in $(seq 1 15); do curl -sf -o /dev/null http://127.0.0.1:9090/-/ready && break; sleep 2; done
+          curl -sf http://127.0.0.1:9090/-/ready
+      - name: Logs
+        if: always()
+        run: |
+          docker compose logs --no-color || true
+          docker compose down -v || true
