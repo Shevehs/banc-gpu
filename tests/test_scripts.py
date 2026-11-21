@@ -407,3 +407,34 @@ def test_an_unreadable_aiperf_version_does_not_stop_the_script(aiperf_reached, s
     """The later steps report a missing or broken aiperf themselves."""
     result, reached = aiperf_reached(script, FAKE_AIPERF_VERSION=version)
     assert reached and "needs AIPerf" not in result.stdout
+
+
+# ---------------------------------------------------------------- a level where no request finished in time
+def failing_aiperf(tmp_path, output):
+    """A fake aiperf that prints `output` (into the log of the level) and fails; returns the PATH to use."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    fake = bin_dir / "aiperf"
+    fake.write_text('#!/bin/sh\nif [ "$1" = "--version" ]; then echo 0.13.0; exit 0; fi\n'
+                    f"cat <<'EOF'\n{output}\nEOF\nexit 1\n")
+    fake.chmod(0o755)
+    return f"{bin_dir}:{os.environ['PATH']}"
+
+
+NO_RESULT = "Phase profiling (profiling) complete | completed=0, cancelled=8 | grace_period_timeout=True\nERROR No profile results to export"
+
+
+@pytest.mark.parametrize("output,hint", [
+    (NO_RESULT, True),
+    ("ERROR No profile results to export", False),                  # no timeout: another cause, no advice about the duration
+    ("grace_period_timeout=True", False),                           # a timeout, but results were exported and the run failed otherwise
+    ("some other error", False),
+])
+def test_sweep_says_why_when_no_request_finished_in_time(tmp_path, output, hint):
+    work = tmp_path / "work"
+    work.mkdir()
+    environment = helpers.clean_environment(**{"PATH": failing_aiperf(tmp_path, output), "BENCH_ROOT_DIR": str(work / "results"),
+                                                "BENCH_URL": "http://127.0.0.1:1", "BENCH_DURATION": "10"})
+    result = helpers.run([BASH, str(helpers.ROOT / SWEEP), "lbl", "1"], cwd=work, env=environment, timeout=120)
+    assert result.returncode == 1 and "FAILED at concurrency 1" in result.stdout
+    assert ("No request finished within the duration plus the grace period" in result.stdout) is hint

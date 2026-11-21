@@ -76,7 +76,11 @@ for C in $CONCURRENCIES; do
   echo "== $LABEL: concurrency $C =="
   T0=$(date +%s)
   if ! ${OFFLINE_UNSET[@]+"${OFFLINE_UNSET[@]}"} aiperf profile "${ARGS[@]}" > "$DIR.log" 2>&1; then
-    echo "FAILED at concurrency $C: see $DIR.log"; exit 1
+    echo "FAILED at concurrency $C: see $DIR.log"
+    # AIPerf waits for the requests in flight only DURATION + its grace period (30 s): slower requests are all cancelled
+    grep -q "No profile results to export" "$DIR.log" 2>/dev/null && grep -q "grace_period_timeout=True" "$DIR.log" 2>/dev/null \
+      && echo "   No request finished within the duration plus the grace period: raise the duration (or leave it empty), or add --benchmark-grace-period <seconds> to the extra AIPerf options."
+    exit 1
   fi
   echo "   $(( $(date +%s) - T0 )) s"
 done
